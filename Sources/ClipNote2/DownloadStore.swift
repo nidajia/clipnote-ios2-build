@@ -124,6 +124,16 @@ final class DownloadStore: ObservableObject {
         }
     }
 
+    /// 彻底删除条目时调用：把本地文件一起清掉。
+    ///
+    /// 不清的话会留下无人认领的 130 MB——用户以为删干净了，实际没有。
+    func removeLocalFile(_ id: String) {
+        guard let record = records[id] else { return }
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent(record.fileName))
+        records.removeValue(forKey: id)
+        save()
+    }
+
     func cancel(_ id: String) {
         downloader.cancelCurrent()
         progress[id] = nil

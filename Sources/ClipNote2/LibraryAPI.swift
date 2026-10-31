@@ -40,10 +40,12 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var playback: APIPlayback
     var publishedAt: Int
     var source: APISource?
+    /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
+    var deletedAt: Int?
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, title, metaLine, durationText, durationSeconds
-        case summary, cover, playback, publishedAt, source
+        case summary, cover, playback, publishedAt, source, deletedAt
     }
 
     init(
@@ -57,7 +59,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         cover: APICover? = nil,
         playback: APIPlayback = APIPlayback(available: true, reason: nil),
         publishedAt: Int = 0,
-        source: APISource? = nil
+        source: APISource? = nil,
+        deletedAt: Int? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -70,6 +73,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         self.playback = playback
         self.publishedAt = publishedAt
         self.source = source
+        self.deletedAt = deletedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -88,6 +92,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         cover = try c.decodeIfPresent(APICover.self, forKey: .cover)
         publishedAt = try c.decodeIfPresent(Int.self, forKey: .publishedAt) ?? 0
         source = try c.decodeIfPresent(APISource.self, forKey: .source)
+        deletedAt = try c.decodeIfPresent(Int.self, forKey: .deletedAt)
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
         playback = try c.decodeIfPresent(APIPlayback.self, forKey: .playback)
             ?? APIPlayback(available: kind == "video", reason: nil)
@@ -98,22 +103,28 @@ struct APILibrary: Decodable, Equatable {
     var libraryVersion: String
     var count: Int
     var generatedAt: Int
+    /// 回收站里有多少条。「我」页要显示「回收站 · 3 条」，
+    /// 为一行字再拉一次 /trash 不值得。
+    var trashCount: Int
     var items: [APILibraryItem]
 
     private enum CodingKeys: String, CodingKey {
-        case libraryVersion, count, generatedAt, items
+        case libraryVersion, count, generatedAt, trashCount, items
     }
 
-    init(libraryVersion: String, count: Int, generatedAt: Int = 0, items: [APILibraryItem]) {
+    init(libraryVersion: String, count: Int, generatedAt: Int = 0,
+         trashCount: Int = 0, items: [APILibraryItem]) {
         self.libraryVersion = libraryVersion
         self.count = count
         self.generatedAt = generatedAt
+        self.trashCount = trashCount
         self.items = items
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         items = try c.decode([APILibraryItem].self, forKey: .items)
+        trashCount = try c.decodeIfPresent(Int.self, forKey: .trashCount) ?? 0
         // 服务端给的 count 与 items 长度理应一致；不一致时以实际数组为准，
         // 「契约是否一致」交给测试断言，不在运行时抛错。
         count = try c.decodeIfPresent(Int.self, forKey: .count) ?? items.count
@@ -179,6 +190,30 @@ struct APIPlaybackPayload: Decodable, Equatable {
 struct APIImportResult: Decodable, Equatable {
     var created: Bool
     var item: APILibraryItem
+}
+
+/// 只有 ok 的成功响应（彻底删除这类）
+struct APIOkResponse: Decodable, Equatable {
+    var ok: Bool
+}
+
+/// 回收站列表
+struct APITrash: Decodable, Equatable {
+    var count: Int
+    var items: [APILibraryItem]
+
+    private enum CodingKeys: String, CodingKey { case count, items }
+
+    init(count: Int, items: [APILibraryItem]) {
+        self.count = count
+        self.items = items
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        items = try c.decode([APILibraryItem].self, forKey: .items)
+        count = try c.decodeIfPresent(Int.self, forKey: .count) ?? items.count
+    }
 }
 
 /// 服务端的错误体：`{code, message, retryable}`。
@@ -269,9 +304,8 @@ struct ClipNoteClient {
     /// 409 = 条目在但没有视频流（笔记/图集）。这不是网络错误，是内容属性，
     /// 所以不归到 `Failure`，而是由调用方判断 `available`。
     func playback(id: String) async throws -> APIPlaybackPayload? {
-        let encoded = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? id
         do {
-            return try await get("/api/v2/items/\(encoded)/playback", as: APIPlaybackPayload.self)
+            return try await get("/api/v2/items/\(encode(id))/playback", as: APIPlaybackPayload.self)
         } catch let failure as Failure {
             if case .http(let status, let code, _) = failure, status == 409, code == "PLAYBACK_UNAVAILABLE" {
                 return nil
@@ -298,6 +332,30 @@ struct ClipNoteClient {
     /// 这种分享文案，各家格式不一样，清洗规则属于服务端。
     func importItem(url link: String) async throws -> APIImportResult {
         try await post("/api/v2/parse", body: ["url": link], as: APIImportResult.self)
+    }
+
+    /// 删除（软删）。条目进回收站，文件仍在本机。
+    func deleteItem(id: String) async throws -> APILibraryItem {
+        try await post("/api/v2/items/\(encode(id))/delete", body: [:], as: APILibraryItem.self)
+    }
+
+    /// 从回收站恢复
+    func restoreItem(id: String) async throws -> APILibraryItem {
+        try await post("/api/v2/items/\(encode(id))/restore", body: [:], as: APILibraryItem.self)
+    }
+
+    /// 彻底删除。不可恢复，所以只在回收站里给这个操作。
+    func purgeItem(id: String) async throws {
+        _ = try await post("/api/v2/items/\(encode(id))/purge", body: [:], as: APIOkResponse.self)
+    }
+
+    /// 回收站列表
+    func trash() async throws -> APITrash {
+        try await get("/api/v2/trash", as: APITrash.self)
+    }
+
+    private func encode(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? id
     }
 
     /// 上报日志。
@@ -430,6 +488,8 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var items: [Item] = []
     @Published private(set) var version: String = ""
+    /// 回收站条数。跟着 library 一起回来，不用为一行字单独请求。
+    @Published private(set) var trashCount: Int = 0
 
     private let client: ClipNoteClient?
     /// 日志由外部注入：截图模式传 nil，避免往真实日志文件里写假事件
@@ -490,6 +550,7 @@ final class LibraryStore: ObservableObject {
     func applyEmpty(version: String = "lv_empty") {
         self.version = version
         items = []
+        trashCount = 0
         phase = .loaded
     }
 
@@ -546,9 +607,68 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    // MARK: 删除与回收站
+
+    /// 删除（软删）。成功后刷新列表——那条应当立刻从眼前消失。
+    /// 返回是否成功：界面要据此决定提示「已移到回收站」还是「删除失败」。
+    @discardableResult
+    func delete(_ item: Item) async -> Bool {
+        guard let client else { return false }
+        let started = Date()
+        do {
+            _ = try await client.deleteItem(id: item.id)
+            await reload()
+            log?.info("item.deleted", "已移到回收站", meta: [
+                "id": item.id, "ms": ms(since: started),
+            ])
+            return true
+        } catch let failure as ClipNoteClient.Failure {
+            log?.error("item.delete_failed", failure.displayMessage, meta: [
+                "id": item.id, "kind": failure.logKind,
+            ])
+            return false
+        } catch {
+            log?.error("item.delete_failed", error.localizedDescription, meta: ["id": item.id])
+            return false
+        }
+    }
+
+    func restore(id: String) async {
+        guard let client else { return }
+        do {
+            _ = try await client.restoreItem(id: id)
+            await reload()
+            log?.info("item.restored", "已从回收站恢复", meta: ["id": id])
+        } catch {
+            log?.error("item.restore_failed", "恢复失败", meta: ["id": id])
+        }
+    }
+
+    /// 彻底删除。返回是否成功——调用方只在成功后才删本地文件，
+    /// 否则会出现「条目还在列表里但文件没了」。
+    @discardableResult
+    func purge(id: String) async -> Bool {
+        guard let client else { return false }
+        do {
+            try await client.purgeItem(id: id)
+            await reload()
+            log?.info("item.purged", "已彻底删除", meta: ["id": id])
+            return true
+        } catch {
+            log?.error("item.purge_failed", "彻底删除失败", meta: ["id": id])
+            return false
+        }
+    }
+
+    func loadTrash() async throws -> [APILibraryItem] {
+        guard let client else { return [] }
+        return try await client.trash().items
+    }
+
     private func apply(_ library: APILibrary) {
         version = library.libraryVersion
         items = library.items.map(Item.init(api:))
+        trashCount = library.trashCount
         phase = .loaded
     }
 }

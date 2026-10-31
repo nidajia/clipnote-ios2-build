@@ -23,6 +23,11 @@ struct MeScreen: View {
                 settingsRow("下载与存储", storageValue)
                 settingsRow("播放", "自动横屏")
                 NavigationLink {
+                    TrashScreen()
+                } label: {
+                    settingsRow("回收站", trashText, showsChevron: false)
+                }
+                NavigationLink {
                     LogScreen()
                 } label: {
                     // 不加自带 chevron：NavigationLink 已经给了一个
@@ -128,6 +133,10 @@ struct MeScreen: View {
         formatter.allowsNonnumericFormatting = false
         let size = formatter.string(fromByteCount: downloads.totalBytes)
         return "\(downloads.downloadedCount) 条 · \(size)"
+    }
+
+    private var trashText: String {
+        library.trashCount > 0 ? "\(library.trashCount) 条" : "空"
     }
 
     private var logCountText: String {

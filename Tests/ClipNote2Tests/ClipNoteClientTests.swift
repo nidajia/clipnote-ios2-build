@@ -251,6 +251,51 @@ final class ClipNoteClientTests: XCTestCase {
         }
     }
 
+    // MARK: - 删除与回收站
+
+    func testLibraryDecodesTrashCount() async throws {
+        StubURLProtocol.handler = { _ in
+            (200, ["Content-Type": "application/json"],
+             Data(#"{"items":[],"count":0,"libraryVersion":"lv_1","trashCount":3}"#.utf8))
+        }
+        let lib = try await makeClient().library()
+        // 「我」页要显示「回收站 · 3 条」，不该为一行字再拉一次 /trash
+        XCTAssertEqual(lib.trashCount, 3)
+    }
+
+    func testTrashDecodesDeletedAt() async throws {
+        StubURLProtocol.handler = { _ in
+            (200, ["Content-Type": "application/json"],
+             Data(#"{"count":1,"items":[{"id":"x1","title":"删掉的","deletedAt":1793430625000}]}"#.utf8))
+        }
+        let trash = try await makeClient().trash()
+        XCTAssertEqual(trash.count, 1)
+        XCTAssertEqual(trash.items.first?.title, "删掉的")
+        XCTAssertEqual(trash.items.first?.deletedAt, 1_793_430_625_000)
+    }
+
+    func testDeleteUsesPathActionAndEncodesID() async throws {
+        var seen: String?
+        StubURLProtocol.handler = { request in
+            seen = request.url?.absoluteString
+            return (200, ["Content-Type": "application/json"],
+                    Data(#"{"id":"a/b","title":"删掉的"}"#.utf8))
+        }
+        _ = try await makeClient().deleteItem(id: "a/b")
+        let url = try XCTUnwrap(seen)
+        XCTAssertTrue(url.contains("/api/v2/items/a%2Fb/delete"), url)
+    }
+
+    func testPurgeReturnsOK() async throws {
+        var seen: String?
+        StubURLProtocol.handler = { request in
+            seen = request.url?.absoluteString
+            return (200, ["Content-Type": "application/json"], Data(#"{"ok":true,"id":"x1"}"#.utf8))
+        }
+        try await makeClient().purgeItem(id: "x1")
+        XCTAssertTrue(seen?.contains("/purge") ?? false, seen ?? "")
+    }
+
     func testPlaybackPathIsCorrectlyEncoded() async throws {
         var seen: String?
         StubURLProtocol.handler = { request in

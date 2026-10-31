@@ -325,11 +325,6 @@ struct DetailScreen: View {
                     Task { await startPlayback() }
                 }
 
-                Text("删除条目不会自动删除文件。清理请在「我 · 下载与存储」里进行。")
-                    .font(.cnMeta)
-                    .foregroundStyle(Color.cnInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-
             } else if let value = downloads.progressValue(for: item.id) {
                 DownloadProgressCard(progress: value) {
                     downloads.cancel(item.id)

@@ -55,6 +55,7 @@ shot home-empty   empty   light
 shot me           me      light
 shot import-sheet import  light
 shot logs         logs    light
+shot trash        trash   light
 
 shot detail-idle        detail             light
 shot detail-ready       detail-ready       light

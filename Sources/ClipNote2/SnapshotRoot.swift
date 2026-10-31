@@ -86,6 +86,8 @@ struct SnapshotRoot: View {
             if state == "logs" {
                 // 日志页在「我」里，截图没法点进去，直接作为根呈现
                 NavigationStack { LogScreen() }
+            } else if state == "trash" {
+                NavigationStack { TrashScreen(previewItems: previewTrash) }
             } else {
                 tabs
             }
@@ -114,6 +116,17 @@ struct SnapshotRoot: View {
             }
             .tabItem { Label("我", systemImage: "person.fill") }
             .tag(1)
+        }
+    }
+
+    /// 回收站截图用的两条已删条目
+    private var previewTrash: [APILibraryItem] {
+        guard let data = Item.sampleData,
+              let lib = try? JSONDecoder().decode(APILibrary.self, from: data) else { return [] }
+        return lib.items.prefix(2).enumerated().map { index, item in
+            var copy = item
+            copy.deletedAt = 1_793_430_625_000 - index * 86_400_000
+            return copy
         }
     }
 

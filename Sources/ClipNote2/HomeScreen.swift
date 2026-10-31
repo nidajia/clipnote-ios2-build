@@ -26,6 +26,7 @@ struct HomeScreen: View {
     @State private var filter: HomeFilter = .all
     @State private var showImport = false
     @State private var selected: Item?
+    @State private var toast: String?
 
     /// `initialSelection` 只给截图用：让详情页以「被 push 进去」的形态出现，
     /// 否则它会是导航栈的根，截图上没有返回按钮。
@@ -87,6 +88,30 @@ struct HomeScreen: View {
             .sheet(isPresented: $showImport) {
                 ImportSheet()
             }
+            .overlay(alignment: .bottom) { toastView }
+    }
+
+    /// 轻量提示。删除是软删，用户得知道「东西还在回收站」，否则会以为彻底没了。
+    @ViewBuilder
+    private var toastView: some View {
+        if let toast {
+            Text(toast)
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnBg)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Color.cnInk.opacity(0.88), in: Capsule())
+                .padding(.bottom, 72)
+                .transition(.opacity)
+        }
+    }
+
+    private func showToast(_ text: String) {
+        withAnimation { toast = text }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            withAnimation { toast = nil }
+        }
     }
 
     @ViewBuilder
@@ -124,6 +149,19 @@ struct HomeScreen: View {
                     ItemRow(model: item, isDownloaded: downloads.isDownloaded(item.id))
                 }
                 .buttonStyle(.plain)
+                // 左滑删除。当初选 List 而不是自绘列表，唯一的技术理由就是它能用。
+                // allowsFullSwipe: false —— 一整条划过去就删掉太容易误触，
+                // 而这条可能是花了 130 MB 流量下下来的。
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        Task {
+                            let ok = await library.delete(item)
+                            showToast(ok ? "已移到回收站" : "删除失败，请重试")
+                        }
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                }
                 .listRowInsets(EdgeInsets(
                     top: 0,
                     leading: Metric.pagePad,
