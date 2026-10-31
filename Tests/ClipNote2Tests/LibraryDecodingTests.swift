@@ -86,7 +86,12 @@ final class LibraryDecodingTests: XCTestCase {
             XCTAssertFalse(item.id.isEmpty)
             XCTAssertFalse(item.title.isEmpty)
             XCTAssertFalse(item.metaLine.isEmpty)
-            XCTAssertFalse(item.durationText.isEmpty)
+            // 笔记没有视频，就谈不上时长。服务端给空串，客户端据此连「· 05:48」都不显示。
+            if item.playback.available {
+                XCTAssertFalse(item.durationText.isEmpty, "视频必须有时长：\(item.title)")
+            } else {
+                XCTAssertTrue(item.durationText.isEmpty, "笔记不该有时长：\(item.title)")
+            }
         }
 
         // 至少各有一条：有视频流的、没有视频流的

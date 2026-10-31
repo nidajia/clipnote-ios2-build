@@ -26,7 +26,7 @@ struct MeScreen: View {
             .listRowBackground(Color.cnCard)
 
             Section {
-                Text("版本 8.0.0 (1)")
+                Text(footer)
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -100,14 +100,19 @@ struct MeScreen: View {
         case .loading:
             return "正在同步…"
         case .loaded:
-            // 版本号直接来自服务端，能据此判断线上代码是哪一版
-            return "\(library.version) · \(library.items.count) 条"
+            return "\(library.items.count) 条 · 已是最新"
         case .failed(let message):
             return message
         }
     }
 
     // MARK: - 设置行
+
+    /// 库版本号对用户没意义，但对排障有用：拉到的快照是不是最新、线上是哪一版，
+    /// 都看这一串。所以放脚注，不占主视觉。
+    private var footer: String {
+        library.version.isEmpty ? "版本 8.0.0 (1)" : "版本 8.0.0 (1) · \(library.version)"
+    }
 
     private var storageValue: String {
         guard downloads.downloadedCount > 0 else { return "无本地文件" }

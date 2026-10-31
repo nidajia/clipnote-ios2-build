@@ -31,9 +31,9 @@ struct SnapshotRoot: View {
         let store = DownloadStore(directory: sandbox)
 
         let lib = LibraryStore(client: nil)
-        if let data = Item.sampleData {
-            try? lib.loadFixture(data)
-        }
+        // 注意顺序：**只有需要数据的状态才加载**。
+        // 之前先无条件 loadFixture 再切状态，结果 loading / failed 两张图都带着
+        // 一屏数据，和列表图长得一模一样——截图「拍到了」，但拍的是别的东西。
         switch state {
         case "empty":
             lib.applyEmpty()
@@ -42,7 +42,9 @@ struct SnapshotRoot: View {
         case "loading":
             break // 保持 idle，首页即加载态
         default:
-            break
+            if let data = Item.sampleData {
+                try? lib.loadFixture(data)
+            }
         }
 
         var detail: Item?
