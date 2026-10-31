@@ -137,9 +137,7 @@ struct PrimaryButton: View {
         Button(action: action) {
             HStack(spacing: Metric.space2) {
                 if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(labelColor)
+                    RingSpinner(color: labelColor)
                 }
                 Text(title)
                     .font(.cnButton)
@@ -166,16 +164,44 @@ struct PressDimStyle: ButtonStyle {
     }
 }
 
+// MARK: - 加载指示
+
+/// 纯 Shape 画的环，不用 `ProgressView`。
+///
+/// `ImageRenderer` 无法光栅化 UIKit 的 `UIActivityIndicatorView`，
+/// 截出来会变成一个橙色占位方块——CI 截图就失去了证据价值。
+/// 这里固定角度，保证每次快照可比；真机若要转起来，
+/// 用 `TimelineView` 驱动 `rotationEffect`，但那样 CI 截图不再可复现，
+/// 需要另开一条「仅动效」的验证路径。
+struct RingSpinner: View {
+    var size: CGFloat = 16
+    var color: Color
+
+    var body: some View {
+        Circle()
+            .trim(from: 0, to: 0.72)
+            .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            .rotationEffect(.degrees(-90))
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: - 筛选 Chip
 
 struct FilterChip: View {
     var title: String
     var isSelected: Bool
 
+    @Environment(\.colorScheme) private var scheme
+
+    /// 与主按钮同一条规则：深色下 brand 变亮，白字对比不足，必须换墨色字
+    private var selectedLabel: Color { scheme == .dark ? .cnBg : .white }
+
     var body: some View {
         Text(title)
             .font(.cnChip)
-            .foregroundStyle(isSelected ? Color.white : Color.cnInk2)
+            .foregroundStyle(isSelected ? selectedLabel : Color.cnInk2)
             .padding(.horizontal, Metric.space3)
             .frame(height: 30)
             .background(
