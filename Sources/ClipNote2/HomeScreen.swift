@@ -29,9 +29,16 @@ struct HomeScreen: View {
 
     /// `initialSelection` 只给截图用：让详情页以「被 push 进去」的形态出现，
     /// 否则它会是导航栈的根，截图上没有返回按钮。
-    init(initialSelection: Item? = nil) {
+    /// `detailPrepare` 同理：让「已取到播放地址」这一态能被拍下来。
+    init(
+        initialSelection: Item? = nil,
+        detailPrepare: DetailScreen.PrepareState? = nil
+    ) {
         _selected = State(initialValue: initialSelection)
+        self.detailPrepare = detailPrepare
     }
+
+    private let detailPrepare: DetailScreen.PrepareState?
 
     private var items: [Item] { library.items }
 
@@ -63,7 +70,7 @@ struct HomeScreen: View {
             )
             .safeAreaInset(edge: .top, spacing: 0) { filterBar }
             .navigationDestination(item: $selected) { item in
-                DetailScreen(item: item)
+                DetailScreen(item: item, initialPrepare: detailPrepare)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

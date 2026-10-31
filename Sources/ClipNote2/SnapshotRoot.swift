@@ -69,7 +69,7 @@ struct SnapshotRoot: View {
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack {
-                HomeScreen(initialSelection: detailItem)
+                HomeScreen(initialSelection: detailItem, detailPrepare: detailPrepare)
             }
             .tabItem { Label("首页", systemImage: "house.fill") }
             .tag(0)
@@ -84,5 +84,18 @@ struct SnapshotRoot: View {
         .preferredColorScheme(appearance)
         .environmentObject(downloads)
         .environmentObject(library)
+    }
+
+    /// 只给 `detail-ready` 用：模拟「已经取到播放地址」，
+    /// 好让按钮下面那行「720P · 约 124 MB」有截图可对照。
+    private var detailPrepare: DetailScreen.PrepareState? {
+        guard state == "detail-ready" else { return nil }
+        return .ready(APIPlaybackPayload(
+            url: "https://clipnote.app.workbuddy.host/proxy?u=sample.mp4",
+            mimeType: "video/mp4",
+            quality: "720P",
+            bytes: 130_257_119,
+            expiresAt: 0
+        ))
     }
 }

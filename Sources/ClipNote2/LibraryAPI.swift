@@ -127,8 +127,49 @@ struct APILibrary: Decodable, Equatable {
 struct APIPlaybackPayload: Decodable, Equatable {
     var url: String
     var mimeType: String?
+    /// 服务端实际给的清晰度，如 "720P"
+    var quality: String?
+    /// 文件体积。用来在按钮下面写「720P · 约 124 MB」——
+    /// 用户点「下载到本地」之前有权知道自己要花多少流量。
+    var bytes: Int?
     /// 0 表示「未知」。客户端据此不做过期预判，只在真的 403 时重取。
     var expiresAt: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case url, mimeType, quality, bytes, expiresAt
+    }
+
+    init(url: String, mimeType: String? = nil, quality: String? = nil,
+         bytes: Int? = nil, expiresAt: Int = 0) {
+        self.url = url
+        self.mimeType = mimeType
+        self.quality = quality
+        self.bytes = bytes
+        self.expiresAt = expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(String.self, forKey: .url)
+        mimeType = try c.decodeIfPresent(String.self, forKey: .mimeType)
+        quality = try c.decodeIfPresent(String.self, forKey: .quality)
+        bytes = try c.decodeIfPresent(Int.self, forKey: .bytes)
+        expiresAt = try c.decodeIfPresent(Int.self, forKey: .expiresAt) ?? 0
+    }
+
+    /// 「720P · 约 124 MB」，缺哪项就少写哪项
+    var sizeSummary: String {
+        var parts: [String] = []
+        if let quality, !quality.isEmpty { parts.append(quality) }
+        if let bytes, bytes > 0 {
+            let formatter = ByteCountFormatter()
+            formatter.allowedUnits = [.useMB, .useGB]
+            formatter.countStyle = .file
+            formatter.allowsNonnumericFormatting = false
+            parts.append("约 " + formatter.string(fromByteCount: Int64(bytes)))
+        }
+        return parts.joined(separator: " · ")
+    }
 }
 
 /// 服务端的错误体：`{code, message, retryable}`。
@@ -292,6 +333,9 @@ final class LibraryStore: ObservableObject {
         self.client = client
     }
 
+    /// 截图/预览模式：没有网络层。界面据此避免把「没配 client」显示成「取不到地址」。
+    var isOffline: Bool { client == nil }
+
     // MARK: 加载
 
     func reload() async {
@@ -327,10 +371,9 @@ final class LibraryStore: ObservableObject {
 
     /// 取播放地址。返回 `nil` 表示「这类内容没有视频流」（服务端 409），不是错误。
     /// 截图模式下没有 client，一律返回 nil——于是播放键置灰，界面不会假装能播。
-    func playbackURL(for id: String) async throws -> URL? {
+    func playback(for id: String) async throws -> APIPlaybackPayload? {
         guard let client else { return nil }
-        guard let payload = try await client.playback(id: id) else { return nil }
-        return URL(string: payload.url)
+        return try await client.playback(id: id)
     }
 
     private func apply(_ library: APILibrary) {

@@ -55,6 +55,7 @@ shot home-empty   empty   light
 shot me           me      light
 
 shot detail-idle        detail             light
+shot detail-ready       detail-ready       light
 shot detail-note        detail-note        light
 shot detail-downloading detail-downloading light
 shot detail-downloaded  detail-downloaded  light

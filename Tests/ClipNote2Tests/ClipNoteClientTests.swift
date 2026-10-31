@@ -135,12 +135,31 @@ final class ClipNoteClientTests: XCTestCase {
     func testPlaybackReturnsURL() async throws {
         StubURLProtocol.handler = { _ in
             (200, ["Content-Type": "application/json"],
-             Data(#"{"url":"https://example.test/proxy?u=v.mp4","mimeType":"video/mp4","expiresAt":0}"#.utf8))
+             Data(#"{"url":"https://example.test/proxy?u=v.mp4","mimeType":"video/mp4","quality":"720P","bytes":130257119,"expiresAt":0}"#.utf8))
         }
 
         let payload = try await makeClient().playback(id: "mvrl0axm2j64w")
         XCTAssertEqual(payload?.url, "https://example.test/proxy?u=v.mp4")
         XCTAssertEqual(payload?.expiresAt, 0, "0 表示未知，客户端不做过期预判")
+        XCTAssertEqual(payload?.quality, "720P")
+        XCTAssertEqual(payload?.bytes, 130_257_119)
+        // 按钮下面那行字要靠它拼出来：用户点下载之前要知道下多大。
+        // 不断言具体数字：ByteCountFormatter 的进位方式随系统设置变，锁死会变成脆弱测试。
+        let summary = try XCTUnwrap(payload?.sizeSummary)
+        XCTAssertTrue(summary.hasPrefix("720P · 约 "), summary)
+    }
+
+    func testPlaybackWithoutQualityStillDecodes() async throws {
+        // 服务端可能不给 quality/bytes（比如解析器没返回清晰度）。
+        // 这时不能整条解不出来，只是少一行提示。
+        StubURLProtocol.handler = { _ in
+            (200, ["Content-Type": "application/json"],
+             Data(#"{"url":"https://example.test/v.mp4","expiresAt":0}"#.utf8))
+        }
+
+        let payload = try await makeClient().playback(id: "x1")
+        XCTAssertEqual(payload?.url, "https://example.test/v.mp4")
+        XCTAssertEqual(payload?.sizeSummary, "")
     }
 
     func testPlaybackUnavailableReturnsNilInsteadOfThrowing() async throws {

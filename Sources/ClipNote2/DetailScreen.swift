@@ -6,19 +6,49 @@ import SwiftUI
 /// 播放器先给封面 + 播放键，点了才创建 `AVPlayer`：
 /// 一来首帧稳定（截图可比），二来避免未点播就占用解码资源。
 ///
-/// 播放地址**不在模型里**：视频流地址几小时后会过期，所以每次要播/要下载时
-/// 现取一次 `/api/v2/items/{id}/playback`。已下载的文件优先，离线也能看。
+/// 播放地址**不在模型里**：视频流地址几小时后会过期，快照里那份早就死了。
+/// 所以进页面时异步取一次 `/api/v2/items/{id}/playback`（服务端会重新解析，
+/// 约 1 秒），取回来后按钮下面就能写出「720P · 约 124 MB」——
+/// 用户点「下载」之前有权知道自己要花多少流量。
 struct DetailScreen: View {
     var item: Item
+
+    /// 播放地址的准备状态。
+    ///
+    /// 单独一个状态机而不是一堆布尔：`isPreparing` + `error` + `url` 三个变量
+    /// 能组合出 8 种状态，其中 5 种是矛盾的。
+    enum PrepareState: Equatable {
+        case idle
+        case loading
+        case ready(APIPlaybackPayload)
+        /// 服务端 409：这类内容**永远**没有视频流（笔记、图集）
+        case unavailable
+        /// 服务端 501：有视频流，但这个平台这一版还没接解析。
+        /// 和 `unavailable` 分开，是因为「暂时不行」不该说成「永远不行」，
+        /// 也不该给一个点了也没用的重试引导。
+        case unsupported(String)
+        case failed(String)
+    }
 
     @EnvironmentObject private var downloads: DownloadStore
     @EnvironmentObject private var library: LibraryStore
 
     @State private var player: AVPlayer?
     @State private var playing = false
-    @State private var isPreparing = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
+    @State private var prepare: PrepareState = .idle
+
+    /// `initialPrepare` 只给截图用：让「已取到地址」这一态可被拍下来。
+    /// 正常路径一律 `.idle`，由 `prefetch()` 去取。
+    init(item: Item, initialPrepare: PrepareState? = nil) {
+        self.item = item
+        if let initialPrepare {
+            _prepare = State(initialValue: initialPrepare)
+        }
+    }
+
+    private var isPreparing: Bool { prepare == .loading }
 
     /// 简介太短就不整块渲染。
     ///
@@ -76,14 +106,16 @@ struct DetailScreen: View {
         .background(Color.cnBg)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        // 进页面就先取一次地址：这样「下载到本地」旁边能标出体积，
+        // 而不是让用户点下去才知道下多大。有 5 分钟缓存，来回切页不会重复打上游。
+        .task { await prefetch() }
         .onChange(of: downloads.lastFailure) { _, failure in
             guard let failure, failure.id == item.id else { return }
             notice = failure.message
         }
     }
 
-    /// 服务端已经给好 `metaLine` 和 `durationText`，这里只负责摆位置，
-    /// 不拼平台名、不换算时长。
+    /// 服务端已经给好 `metaLine` 和 `durationText`，这里只负责摆位置。
     private var metaLine: String {
         item.durationText.isEmpty ? item.metaLine : "\(item.metaLine) · \(item.durationText)"
     }
@@ -161,33 +193,81 @@ struct DetailScreen: View {
         .background(Color.black.opacity(0.5), in: Capsule())
     }
 
+    // MARK: - 取地址
+
+    /// 进页面时预取。失败不弹提示——用户还没点任何东西，不该先被红字吓一下。
+    private func prefetch() async {
+        // 截图/预览模式没有网络层：此时不能把「没配 client」显示成「取不到地址」，
+        // 否则每张详情图都会挂一条红字，而它反映的不是产品行为。
+        guard !library.isOffline else { return }
+        guard item.playbackAvailable, prepare == .idle else { return }
+        _ = await ensurePlayback(silent: true)
+    }
+
+    /// 拿播放地址。已有就复用，没有就取一次；失败后再调用即「手动重试」。
+    private func ensurePlayback(silent: Bool = false) async -> APIPlaybackPayload? {
+        switch prepare {
+        case .ready(let payload):
+            return payload
+        case .loading:
+            return nil
+        case .unavailable:
+            if !silent { notice = "该内容没有视频流。" }
+            return nil
+        case .unsupported(let message):
+            if !silent { notice = message }
+            return nil
+        case .idle, .failed:
+            break
+        }
+
+        prepare = .loading
+        if !silent { notice = nil }
+        do {
+            if let payload = try await library.playback(for: item.id) {
+                prepare = .ready(payload)
+                return payload
+            }
+            prepare = .unavailable
+            if !silent { notice = "该内容没有视频流。" }
+            return nil
+        } catch let failure as ClipNoteClient.Failure {
+            // 501 是「平台没接」，不是「这次失败」。重试一万次也还是一样。
+            if case .http(let status, _, let message) = failure, status == 501 {
+                let text = message ?? "这个平台的视频暂时还无法重新播放。"
+                prepare = .unsupported(text)
+                if !silent { notice = text }
+                return nil
+            }
+            prepare = .failed(failure.displayMessage)
+            if !silent { notice = failure.displayMessage }
+            return nil
+        } catch {
+            let message = "取播放地址失败，请稍后重试。"
+            prepare = .failed(message)
+            if !silent { notice = message }
+            return nil
+        }
+    }
+
+    // MARK: - 播放
+
     private func startPlayback() async {
-        // 已下载优先：本地文件离线可看，也不消耗一次地址解析
+        // 已下载优先：本地文件离线可看，也不必再去要一次地址
         if let local = downloads.localURL(for: item.id) {
             play(local)
             return
         }
-        guard player == nil else {
-            player?.play()
+
+        if let player {
+            player.play()
             playing = true
             return
         }
 
-        isPreparing = true
-        notice = nil
-        defer { isPreparing = false }
-
-        do {
-            guard let url = try await library.playbackURL(for: item.id) else {
-                notice = "该内容没有视频流。"
-                return
-            }
-            play(url)
-        } catch let failure as ClipNoteClient.Failure {
-            notice = failure.displayMessage
-        } catch {
-            notice = "取播放地址失败，请稍后重试。"
-        }
+        guard let payload = await ensurePlayback(),
+              let url = URL(string: payload.url) else { return }
+        play(url)
     }
 
     private func play(_ url: URL) {
@@ -204,7 +284,9 @@ struct DetailScreen: View {
             Task { @MainActor in
                 playing = false
                 player = nil
-                notice = "这个视频暂时播不了：地址大概已经过期，服务端还没接重新解析。"
+                // 退回 idle，下次点播放会自动重新取一次地址
+                prepare = .idle
+                notice = "这个视频暂时播不了，地址可能已经过期。再点一次播放会重新取。"
             }
         }
 
@@ -254,7 +336,7 @@ struct DetailScreen: View {
                     Task { await startDownload() }
                 }
 
-                Text("视频文件由服务端代理直链下发。地址会过期，失效时自动重新解析，不需要手动刷新。")
+                Text(prepareHint)
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -262,22 +344,29 @@ struct DetailScreen: View {
         }
     }
 
-    private func startDownload() async {
-        isPreparing = true
-        notice = nil
-        defer { isPreparing = false }
-
-        do {
-            guard let url = try await library.playbackURL(for: item.id) else {
-                notice = "该内容没有可下载的视频。"
-                return
-            }
-            downloads.start(item.id, url: url)
-        } catch let failure as ClipNoteClient.Failure {
-            notice = failure.displayMessage
-        } catch {
-            notice = "取下载地址失败，请稍后重试。"
+    /// 按钮下面那行字：把「要下多大」说在前面
+    private var prepareHint: String {
+        switch prepare {
+        case .ready(let payload):
+            let summary = payload.sizeSummary
+            return summary.isEmpty
+                ? "地址会过期，失效时自动重新解析。"
+                : "\(summary) · 地址失效时自动重新解析。"
+        case .failed(let message):
+            return "\(message) 点上面的按钮可以重试。"
+        case .unsupported(let message):
+            return message
+        case .unavailable:
+            return "该内容没有可下载的视频。"
+        case .idle, .loading:
+            return "地址会过期，失效时自动重新解析。"
         }
+    }
+
+    private func startDownload() async {
+        guard let payload = await ensurePlayback(),
+              let url = URL(string: payload.url) else { return }
+        downloads.start(item.id, url: url)
     }
 
     private var sizeText: String {
