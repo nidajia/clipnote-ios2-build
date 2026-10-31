@@ -18,6 +18,7 @@ struct DetailScreen: View {
     @State private var playing = false
     @State private var isPreparing = false
     @State private var notice: String?
+    @State private var statusObservation: NSKeyValueObservation?
 
     /// 简介太短就不整块渲染。
     ///
@@ -75,6 +76,10 @@ struct DetailScreen: View {
         .background(Color.cnBg)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .onChange(of: downloads.lastFailure) { _, failure in
+            guard let failure, failure.id == item.id else { return }
+            notice = failure.message
+        }
     }
 
     /// 服务端已经给好 `metaLine` 和 `durationText`，这里只负责摆位置，
@@ -186,9 +191,23 @@ struct DetailScreen: View {
     }
 
     private func play(_ url: URL) {
-        let newPlayer = AVPlayer(url: url)
+        let playerItem = AVPlayerItem(url: url)
+        let newPlayer = AVPlayer(playerItem: playerItem)
         player = newPlayer
         playing = true
+        notice = nil
+
+        // 地址过期时 AVPlayer **不会**抛错，它只是一直转圈。
+        // 不观察 status 的话，用户看到的就是「点了没反应」——最差的一种失败。
+        statusObservation = playerItem.observe(\.status, options: [.new]) { observed, _ in
+            guard observed.status == .failed else { return }
+            Task { @MainActor in
+                playing = false
+                player = nil
+                notice = "这个视频暂时播不了：地址大概已经过期，服务端还没接重新解析。"
+            }
+        }
+
         newPlayer.play()
     }
 

@@ -8,6 +8,12 @@ struct DownloadRecord: Codable {
     var finishedAt: Date
 }
 
+/// 下载失败的原因，按条目 id 归位，便于界面显示在对应位置。
+struct DownloadFailure: Identifiable, Equatable {
+    var id: String
+    var message: String
+}
+
 /// 下载与本地文件索引。
 ///
 /// 核心约束：**状态只依赖磁盘**。杀进程重启后 `records` 由 `downloads.json`
@@ -19,6 +25,11 @@ struct DownloadRecord: Codable {
 final class DownloadStore: ObservableObject {
     @Published private(set) var records: [String: DownloadRecord] = [:]
     @Published private(set) var progress: [String: Double] = [:]
+    /// 最近一次下载失败的原因。
+    ///
+    /// 没有它，失败是**完全静默**的：进度条消失，什么都没变，
+    /// 用户只会以为「点了没反应」。这是最差的一种失败方式。
+    @Published private(set) var lastFailure: DownloadFailure?
 
     private let directory: URL
     private let indexURL: URL
@@ -62,6 +73,7 @@ final class DownloadStore: ObservableObject {
         let k = id
         guard records[k] == nil, progress[k] == nil else { return }
         progress[k] = 0
+        if lastFailure?.id == k { lastFailure = nil }
 
         downloader.download(from: url) { [weak self] value in
             self?.progress[k] = value
@@ -69,18 +81,30 @@ final class DownloadStore: ObservableObject {
             guard let self else { return }
             self.progress[k] = nil
 
-            guard case .success(let temporary) = result else { return }
-            let fileName = "\(Self.fileStem(k)).mp4"
-            let destination = self.directory.appendingPathComponent(fileName)
-            try? FileManager.default.removeItem(at: destination)
-            do {
-                try FileManager.default.moveItem(at: temporary, to: destination)
-                let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
-                let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-                self.records[k] = DownloadRecord(fileName: fileName, byteCount: size, finishedAt: Date())
-                self.save()
-            } catch {
-                // 移动失败就当这次下载没发生，不要把半截文件写进索引
+            switch result {
+            case .failure(let error):
+                let code = (error as NSError).code
+                // 403 是签名过期，重试同一个地址不会好。这句话要能看懂。
+                let message = code == 403 || code == -1011
+                    ? "视频源拒绝了请求，地址大概已过期。服务端还没接重新解析。"
+                    : (error as NSError).localizedDescription
+                self.lastFailure = DownloadFailure(id: k, message: message)
+                return
+
+            case .success(let temporary):
+                let fileName = "\(Self.fileStem(k)).mp4"
+                let destination = self.directory.appendingPathComponent(fileName)
+                try? FileManager.default.removeItem(at: destination)
+                do {
+                    try FileManager.default.moveItem(at: temporary, to: destination)
+                    let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
+                    let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+                    self.records[k] = DownloadRecord(fileName: fileName, byteCount: size, finishedAt: Date())
+                    self.save()
+                } catch {
+                    // 移动失败就当这次下载没发生，不要把半截文件写进索引
+                    self.lastFailure = DownloadFailure(id: k, message: "保存文件失败：\(error.localizedDescription)")
+                }
             }
         }
     }
