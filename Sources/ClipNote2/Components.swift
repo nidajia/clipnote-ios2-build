@@ -1,24 +1,5 @@
 import SwiftUI
 
-// MARK: - 列表行数据
-//
-// 这一阶段还没有网络层，先用本地模型喂画廊与快照。
-// 注意：它不承担任何「字段映射」职责——字段对应关系由服务端接口决定，
-// 客户端不得在内置代码里复刻（见 HANDOVER 硬约束 5）。
-
-struct ItemRowModel: Identifiable {
-    let id = UUID()
-    var title: String
-    var platform: String
-    var author: String
-    var duration: String
-    var isDownloaded: Bool
-    var coverTop: Color
-    var coverBottom: Color
-
-    var metaLine: String { "\(platform) · \(author)" }
-}
-
 // MARK: - 缩略图
 
 struct Thumbnail: View {
@@ -77,7 +58,7 @@ struct DownloadBadge: View {
 // MARK: - 条目行
 
 struct ItemRow: View {
-    var model: ItemRowModel
+    var model: Item
 
     var body: some View {
         HStack(spacing: Metric.space3) {
@@ -114,8 +95,9 @@ struct ItemRow: View {
             bottom: 0,
             trailing: Metric.pagePad
         ))
-        .listRowSeparator(.hidden)
         .listRowBackground(Color.cnBg)
+        // 分隔线交给 List 控制（HomeScreen 里用 listRowSeparatorTint），
+        // 行本身不硬关掉，否则调用方无法再开。
         .accessibilityElement(children: .combine)
     }
 }

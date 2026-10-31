@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// 组件画廊：把四个基础组件的所有状态平铺出来。
+/// 组件画廊：把基础组件的所有状态平铺出来。
 ///
-/// 两个用途：
+/// 用途：
 /// 1. 装机后肉眼比对画布（不需要走业务路径）
 /// 2. CI 快照测试的渲染源（GallerySnapshotTests）
 ///
@@ -10,29 +10,7 @@ import SwiftUI
 /// 滚动容器会让截图缺掉下半截。
 struct ComponentGallery: View {
 
-    private let samples: [ItemRowModel] = [
-        ItemRowModel(
-            title: "为什么大多数人的笔记系统最后都会废掉",
-            platform: "B 站", author: "老蒋巨靠谱", duration: "12:34",
-            isDownloaded: true,
-            coverTop: Color(red: 0.24, green: 0.30, blue: 0.44),
-            coverBottom: Color(red: 0.11, green: 0.13, blue: 0.20)
-        ),
-        ItemRowModel(
-            title: "一次讲清楚：为什么你收藏的视频从来不看第二遍",
-            platform: "抖音", author: "视频号研究院", duration: "08:12",
-            isDownloaded: false,
-            coverTop: Color(red: 0.42, green: 0.23, blue: 0.23),
-            coverBottom: Color(red: 0.16, green: 0.09, blue: 0.09)
-        ),
-        ItemRowModel(
-            title: "笔记工具选型的三个真实标准",
-            platform: "小红书", author: "顾屿", duration: "05:48",
-            isDownloaded: true,
-            coverTop: Color(red: 0.35, green: 0.29, blue: 0.18),
-            coverBottom: Color(red: 0.14, green: 0.11, blue: 0.07)
-        )
-    ]
+    private var samples: [Item] { Array(Item.demoLibrary.prefix(3)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.space6) {
