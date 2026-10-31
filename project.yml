@@ -1,0 +1,67 @@
+# 片记 ClipNote v2 —— 重做工程（第一包）
+
+# 与旧的 ios/ 完全独立：新 Bundle ID、新目录、不读旧工程任何文件。
+# 当前阶段只有一个目标：把「组件 + CI 截图验收」这条链路跑通。
+
+name: ClipNote2
+
+options:
+  bundleIdPrefix: com.clipnote
+  developmentLanguage: zh-Hans
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    # 这里不关签名：模拟器用 ad-hoc 签名即可，显式关掉反而可能让测试包加载失败。
+    # 将来要出 device ipa 时，在 xcodebuild 命令行上传 CODE_SIGNING_ALLOWED=NO，
+    # 不要写进工程设置。
+
+targets:
+  ClipNote2:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/ClipNote2
+    settings:
+      base:
+        PRODUCT_NAME: ClipNote2
+        PRODUCT_BUNDLE_IDENTIFIER: com.clipnote.v2
+        MARKETING_VERSION: "8.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "片记"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+
+  ClipNote2Tests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/ClipNote2Tests
+    dependencies:
+      - target: ClipNote2
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clipnote.v2.tests
+        GENERATE_INFOPLIST_FILE: YES
+        # 显式指定宿主，避免在 CI 上退化成逻辑测试（那样 Bundle.main 取不到 Assets 里的颜色）
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/ClipNote2.app/ClipNote2"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  ClipNote2:
+    build:
+      targets:
+        ClipNote2: all
+        ClipNote2Tests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - ClipNote2Tests

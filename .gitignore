@@ -1,0 +1,10 @@
+# 构建产物
+build/
+DerivedData/
+*.xcodeproj
+
+# 快照测试产物（作为 artifact 上传，不进版本库）
+screenshots/
+
+# macOS
+.DS_Store

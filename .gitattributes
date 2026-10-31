@@ -1,0 +1,6 @@
+# 统一 LF：workflow 的 run: 脚本一旦带上 CRLF，会在 macOS runner 上报
+# "command not found" 之类难以定位的错误。
+* text=auto eol=lf
+
+*.png binary
+*.xcresult binary
