@@ -36,22 +36,31 @@ final class DownloadStore: ObservableObject {
 
     // MARK: - 查询
 
-    func isDownloaded(_ id: UUID) -> Bool { records[key(id)] != nil }
+    func isDownloaded(_ id: String) -> Bool { records[id] != nil }
 
-    func localURL(for id: UUID) -> URL? {
-        guard let record = records[key(id)] else { return nil }
+    func localURL(for id: String) -> URL? {
+        guard let record = records[id] else { return nil }
         return directory.appendingPathComponent(record.fileName)
     }
 
-    func byteCount(for id: UUID) -> Int64 { records[key(id)]?.byteCount ?? 0 }
+    func byteCount(for id: String) -> Int64 { records[id]?.byteCount ?? 0 }
 
-    func progressValue(for id: UUID) -> Double? { progress[key(id)] }
+    /// 「我 · 下载与存储」用
+    var downloadedCount: Int { records.count }
+
+    var totalBytes: Int64 { records.values.reduce(0) { $0 + $1.byteCount } }
+
+    func progressValue(for id: String) -> Double? { progress[id] }
 
     // MARK: - 动作
 
-    func start(_ item: Item) {
-        let k = key(item.id)
-        guard let url = item.mediaURL, records[k] == nil, progress[k] == nil else { return }
+    /// 下载一条内容。
+    ///
+    /// `url` 由调用方按需从 `/api/v2/items/{id}/playback` 取，`DownloadStore` 不猜地址——
+    /// 视频流地址会过期，缓存进模型里就会在几小时后悄悄失效。
+    func start(_ id: String, url: URL) {
+        let k = id
+        guard records[k] == nil, progress[k] == nil else { return }
         progress[k] = 0
 
         downloader.download(from: url) { [weak self] value in
@@ -61,7 +70,7 @@ final class DownloadStore: ObservableObject {
             self.progress[k] = nil
 
             guard case .success(let temporary) = result else { return }
-            let fileName = "\(k).mp4"
+            let fileName = "\(Self.fileStem(k)).mp4"
             let destination = self.directory.appendingPathComponent(fileName)
             try? FileManager.default.removeItem(at: destination)
             do {
@@ -76,14 +85,22 @@ final class DownloadStore: ObservableObject {
         }
     }
 
-    func cancel(_ id: UUID) {
+    func cancel(_ id: String) {
         downloader.cancelCurrent()
-        progress[key(id)] = nil
+        progress[id] = nil
     }
 
     // MARK: - 持久化
 
-    private func key(_ id: UUID) -> String { id.uuidString }
+    /// 服务端 id 直接当索引键：它是稳定的，重装、换设备、重新同步之后都一样。
+    /// 上一版用 `UUID()`，每次重建条目就换一把钥匙，已下载状态永远对不上。
+    ///
+    /// 文件名要单独处理：id 可能含 `/` 等路径字符，不能直接当文件名。
+    static func fileStem(_ id: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let cleaned = id.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "_" }
+        return String(cleaned).isEmpty ? "item" : String(cleaned)
+    }
 
     private func load() {
         guard let data = try? Data(contentsOf: indexURL),
@@ -111,17 +128,17 @@ final class DownloadStore: ObservableObject {
 
     // MARK: - 截图与测试用
 
-    func seedDownloading(_ id: UUID, value: Double) {
-        progress[key(id)] = value
+    func seedDownloading(_ id: String, value: Double) {
+        progress[id] = value
     }
 
-    func seedDownloaded(_ id: UUID, byteCount: Int64 = 48_200_000) {
-        let fileName = "\(key(id)).mp4"
+    func seedDownloaded(_ id: String, byteCount: Int64 = 48_200_000) {
+        let fileName = "\(Self.fileStem(id)).mp4"
         let destination = directory.appendingPathComponent(fileName)
         if !FileManager.default.fileExists(atPath: destination.path) {
             try? Data(repeating: 0, count: 2048).write(to: destination)
         }
-        records[key(id)] = DownloadRecord(fileName: fileName, byteCount: byteCount, finishedAt: Date())
+        records[id] = DownloadRecord(fileName: fileName, byteCount: byteCount, finishedAt: Date())
         save()
     }
 }

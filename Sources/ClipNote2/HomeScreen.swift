@@ -14,21 +14,26 @@ enum HomeFilter: String, CaseIterable, Identifiable {
 ///
 /// 结构选择：系统 `List` 而不是 `ScrollView + LazyVStack`。
 /// 后者会让 `swipeActions` 失效——上一版就栽在这里。
+///
+/// 数据来自 `LibraryStore`（线上 `/api/v2/library`）。
+/// 「是否已下载」只问 `DownloadStore`，行内不再存第二份状态。
 struct HomeScreen: View {
-    var items: [Item]
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var downloads: DownloadStore
+    @Environment(\.colorScheme) private var scheme
 
     @State private var query = ""
     @State private var filter: HomeFilter = .all
     @State private var showImport = false
     @State private var selected: Item?
-    @Environment(\.colorScheme) private var scheme
 
     /// `initialSelection` 只给截图用：让详情页以「被 push 进去」的形态出现，
     /// 否则它会是导航栈的根，截图上没有返回按钮。
-    init(items: [Item], initialSelection: Item? = nil) {
-        self.items = items
+    init(initialSelection: Item? = nil) {
         _selected = State(initialValue: initialSelection)
     }
+
+    private var items: [Item] { library.items }
 
     private var filtered: [Item] {
         var list = items
@@ -36,7 +41,7 @@ struct HomeScreen: View {
         case .all: break
         case .video: list = list.filter { $0.kind == .video }
         case .note: list = list.filter { $0.kind == .note }
-        case .downloaded: list = list.filter(\.isDownloaded)
+        case .downloaded: list = list.filter { downloads.isDownloaded($0.id) }
         }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return list }
@@ -77,9 +82,26 @@ struct HomeScreen: View {
 
     @ViewBuilder
     private var content: some View {
-        if items.isEmpty {
-            EmptyStateView(onImport: { showImport = true })
-        } else if filtered.isEmpty {
+        // 已经有数据时不显示全屏加载/失败，避免刷新把列表整块换掉闪一下
+        if !items.isEmpty {
+            listOrNoResults
+        } else {
+            switch library.phase {
+            case .idle, .loading:
+                LoadingStateView()
+            case .failed(let message):
+                LoadFailureView(message: message) {
+                    Task { await library.reload() }
+                }
+            case .loaded:
+                EmptyStateView(onImport: { showImport = true })
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var listOrNoResults: some View {
+        if filtered.isEmpty {
             // 有数据但筛不出来，不能复用「还没有条目」的文案
             NoResultsView {
                 query = ""
@@ -90,7 +112,7 @@ struct HomeScreen: View {
                 Button {
                     selected = item
                 } label: {
-                    ItemRow(model: item)
+                    ItemRow(model: item, isDownloaded: downloads.isDownloaded(item.id))
                 }
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets(
@@ -141,6 +163,60 @@ struct HomeScreen: View {
         .padding(.vertical, 6)
         .background(Color.cnBrand, in: Capsule())
         .accessibilityLabel("导入")
+    }
+}
+
+// MARK: - 加载中
+
+/// 用 `RingSpinner` 而不是 `ProgressView`：后者在离屏渲染下会变成橙色占位方块。
+/// 现在整屏已经改走 `simctl`，但保持一致仍更安全。
+struct LoadingStateView: View {
+    var body: some View {
+        VStack(spacing: Metric.space4) {
+            RingSpinner(size: 28, color: .cnBrand)
+            Text("正在同步云端快照")
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk3)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - 加载失败
+
+/// 这条态不是补丁：线上网关对每个路径都要求 `sharecode`，
+/// 未知路径还会回落 HTML。失败是常态，必须有话说。
+struct LoadFailureView: View {
+    var message: String
+    var onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: Metric.space4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.cnCard2)
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundStyle(Color.cnInk3)
+            }
+            .frame(width: 64, height: 64)
+
+            Text("没能拉到云端数据")
+                .font(.cnTitle)
+                .foregroundStyle(Color.cnInk)
+
+            Text(message)
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk3)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 280)
+
+            PrimaryButton(title: "重试", action: onRetry)
+                .frame(width: 180)
+                .padding(.top, Metric.space1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, Metric.pagePad)
     }
 }
 

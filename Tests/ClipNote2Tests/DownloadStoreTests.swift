@@ -18,7 +18,8 @@ final class DownloadStoreTests: XCTestCase {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let itemID = UUID()
+        // 服务端 id 是字符串，不是 UUID。用 UUID 会让状态在重新同步后对不上。
+        let itemID = "mvrl0axm2j64w"
 
         // 第一次运行：种一条已下载记录（会落盘 + 建文件）
         let first = DownloadStore(directory: directory)
@@ -41,7 +42,7 @@ final class DownloadStoreTests: XCTestCase {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let itemID = UUID()
+        let itemID = "seed0000000002"
         let first = DownloadStore(directory: directory)
         first.seedDownloaded(itemID)
         let fileURL = try XCTUnwrap(first.localURL(for: itemID))
@@ -57,7 +58,7 @@ final class DownloadStoreTests: XCTestCase {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let itemID = UUID()
+        let itemID = "seed0000000003"
         let first = DownloadStore(directory: directory)
         first.seedDownloading(itemID, value: 0.62)
         XCTAssertEqual(first.progressValue(for: itemID) ?? 0, 0.62, accuracy: 0.001)
@@ -66,5 +67,21 @@ final class DownloadStoreTests: XCTestCase {
         let second = DownloadStore(directory: directory)
         XCTAssertNil(second.progressValue(for: itemID))
         XCTAssertFalse(second.isDownloaded(itemID))
+    }
+
+    /// 服务端 id 可能带 `/` 之类的路径字符，直接当文件名会写到别的目录去
+    func testFileNameIsSafeForPathLikeIdentifiers() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let weird = "a/b/../c"
+        let store = DownloadStore(directory: directory)
+        store.seedDownloaded(weird, byteCount: 1)
+
+        let url = try XCTUnwrap(store.localURL(for: weird))
+        XCTAssertEqual(url.deletingLastPathComponent().standardizedFileURL.path,
+                       directory.standardizedFileURL.path,
+                       "文件必须落在下载目录内，不能被路径字符带出去")
+        XCTAssertFalse(url.lastPathComponent.contains("/"))
     }
 }

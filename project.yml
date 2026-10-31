@@ -24,7 +24,13 @@ targets:
     type: application
     platform: iOS
     sources:
+      # 显式声明资源：xcodegen 对 .json 的归类靠猜，猜错就会在 CI 上
+      # 得到「Bundle.main 里没有 library-sample.json」，而这件事本地看不出来。
       - path: Sources/ClipNote2
+        excludes:
+          - "Resources/**"
+      - path: Sources/ClipNote2/Resources
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: ClipNote2
@@ -42,6 +48,11 @@ targets:
     platform: iOS
     sources:
       - path: Tests/ClipNote2Tests
+        excludes:
+          - "Fixtures/**"
+      # 契约基准：从线上抓下来的真实响应，解码测试的对象
+      - path: Tests/ClipNote2Tests/Fixtures
+        buildPhase: resources
     dependencies:
       - target: ClipNote2
     settings:

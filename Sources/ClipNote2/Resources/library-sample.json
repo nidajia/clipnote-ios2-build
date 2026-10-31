@@ -1,0 +1,111 @@
+{
+  "libraryVersion": "lv_1793265909_1",
+  "generatedAt": 1793430625,
+  "count": 8,
+  "items": [
+    {
+      "id": "mvrl0axm2j64w",
+      "kind": "video",
+      "title": "互联网泡沫重演？AI泡沫为何比2000年更凶险",
+      "metaLine": "B 站 · 幽州-节度使",
+      "durationSeconds": 1017,
+      "durationText": "16:57",
+      "summary": "感谢索导的配音@索拉KG5TEP",
+      "cover": null,
+      "playback": { "available": true },
+      "publishedAt": 1793159735,
+      "source": { "platform": "bilibili" }
+    },
+    {
+      "id": "seed0000000002",
+      "kind": "video",
+      "title": "为什么大多数人的笔记系统最后都会废掉",
+      "metaLine": "B 站 · 老蒋巨靠谱",
+      "durationSeconds": 754,
+      "durationText": "12:34",
+      "summary": "收藏夹不是知识库。这条视频把「为什么你收藏了却从不回看」拆成三个层次：入口太多、没有回头路、缺少标记。最后给了一套只用两分钟就能跑起来的做法。",
+      "cover": null,
+      "playback": { "available": true },
+      "publishedAt": 1793090000,
+      "source": { "platform": "bilibili" }
+    },
+    {
+      "id": "seed0000000003",
+      "kind": "video",
+      "title": "一次讲清楚：为什么你收藏的视频从来不看第二遍",
+      "metaLine": "抖音 · 视频号研究院",
+      "durationSeconds": 492,
+      "durationText": "08:12",
+      "summary": "把「收藏」这个动作拆开看，它满足的是占有感而不是学习需求。视频给了两组对照实验的数据。",
+      "cover": null,
+      "playback": { "available": true },
+      "publishedAt": 1793050000,
+      "source": { "platform": "douyin" }
+    },
+    {
+      "id": "seed0000000004",
+      "kind": "video",
+      "title": "我用三个月把 2000 条收藏整理成了 12 个主题",
+      "metaLine": "B 站 · 硅谷堂",
+      "durationSeconds": 1267,
+      "durationText": "21:07",
+      "summary": "从 2000 条到 12 个主题的完整过程：怎么定主题、怎么处理跨主题的条目、怎么避免整理本身变成新的负担。",
+      "cover": null,
+      "playback": { "available": true },
+      "publishedAt": 1793010000,
+      "source": { "platform": "bilibili" }
+    },
+    {
+      "id": "seed0000000005",
+      "kind": "note",
+      "title": "笔记工具选型的三个真实标准",
+      "metaLine": "小红书 · 顾屿",
+      "durationSeconds": 348,
+      "durationText": "05:48",
+      "summary": "不看功能对比表，只看三件事：导出是否无损、搜索是否够快、离线是否可用。",
+      "cover": null,
+      "playback": { "available": false, "reason": "NOTE" },
+      "publishedAt": 1792980000,
+      "source": { "platform": "xiaohongshu" }
+    },
+    {
+      "id": "seed0000000006",
+      "kind": "video",
+      "title": "每天 10 分钟，把碎片信息变成可复用的知识",
+      "metaLine": "B 站 · 刘飞",
+      "durationSeconds": 982,
+      "durationText": "16:22",
+      "summary": "一套每天十分钟的固定动作：收进来、标一句、每周回看一次。重点在「每周回看」这一步。",
+      "cover": null,
+      "playback": { "available": true },
+      "publishedAt": 1792940000,
+      "source": { "platform": "bilibili" }
+    },
+    {
+      "id": "seed0000000007",
+      "kind": "video",
+      "title": "为什么「收藏夹吃灰」是设计问题",
+      "metaLine": "微信视频号 · 少数派",
+      "durationSeconds": 575,
+      "durationText": "09:35",
+      "summary": "把收藏夹设计成一个只进不出的仓库，用户就一定会忘记它。这是产品结构的问题，不是自制力的问题。",
+      "cover": null,
+      "playback": { "available": true },
+      "publishedAt": 1792900000,
+      "source": { "platform": "channels" }
+    },
+    {
+      "id": "seed0000000008",
+      "kind": "note",
+      "title": "深度工作：把注意力当成预算来管",
+      "metaLine": "B 站 · 得意忘形",
+      "durationSeconds": 2590,
+      "durationText": "43:10",
+      "summary": "注意力像预算，用一点少一点。这期聊的是怎么给一天里最难的那两小时留出空档。",
+      "cover": null,
+      "playback": { "available": false, "reason": "NOTE" },
+      "publishedAt": 1792860000,
+      "source": { "platform": "bilibili" }
+    }
+  ]
+}

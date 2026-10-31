@@ -1,0 +1,26 @@
+{
+  "libraryVersion": "lv_1793265909_1",
+  "generatedAt": 1793430625,
+  "count": 1,
+  "items": [
+    {
+      "id": "mvrl0axm2j64w",
+      "kind": "video",
+      "title": "互联网泡沫重演？AI泡沫为何比2000年更凶险",
+      "metaLine": "B 站 · 幽州-节度使",
+      "durationSeconds": 1017,
+      "durationText": "16:57",
+      "summary": "感谢索导的配音@索拉KG5TEP",
+      "cover": {
+        "url": "https://clipnote.app.workbuddy.host/proxy?sharecode=E2ZVITFINI&u=http%3A%2F%2Fi0.hdslb.com%2Fbfs%2Farchive%2Ff6ca43f9997f0bc472824d7434f637e1bdcf2db8.jpg&ref=https%3A%2F%2Fwww.bilibili.com%2F"
+      },
+      "playback": {
+        "available": true
+      },
+      "publishedAt": 1793159735,
+      "source": {
+        "platform": "bilibili"
+      }
+    }
+  ]
+}

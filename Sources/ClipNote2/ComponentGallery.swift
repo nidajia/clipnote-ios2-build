@@ -10,7 +10,7 @@ import SwiftUI
 /// 滚动容器会让截图缺掉下半截。
 struct ComponentGallery: View {
 
-    private var samples: [Item] { Array(Item.demoLibrary.prefix(3)) }
+    private var samples: [Item] { Array(Item.sampleLibrary.prefix(3)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.space6) {
@@ -45,7 +45,8 @@ struct ComponentGallery: View {
         section("条目行 · ItemRow · 已下载 / 未下载") {
             VStack(spacing: 0) {
                 ForEach(Array(samples.enumerated()), id: \.element.id) { index, item in
-                    ItemRow(model: item)
+                    // 第一行给「已下载」，后两行未下载：两种状态都要能比对
+                    ItemRow(model: item, isDownloaded: index == 0)
                     if index < samples.count - 1 {
                         Rectangle()
                             .fill(Color.cnCard2)

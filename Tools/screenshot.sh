@@ -46,14 +46,21 @@ shot() {
   echo "  -> screenshots/$name.png"
 }
 
-shot home-list  list  light
-shot home-empty empty light
-shot me         me    light
-shot home-dark  list  dark
+# 走真实解码路径：App 从 bundle 里的 library-sample.json 解码后渲染，
+# 所以每张图同时证明「解码对不对」和「渲染对不对」，且不依赖网络。
+shot home-list    list    light
+shot home-loading loading light
+shot home-failed  failed  light
+shot home-empty   empty   light
+shot me           me      light
 
 shot detail-idle        detail             light
+shot detail-note        detail-note        light
 shot detail-downloading detail-downloading light
 shot detail-downloaded  detail-downloaded  light
+
+shot home-dark   list   dark
+shot detail-dark detail dark
 
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 

@@ -3,28 +3,43 @@ import SwiftUI
 // MARK: - 缩略图
 
 struct Thumbnail: View {
+    var url: URL?
     var top: Color
     var bottom: Color
     var duration: String
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
+            // 占位渐变永远在底层：图没加载出来、加载失败、离线，
+            // 都会落在这层上，不会出现一块空白。
             LinearGradient(
                 colors: [top, bottom],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
 
-            Text(duration)
-                .font(.cnDuration)
-                .foregroundStyle(.white)
-                .padding(.horizontal, Metric.space1)
-                .padding(.vertical, 1.5)
-                .background(
-                    Color.black.opacity(0.72),
-                    in: RoundedRectangle(cornerRadius: 4, style: .continuous)
-                )
-                .padding(Metric.space1)
+            if let url {
+                AsyncImage(url: url, transaction: Transaction(animation: nil)) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    }
+                }
+            }
+
+            if !duration.isEmpty {
+                Text(duration)
+                    .font(.cnDuration)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, Metric.space1)
+                    .padding(.vertical, 1.5)
+                    .background(
+                        Color.black.opacity(0.72),
+                        in: RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    )
+                    .padding(Metric.space1)
+            }
         }
         .frame(width: Metric.coverWidth, height: Metric.coverHeight)
         .clipShape(RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous))
@@ -59,10 +74,18 @@ struct DownloadBadge: View {
 
 struct ItemRow: View {
     var model: Item
+    /// 由 `DownloadStore` 传入，行内不自己判断。
+    /// 上一版这里读的是 `Item.isDownloaded`（演示数据），和详情页各说各话。
+    var isDownloaded: Bool = false
 
     var body: some View {
         HStack(spacing: Metric.space3) {
-            Thumbnail(top: model.coverTop, bottom: model.coverBottom, duration: model.duration)
+            Thumbnail(
+                url: model.coverURL,
+                top: model.coverTop,
+                bottom: model.coverBottom,
+                duration: model.durationText
+            )
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(model.title)
@@ -79,7 +102,7 @@ struct ItemRow: View {
                         .foregroundStyle(Color.cnInk3)
                         .lineLimit(1)
 
-                    if model.isDownloaded {
+                    if isDownloaded {
                         DownloadBadge()
                     }
                 }

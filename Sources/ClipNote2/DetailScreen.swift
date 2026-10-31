@@ -5,13 +5,26 @@ import SwiftUI
 ///
 /// 播放器先给封面 + 播放键，点了才创建 `AVPlayer`：
 /// 一来首帧稳定（截图可比），二来避免未点播就占用解码资源。
+///
+/// 播放地址**不在模型里**：视频流地址几小时后会过期，所以每次要播/要下载时
+/// 现取一次 `/api/v2/items/{id}/playback`。已下载的文件优先，离线也能看。
 struct DetailScreen: View {
     var item: Item
 
     @EnvironmentObject private var downloads: DownloadStore
+    @EnvironmentObject private var library: LibraryStore
 
     @State private var player: AVPlayer?
     @State private var playing = false
+    @State private var isPreparing = false
+    @State private var notice: String?
+
+    /// 简介太短就不整块渲染。
+    ///
+    /// 真实数据的 `desc` 常常只是「感谢索导的配音@索拉KG5TEP」——16 个字，
+    /// 挂一个「简介」小标题去压一句致谢，比留白更难看。
+    /// 20 这个阈值是产品判断，不是技术限制；要改就改这一处。
+    private var showsSummary: Bool { item.summary.count >= 20 }
 
     var body: some View {
         ScrollView {
@@ -25,28 +38,33 @@ struct DetailScreen: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    HStack(spacing: 6) {
-                        Text(item.metaLine)
-                        Text("·")
-                        Text(item.duration)
-                    }
-                    .font(.cnMeta)
-                    .foregroundStyle(Color.cnInk3)
-
-                    Rectangle()
-                        .fill(Color.cnHairline)
-                        .frame(height: 1)
-                        .padding(.vertical, Metric.space1)
-
-                    Text("简介")
-                        .font(.cnCaption)
+                    Text(metaLine)
+                        .font(.cnMeta)
                         .foregroundStyle(Color.cnInk3)
 
-                    Text(item.summary)
-                        .font(.cnChip)
-                        .foregroundStyle(Color.cnInk2)
-                        .lineSpacing(6)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if showsSummary {
+                        Rectangle()
+                            .fill(Color.cnHairline)
+                            .frame(height: 1)
+                            .padding(.vertical, Metric.space1)
+
+                        Text("简介")
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnInk3)
+
+                        Text(item.summary)
+                            .font(.cnChip)
+                            .foregroundStyle(Color.cnInk2)
+                            .lineSpacing(6)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let notice {
+                        Text(notice)
+                            .font(.cnMeta)
+                            .foregroundStyle(Color.cnRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     downloadSection
                         .padding(.top, Metric.space2)
@@ -57,6 +75,12 @@ struct DetailScreen: View {
         .background(Color.cnBg)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+    }
+
+    /// 服务端已经给好 `metaLine` 和 `durationText`，这里只负责摆位置，
+    /// 不拼平台名、不换算时长。
+    private var metaLine: String {
+        item.durationText.isEmpty ? item.metaLine : "\(item.metaLine) · \(item.durationText)"
     }
 
     // MARK: - 播放器
@@ -77,27 +101,91 @@ struct DetailScreen: View {
                             endPoint: .bottomTrailing
                         )
 
-                        Button(action: startPlayback) {
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(Color.cnInk)
-                                .frame(width: 56, height: 56)
-                                .background(Color.white.opacity(0.92), in: Circle())
+                        if let url = item.coverURL {
+                            AsyncImage(url: url, transaction: Transaction(animation: nil)) { phase in
+                                if case .success(let image) = phase {
+                                    image.resizable().scaledToFill()
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("播放")
+
+                        if item.playbackAvailable {
+                            playButton
+                        } else {
+                            noStreamBadge
+                        }
                     }
                 }
             }
             .clipped()
     }
 
-    private var playbackURL: URL? {
-        downloads.localURL(for: item.id) ?? item.mediaURL
+    private var playButton: some View {
+        Button {
+            Task { await startPlayback() }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(0.92))
+                    .frame(width: 56, height: 56)
+                if isPreparing {
+                    RingSpinner(size: 20, color: .cnInk)
+                } else {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(Color.cnInk)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isPreparing)
+        .accessibilityLabel("播放")
     }
 
-    private func startPlayback() {
-        guard let url = playbackURL else { return }
+    /// 没有视频流时给一句说明，而不是一个点了没反应的播放键
+    private var noStreamBadge: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "text.alignleft")
+                .font(.system(size: 11, weight: .semibold))
+            Text("该内容没有视频流")
+                .font(.cnCaption)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.5), in: Capsule())
+    }
+
+    private func startPlayback() async {
+        // 已下载优先：本地文件离线可看，也不消耗一次地址解析
+        if let local = downloads.localURL(for: item.id) {
+            play(local)
+            return
+        }
+        guard player == nil else {
+            player?.play()
+            playing = true
+            return
+        }
+
+        isPreparing = true
+        notice = nil
+        defer { isPreparing = false }
+
+        do {
+            guard let url = try await library.playbackURL(for: item.id) else {
+                notice = "该内容没有视频流。"
+                return
+            }
+            play(url)
+        } catch let failure as ClipNoteClient.Failure {
+            notice = failure.displayMessage
+        } catch {
+            notice = "取播放地址失败，请稍后重试。"
+        }
+    }
+
+    private func play(_ url: URL) {
         let newPlayer = AVPlayer(url: url)
         player = newPlayer
         playing = true
@@ -109,7 +197,13 @@ struct DetailScreen: View {
     @ViewBuilder
     private var downloadSection: some View {
         VStack(alignment: .leading, spacing: Metric.space3) {
-            if downloads.isDownloaded(item.id) {
+            if !item.playbackAvailable {
+                Text("这条内容以文字为主，没有可下载的视频。")
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+
+            } else if downloads.isDownloaded(item.id) {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 13, weight: .semibold))
@@ -119,7 +213,7 @@ struct DetailScreen: View {
                 .foregroundStyle(Color.cnGreen)
 
                 PrimaryButton(title: playing ? "正在播放" : "在本地播放") {
-                    startPlayback()
+                    Task { await startPlayback() }
                 }
 
                 Text("删除条目不会自动删除文件。清理请在「我 · 下载与存储」里进行。")
@@ -137,15 +231,33 @@ struct DetailScreen: View {
                     .foregroundStyle(Color.cnInk3)
 
             } else {
-                PrimaryButton(title: "下载到本地") {
-                    downloads.start(item)
+                PrimaryButton(title: "下载到本地", isLoading: isPreparing) {
+                    Task { await startDownload() }
                 }
 
-                Text("视频文件由服务端代理直链下发。B 站签名约 2 小时过期，失效时会自动重新解析，不需要手动刷新。")
+                Text("视频文件由服务端代理直链下发。地址会过期，失效时自动重新解析，不需要手动刷新。")
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    private func startDownload() async {
+        isPreparing = true
+        notice = nil
+        defer { isPreparing = false }
+
+        do {
+            guard let url = try await library.playbackURL(for: item.id) else {
+                notice = "该内容没有可下载的视频。"
+                return
+            }
+            downloads.start(item.id, url: url)
+        } catch let failure as ClipNoteClient.Failure {
+            notice = failure.displayMessage
+        } catch {
+            notice = "取下载地址失败，请稍后重试。"
         }
     }
 

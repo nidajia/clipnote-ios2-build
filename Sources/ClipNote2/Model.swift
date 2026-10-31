@@ -1,115 +1,131 @@
 import SwiftUI
 
-/// 条目类型。真实实现里由服务端给出，客户端只负责展示与筛选。
+/// 条目类型。由服务端下发，客户端只用于筛选与图标。
 enum ItemKind: String {
     case video
     case note
 }
 
-/// 首页条目。
+/// 首页条目：**已经拿到手的展示数据**。
 ///
-/// 这里只承载「已经拿到手的展示数据」。平台名、时长格式、已下载判定这类规则
-/// 一律由服务端决定，客户端不得内置（HANDOVER 硬约束 5）。
-/// 真实封面上线后把 `coverTop/coverBottom` 换成 URL + AsyncImage 即可。
+/// 与上一版最大的区别：这里不再有任何「拼装」行为。
+/// `metaLine`、`durationText` 都是服务端给的成品字符串，
+/// 客户端不拼平台名、不加分隔点、不做秒数换算（HANDOVER 硬约束 5）。
+///
+/// 也不再带 `isDownloaded`。「是否已下载」的唯一真相源是 `DownloadStore`；
+/// 上一版这里留了一个演示用的布尔，和 DownloadStore 各说各话，
+/// 正是要根除的那类问题。
 struct Item: Identifiable, Hashable {
-    let id: UUID
+    /// 服务端 id，字符串。不是 UUID——用 UUID 会让「已下载」状态在重装、
+    /// 换设备、重新同步之后全部对不上。
+    let id: String
     var kind: ItemKind
     var title: String
-    var platform: String
-    var author: String
-    var duration: String
+    var metaLine: String
+    var durationText: String
     var summary: String
-    var isDownloaded: Bool
-    /// 播放与下载的来源地址。第一包应当由服务端下发（经 /proxy 代理），
-    /// 现在还没接上接口，演示数据指向一个公开示例视频。
-    var mediaURL: URL?
+    var coverURL: URL?
+    /// `false` 不是错误，是「这类内容没有视频流」（笔记、图集）
+    var playbackAvailable: Bool
+    var publishedAt: Date?
+
+    /// 封面加载完成前的占位渐变。由 id 稳定派生，同一条永远同色，
+    /// 截图因此可复现——这是能用截图当证据的前提。
     var coverTop: Color
     var coverBottom: Color
 
-    var metaLine: String { "\(platform) · \(author)" }
+    init(api: APILibraryItem) {
+        self.id = api.id
+        self.kind = ItemKind(rawValue: api.kind) ?? .video
+        self.title = api.title
+        self.metaLine = api.metaLine
+        self.durationText = api.durationText
+        self.summary = api.summary
+        self.playbackAvailable = api.playback.available
+        self.publishedAt = api.publishedAt > 0
+            ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
+            : nil
 
+        if let raw = api.cover?.url, let url = URL(string: raw), !raw.isEmpty {
+            self.coverURL = url
+        } else {
+            self.coverURL = nil
+        }
+
+        let colors = Item.placeholderColors(for: id)
+        self.coverTop = colors.top
+        self.coverBottom = colors.bottom
+    }
+
+    /// 测试与预览用的直构入口，不经过服务端形状
     init(
-        id: UUID = UUID(),
+        id: String,
         kind: ItemKind = .video,
         title: String,
-        platform: String,
-        author: String,
-        duration: String,
+        metaLine: String,
+        durationText: String,
         summary: String = "",
-        isDownloaded: Bool,
-        mediaURL: URL? = nil,
-        coverTop: Color,
-        coverBottom: Color
+        coverURL: URL? = nil,
+        playbackAvailable: Bool = true,
+        publishedAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
         self.title = title
-        self.platform = platform
-        self.author = author
-        self.duration = duration
+        self.metaLine = metaLine
+        self.durationText = durationText
         self.summary = summary
-        self.isDownloaded = isDownloaded
-        self.mediaURL = mediaURL
-        self.coverTop = coverTop
-        self.coverBottom = coverBottom
+        self.coverURL = coverURL
+        self.playbackAvailable = playbackAvailable
+        self.publishedAt = publishedAt
+        let colors = Item.placeholderColors(for: id)
+        self.coverTop = colors.top
+        self.coverBottom = colors.bottom
     }
 }
 
-// MARK: - 演示数据
+// MARK: - 占位色
 
 extension Item {
-    /// 演示用的公开示例视频（约 2.5 MB，便于真机验证下载链路）
-    static let demoMedia = URL(string: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4")
+    /// 由 id 派生一组深色渐变。
+    ///
+    /// 不用 `hashValue`：它每次进程启动带随机种子，同一张封面在不同次截图里
+    /// 会变成不同颜色，图就不可比了。这里用 FNV-1a，跨进程稳定。
+    static func placeholderColors(for id: String) -> (top: Color, bottom: Color) {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in id.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        let hue = Double(hash % 360) / 360.0
+        return (
+            Color(hue: hue, saturation: 0.30, brightness: 0.40),
+            Color(hue: hue, saturation: 0.44, brightness: 0.15)
+        )
+    }
+}
 
-    /// 和画布 03 同一批标题，便于逐行比对
-    static let demoLibrary: [Item] = [
-        Item(title: "为什么大多数人的笔记系统最后都会废掉",
-             platform: "B 站", author: "老蒋巨靠谱", duration: "12:34",
-             summary: "收藏夹不是知识库。这条视频把「为什么你收藏了却从不回看」拆成三个层次：入口太多、没有回头路、缺少标记。最后给了一套只用两分钟就能跑起来的做法。",
-             isDownloaded: true, mediaURL: demoMedia,
-             coverTop: Color(red: 0.24, green: 0.30, blue: 0.44),
-             coverBottom: Color(red: 0.11, green: 0.13, blue: 0.20)),
+// MARK: - 样本库
+//
+// 只服务于截图与预览。运行时数据一律来自 `/api/v2/library`。
+// 内容与画布 03 的七行一一对应，便于逐行比对。
 
-        Item(title: "一次讲清楚：为什么你收藏的视频从来不看第二遍",
-             platform: "抖音", author: "视频号研究院", duration: "08:12",
-             summary: "把「收藏」这个动作拆开看，它满足的是占有感而不是学习需求。视频给了两组对照实验的数据。",
-             isDownloaded: false, mediaURL: demoMedia,
-             coverTop: Color(red: 0.42, green: 0.23, blue: 0.23),
-             coverBottom: Color(red: 0.16, green: 0.09, blue: 0.09)),
+extension Item {
+    /// 样本库的原始 JSON。截图入口走的是与线上完全相同的解码器，
+    /// 所以 CI 截图同时验证「解码对不对」和「渲染对不对」，且不依赖网络。
+    static let sampleData: Data? = {
+        guard let url = Bundle.main.url(forResource: "library-sample", withExtension: "json") else {
+            return nil
+        }
+        return try? Data(contentsOf: url)
+    }()
 
-        Item(title: "我用三个月把 2000 条收藏整理成了 12 个主题",
-             platform: "B 站", author: "硅谷堂", duration: "21:07",
-             summary: "从 2000 条到 12 个主题的完整过程：怎么定主题、怎么处理跨主题的条目、怎么避免整理本身变成新的负担。",
-             isDownloaded: true, mediaURL: demoMedia,
-             coverTop: Color(red: 0.18, green: 0.35, blue: 0.29),
-             coverBottom: Color(red: 0.09, green: 0.15, blue: 0.12)),
-
-        Item(kind: .note, title: "笔记工具选型的三个真实标准",
-             platform: "小红书", author: "顾屿", duration: "05:48",
-             summary: "不看功能对比表，只看三件事：导出是否无损、搜索是否够快、离线是否可用。",
-             isDownloaded: false,
-             coverTop: Color(red: 0.35, green: 0.29, blue: 0.18),
-             coverBottom: Color(red: 0.14, green: 0.11, blue: 0.07)),
-
-        Item(title: "每天 10 分钟，把碎片信息变成可复用的知识",
-             platform: "B 站", author: "刘飞", duration: "16:22",
-             summary: "一套每天十分钟的固定动作：收进来、标一句、每周回看一次。重点在「每周回看」这一步。",
-             isDownloaded: true, mediaURL: demoMedia,
-             coverTop: Color(red: 0.23, green: 0.23, blue: 0.35),
-             coverBottom: Color(red: 0.10, green: 0.10, blue: 0.15)),
-
-        Item(title: "为什么「收藏夹吃灰」是设计问题",
-             platform: "微信视频号", author: "少数派", duration: "09:35",
-             summary: "把收藏夹设计成一个只进不出的仓库，用户就一定会忘记它。这是产品结构的问题，不是自制力的问题。",
-             isDownloaded: false, mediaURL: demoMedia,
-             coverTop: Color(red: 0.29, green: 0.18, blue: 0.35),
-             coverBottom: Color(red: 0.12, green: 0.08, blue: 0.15)),
-
-        Item(kind: .note, title: "深度工作：把注意力当成预算来管",
-             platform: "B 站", author: "得意忘形", duration: "43:10",
-             summary: "注意力像预算，用一点少一点。这期聊的是怎么给一天里最难的那两小时留出空档。",
-             isDownloaded: true, mediaURL: demoMedia,
-             coverTop: Color(red: 0.18, green: 0.29, blue: 0.35),
-             coverBottom: Color(red: 0.07, green: 0.12, blue: 0.15))
-    ]
+    static let sampleLibrary: [Item] = {
+        guard let data = sampleData,
+              let library = try? JSONDecoder().decode(APILibrary.self, from: data)
+        else {
+            return []
+        }
+        return library.items.map(Item.init(api:))
+    }()
 }
