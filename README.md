@@ -1,28 +1,41 @@
-# 片记 ClipNote v2
+# ClipNote v2 —— 第一包重建
 
-第一包的**重建起点**。当前只做到第一步：把「组件 + CI 截图验收」这条链路跑通。
+与旧的 `ios/` 完全独立：新 Bundle ID（`com.clipnote.v2`）、新目录、不读旧工程任何文件，
+两边可以并存，互不影响。
 
-不是最终 App。首页、详情、下载那些都还没写。
+## 为什么要重做
 
-## 为什么不在 `ios/` 上改
+旧 App 的病根不是功能缺失，而是**手工复刻了一份 Web 业务规则**：服务端改一次，客户端
+就漂移一次，三次事故全是抄漏。所以这一版的结构是：
 
-`ios/` 是上一版，交接文档写了不要在它上面继续打补丁。这里换新目录、新 Bundle ID
-（`com.clipnote.v2`）、不读旧工程任何文件，两边可以并存，互不影响。
+```
+服务端 /api/v2/*  ← 唯一事实来源（含字段映射、平台名、时长格式化）
+      ↓
+客户端            ← 只做 调用 → 解码 → 渲染 → 本地持久化
+```
+
+对应到代码上就是一条纪律：**`Item` 里没有任何「拼装」行为**。`metaLine`（`"B 站 · 老蒋巨靠谱"`）
+和 `durationText`（`"12:57"`）都是服务端给的成品字符串，客户端不拼分隔符、不算秒数。
 
 ## 现在有什么
 
 | 文件 | 内容 |
 |---|---|
-| `Sources/ClipNote2/DesignTokens.swift` | 颜色 / 字体 / 尺寸 Token，无一处裸字号 |
+| `Sources/ClipNote2/LibraryAPI.swift` | 服务端形状解码 + `ClipNoteClient` + `LibraryStore` 三态 |
+| `Sources/ClipNote2/Model.swift` | `Item`（纯展示模型，id 是服务端字符串）+ 占位色派生 |
 | `Sources/ClipNote2/Components.swift` | 条目行、已下载徽标、主按钮、筛选 Chip |
-| `Sources/ClipNote2/ComponentGallery.swift` | 把四个组件的所有状态平铺 |
-| `Tests/.../GallerySnapshotTests.swift` | 渲染成 PNG，浅色 / 深色各一张 |
-| `.github/workflows/screenshots.yml` | macOS runner 跑测试并上传截图 |
+| `Sources/ClipNote2/HomeScreen.swift` | 列表 / 空态 / 无结果 / 加载中 / 失败可重试 |
+| `Sources/ClipNote2/DetailScreen.swift` | 播放、简介、下载三态 |
+| `Sources/ClipNote2/DownloadStore.swift` | 真实下载 + `downloads.json` 索引 + 启动时与磁盘对账 |
+| `Sources/ClipNote2/MeScreen.swift` | 同步入口、存储、日志（排障面） |
+| `Sources/ClipNote2/DesignTokens.swift` | 颜色 / 字体 / 尺寸 Token，无一处裸字号 |
+| `Sources/ClipNote2/Resources/library-sample.json` | 截图用样本库（与线上同一套形状） |
+| `Tests/.../LibraryDecodingTests.swift` | 用线上真实响应钉住契约 |
+| `Tests/.../ClipNoteClientTests.swift` | 拦 URLSession，验网关 403 / HTML 回落 / 409 |
+| `Tests/.../DownloadStoreTests.swift` | 验收⑤：重启后状态仍在、文件消失后索引清理 |
+| `.github/workflows/screenshots.yml` | macOS runner 跑测试 + `simctl` 出 13 张图 |
 
-App 启动后直接显示组件画廊——装机即可肉眼比对，不必走业务路径。
-
-颜色是 `Assets.xcassets` 里的 15 个 Color Set，浅深两套自动切换。
-要改色改 `Tools/gen_colors.py` 再重跑，不要手改 `Contents.json`。
+App 启动会真的去拉 `https://clipnote.app.workbuddy.host/api/v2/library`。
 
 ## 怎么跑
 
@@ -34,31 +47,24 @@ brew install xcodegen
 xcodegen generate
 xcodebuild test -project ClipNote2.xcodeproj -scheme ClipNote2 \
   -destination 'platform=iOS Simulator,name=iPhone 16'
-open screenshots/gallery-light.png
+bash Tools/screenshot.sh booted
 ```
 
 **CI**
 
-推到 GitHub 后在 Actions 里手动触发 `Component Screenshots`，
-产物在 `component-screenshots` artifact 里，含两张 PNG 和 xcresult。
+推上去自动触发 `Component Screenshots`，产物在 `component-screenshots` artifact。
 
-## 接上 CI
+## 推代码：本机 `git push` 用不了
 
-这个目录已经是独立仓库：`github.com/nidajia/clipnote-ios2-build`（私有）。
-GitHub Actions 只读仓库根目录下的 `.github/workflows/`，所以它不能塞进
-`clipnote-ios-build` 的子目录。
-
-⚠️ **本机 `git push` 用不了**：github.com:443 直连和走代理都超时，
-只有 api.github.com 通。所以提交走 Git Data API：
+github.com:443 直连和走代理都超时，只有 api.github.com 通。所以提交走 Git Data API：
 
 ```bash
 cd ../           # 回到 clipnote/
 GH_TOKEN=<pat> python tools/push_api.py "commit message"
 ```
 
-推上去会自动触发 `Component Screenshots`。产物在 Actions 的
-`component-screenshots` artifact 里，含 `gallery-light.png` / `gallery-dark.png`
-和 xcresult。
+这个脚本是**镜像**语义：以本地 `ios2/` 为准，远端多出来的文件会被删掉。
+（早先版本带 `base_tree` 打补丁，只增不删，结果本地删掉的测试文件一直留在远端编译报错。）
 
 **不要把 token 写进任何脚本或 remote URL。** 旧的 `ios/push.py` 就是反例。
 
@@ -67,14 +73,16 @@ GH_TOKEN=<pat> python tools/push_api.py "commit message"
 | 层级 | 手段 | 产物 |
 |---|---|---|
 | 组件 / 画廊 | `ImageRenderer`（单元测试内） | `gallery-light.png` / `gallery-dark.png` |
-| 整屏（含导航栏、Tab 栏） | `simctl` 真机启动后截屏 | `home-list` / `home-empty` / `me` / `home-dark` |
+| 整屏（含导航栏、Tab 栏） | `simctl` 真机启动后截屏 | 其余 11 张 |
 
 **`ImageRenderer` 画不出 `List` / `TabView` / `NavigationStack`。** 这几个容器由 UIKit
-背书，离屏渲染会整张变成系统「不可用」占位符（黄底红禁的图）。整屏图必须走 `simctl`：
-`Tools/screenshot.sh` 负责 装 App → 固定状态栏 9:41 → 按启动参数逐个进状态 → 截屏。
+背书，离屏渲染会整张变成系统「不可用」占位符（黄底红禁的图）。
 
-App 通过 `-snapshotState list|empty|me` 与 `-snapshotAppearance light|dark` 进入指定状态。
-这条路径只在截图时启用，正常启动不经过它。
+整屏图走 `Tools/screenshot.sh`：装 App → 固定状态栏 9:41 → 按启动参数逐个进状态 → 截屏。
+App 通过 `-snapshotState` 与 `-snapshotAppearance` 进入指定状态，**正常启动不经过它**。
+
+截图数据来自 bundle 里的 `library-sample.json`，走的是**与线上相同的解码器**。
+所以每张图同时证明两件事：解码没错，渲染没错；而且不依赖网络，任何时候截都一样。
 
 ## 踩过的坑
 
@@ -84,18 +92,27 @@ App 通过 `-snapshotState list|empty|me` 与 `-snapshotAppearance light|dark` �
 | 加载按钮里出现橙色占位方块 | `ImageRenderer` 光栅化不了 `ProgressView`，改用纯 Shape 环 |
 | 深色下选中 Chip 白字看不清 | 只修了主按钮没修 Chip，同一处 2.4:1 对比度漏了一处 |
 | 四张整屏图字节数完全一样 | `ImageRenderer` 渲染 `TabView` 失败，输出的是系统占位符 |
+| `listRowInsets` 失效、行贴到屏幕边缘 | 行被套了 `Button`，内边距挂在 label 内部会被忽略 |
+| `loading` / `failed` 截出来是列表 | 截图入口先无条件加载数据再切状态，「拍到了」，但拍的是别的东西 |
+| 线上封面指向 `3000-xxx.sandbox…` | 拿反代传进来的内网 `Host` 拼绝对地址，改用 `PUBLIC_ORIGIN` |
+| 线上未知路径返回 200 + 首页 HTML | 客户端必须校验 `Content-Type`，否则把 HTML 当 JSON 解 |
+| 删掉的文件仍在 CI 里编译 | `push_api.py` 原先只增不删 |
 
-## 状态：未编译验证
+## 状态
 
-写这份代码的机器是 Windows，没有 Xcode。所有 Swift 代码都**没有经过编译**，
-第一次推 CI 大概率还要修几处编译错误（这类错误通常很浅，比如访问级别、
-`.tint` 的可用平台）。
+**已验证**：编译通过、6 条单测（解码契约 / 客户端三种失败 / 下载持久化）、
+13 张模拟器截图逐张看过、线上 `/api/v2/*` 实测。
 
-在没有跑通之前，请把它当成「已完成但未验证」，不要当成可交付。
+**未验证**：
 
-## 已知阻塞
+1. **真实播放**。`/playback` 能返回地址，但该地址请求是 **403**——快照里的 B 站签名
+   已过期，而 `/playback` 目前只读快照、不做重新解析。所以详情页点播放会失败，
+   现在至少会显示一句「地址大概已经过期」，而不是静默无反应。
+2. **真实下载**。同上，会因为 403 失败；`DownloadStore` 已能把原因显示出来。
+3. **横屏全屏**（画布 06）。`simctl` 截不了旋转态。
 
-1. 旧的 `ios/push.py` 里硬编码了一个 GitHub token，建议吊销重发。
-2. 旧 workflow 钉在 `macos-14`，该镜像已退役，需要迁到 `macos-15`。
-3. 这个目录要单独成一个仓库（或作为子目录并调整 workflow 的 `working-directory`），
-   才能被 GitHub Actions 识别——Actions 只读仓库根目录下的 `.github/workflows/`。
+## 已知缺口
+
+1. `/playback` 不触发重新解析。要接 v1 的解析链，才算真正可用。
+2. `POST /api/v2/parse` 未实现，导入面板的「解析链接」还是空的。
+3. 第二包全部（摘要 / 标签 / 笔记编辑 / 脑图 / 书签 / 回收站）。
