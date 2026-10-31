@@ -53,6 +53,7 @@ shot home-loading loading light
 shot home-failed  failed  light
 shot home-empty   empty   light
 shot me           me      light
+shot import-sheet import  light
 
 shot detail-idle        detail             light
 shot detail-ready       detail-ready       light

@@ -172,6 +172,15 @@ struct APIPlaybackPayload: Decodable, Equatable {
     }
 }
 
+/// 导入结果。
+///
+/// `created` 是「这次操作」的属性，`item` 是数据，所以嵌套而不是混在一起。
+/// `created == false` 表示库里已有同一条——不是失败，用户要的结果已经成立。
+struct APIImportResult: Decodable, Equatable {
+    var created: Bool
+    var item: APILibraryItem
+}
+
 /// 服务端的错误体：`{code, message, retryable}`。
 /// `retryable` 语义：true = 同一请求重试有意义；false = 换参数或换路径，重试无效。
 struct APIErrorBody: Decodable, Equatable {
@@ -268,6 +277,53 @@ struct ClipNoteClient {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw Failure.malformed(String(describing: error))
+        }
+    }
+
+    /// 导入一条链接。
+    ///
+    /// 服务端会真的去解析（B 站约 1–2 秒），所以超时给到 30 秒。
+    /// 客户端**不做 URL 清洗**——用户粘的常常是「【标题】 https://b23.tv/xxx」
+    /// 这种分享文案，各家格式不一样，清洗规则属于服务端。
+    func importItem(url link: String) async throws -> APIImportResult {
+        try await post("/api/v2/parse", body: ["url": link], as: APIImportResult.self)
+    }
+
+    private func post<T: Decodable>(
+        _ path: String,
+        body: [String: Any],
+        as type: T.Type
+    ) async throws -> T {
+        guard let url = url(path: path) else { throw Failure.transport("地址拼不出来") }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        // 解析是同步阻塞的（服务端上限 8 秒），客户端要比它宽
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            throw Failure.transport("请求体序列化失败")
+        }
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw Failure.transport("不是 HTTP 响应")
+            }
+            try validate(response: http, data: data)
+            do {
+                return try JSONDecoder().decode(T.self, from: data)
+            } catch {
+                throw Failure.malformed(String(describing: error))
+            }
+        } catch let failure as Failure {
+            throw failure
+        } catch {
+            throw Failure.transport(error.localizedDescription)
         }
     }
 
@@ -374,6 +430,17 @@ final class LibraryStore: ObservableObject {
     func playback(for id: String) async throws -> APIPlaybackPayload? {
         guard let client else { return nil }
         return try await client.playback(id: id)
+    }
+
+    /// 导入一条链接，成功后立刻刷新列表——用户要看到「刚才那条出现了」。
+    @discardableResult
+    func importItem(url link: String) async throws -> APIImportResult {
+        guard let client else { throw ClipNoteClient.Failure.transport("截图模式没有网络层") }
+        let result = try await client.importItem(url: link)
+        // 刷新而不是把 result.item 插进去：created == false 时列表里已经有这条，
+        // 插进去就重复了。多花一次请求，换「列表永远等于服务端」这条确定性。
+        await reload()
+        return result
     }
 
     private func apply(_ library: APILibrary) {

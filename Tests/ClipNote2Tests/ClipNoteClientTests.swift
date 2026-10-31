@@ -173,6 +173,84 @@ final class ClipNoteClientTests: XCTestCase {
         XCTAssertNil(payload)
     }
 
+    // MARK: - 导入
+
+    /// URLProtocol 里 `httpBody` 常常是 nil（URLSession 把它转成了 stream），
+    /// 只读 httpBody 会得到一个「请求体为空」的假结论。
+    private static func bodyData(_ request: URLRequest) -> Data? {
+        if let data = request.httpBody { return data }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let size = 1024
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: size)
+        defer { buffer.deallocate() }
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: size)
+            if read <= 0 { break }
+            data.append(buffer, count: read)
+        }
+        return data
+    }
+
+    func testImportPostsRawTextAndDecodesNestedResult() async throws {
+        var method: String?
+        var path: String?
+        var body: [String: Any]?
+
+        StubURLProtocol.handler = { request in
+            method = request.httpMethod
+            path = request.url?.path
+            if let data = Self.bodyData(request) {
+                body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            }
+            let json = """
+            {"created": true,
+             "item": {"id": "x1", "kind": "video", "title": "新导入",
+                      "metaLine": "B 站 · 作者", "durationText": "12:34",
+                      "durationSeconds": 754, "summary": "",
+                      "playback": {"available": true}, "publishedAt": 0}}
+            """
+            return (200, ["Content-Type": "application/json"], Data(json.utf8))
+        }
+
+        let result = try await makeClient().importItem(url: "【标题】 https://b23.tv/x")
+        XCTAssertEqual(method, "POST")
+        XCTAssertEqual(path, "/api/v2/parse")
+        // 分享文案原样上传：清洗各样分享格式是服务端的事，客户端不该内置
+        XCTAssertEqual(body?["url"] as? String, "【标题】 https://b23.tv/x")
+        XCTAssertTrue(result.created)
+        XCTAssertEqual(result.item.title, "新导入")
+    }
+
+    func testImportDuplicateIsNotAnError() async throws {
+        // created=false 是「库里已有」，用户要的结果已经成立，不该当失败弹红字
+        StubURLProtocol.handler = { _ in
+            (200, ["Content-Type": "application/json"],
+             Data(#"{"created":false,"item":{"id":"x1","title":"已有的一条"}}"#.utf8))
+        }
+        let result = try await makeClient().importItem(url: "https://x")
+        XCTAssertFalse(result.created)
+        XCTAssertEqual(result.item.title, "已有的一条")
+    }
+
+    func testImportBadLinkSurfacesServerMessage() async {
+        StubURLProtocol.handler = { _ in
+            (422, ["Content-Type": "application/json"],
+             Data(#"{"code":"BAD_URL","message":"没有识别到链接","retryable":false}"#.utf8))
+        }
+        do {
+            _ = try await makeClient().importItem(url: "随便一段文字")
+            XCTFail("应当失败")
+        } catch let failure as ClipNoteClient.Failure {
+            // 服务端那句人话要能透到界面上，不能换成「未知错误」
+            XCTAssertEqual(failure.displayMessage, "没有识别到链接")
+        } catch {
+            XCTFail("错误类型不对：\(error)")
+        }
+    }
+
     func testPlaybackPathIsCorrectlyEncoded() async throws {
         var seen: String?
         StubURLProtocol.handler = { request in

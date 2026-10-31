@@ -69,7 +69,11 @@ struct SnapshotRoot: View {
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack {
-                HomeScreen(initialSelection: detailItem, detailPrepare: detailPrepare)
+                HomeScreen(
+                    initialSelection: detailItem,
+                    detailPrepare: detailPrepare,
+                    showsImport: state == "import"
+                )
             }
             .tabItem { Label("首页", systemImage: "house.fill") }
             .tag(0)

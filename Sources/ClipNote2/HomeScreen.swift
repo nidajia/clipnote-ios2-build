@@ -32,9 +32,11 @@ struct HomeScreen: View {
     /// `detailPrepare` 同理：让「已取到播放地址」这一态能被拍下来。
     init(
         initialSelection: Item? = nil,
-        detailPrepare: DetailScreen.PrepareState? = nil
+        detailPrepare: DetailScreen.PrepareState? = nil,
+        showsImport: Bool = false
     ) {
         _selected = State(initialValue: initialSelection)
+        _showImport = State(initialValue: showsImport)
         self.detailPrepare = detailPrepare
     }
 
