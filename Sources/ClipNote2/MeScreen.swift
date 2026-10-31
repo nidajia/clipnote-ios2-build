@@ -4,20 +4,16 @@ import SwiftUI
 ///
 /// 第一包里它不是装饰：本地没有 macOS，改完只能推 CI，
 /// 没有同步入口与日志入口，出问题就没有任何现场。
+///
+/// 版式上刻意全部交给 `List(.insetGrouped)`：
+/// 同步卡原先自绘圆角与描边，结果左右内边距和系统分组对不齐，两张卡宽度差一截。
 struct MeScreen: View {
     var body: some View {
         List {
             Section {
-                syncCard
-                    .listRowInsets(EdgeInsets(
-                        top: Metric.space2,
-                        leading: Metric.pagePad,
-                        bottom: Metric.space2,
-                        trailing: Metric.pagePad
-                    ))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                syncRow
             }
+            .listRowBackground(Color.cnCard)
 
             Section {
                 settingsRow("下载与存储", "—")
@@ -27,7 +23,7 @@ struct MeScreen: View {
             .listRowBackground(Color.cnCard)
 
             Section {
-                Text("片记 8.0.0 (1) · Bundle 已更换，与旧版并存")
+                Text("版本 8.0.0 (1)")
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -41,7 +37,7 @@ struct MeScreen: View {
         .navigationTitle("我")
     }
 
-    private var syncCard: some View {
+    private var syncRow: some View {
         HStack(spacing: Metric.space3) {
             ZStack {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -62,16 +58,12 @@ struct MeScreen: View {
             }
 
             Spacer(minLength: 0)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.cnInk3)
         }
-        .padding(Metric.space4)
-        .background(
-            Color.cnCard,
-            in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
-                .strokeBorder(Color.cnHairline, lineWidth: 1)
-        )
+        .padding(.vertical, Metric.space2)
     }
 
     private func settingsRow(_ title: String, _ value: String) -> some View {
