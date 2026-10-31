@@ -32,6 +32,7 @@ struct DetailScreen: View {
 
     @EnvironmentObject private var downloads: DownloadStore
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var logs: LogStore
 
     @State private var player: AVPlayer?
     @State private var playing = false
@@ -276,6 +277,9 @@ struct DetailScreen: View {
         player = newPlayer
         playing = true
         notice = nil
+        let isLocal = url.isFileURL
+        logs.info("playback.started", isLocal ? "开始播放（本地文件）" : "开始播放（服务端代理）",
+                  meta: ["host": isLocal ? "local" : (url.host ?? "-")])
 
         // 地址过期时 AVPlayer **不会**抛错，它只是一直转圈。
         // 不观察 status 的话，用户看到的就是「点了没反应」——最差的一种失败。
@@ -287,6 +291,10 @@ struct DetailScreen: View {
                 // 退回 idle，下次点播放会自动重新取一次地址
                 prepare = .idle
                 notice = "这个视频暂时播不了，地址可能已经过期。再点一次播放会重新取。"
+                logs.error("playback.failed", "AVPlayer 加载失败（status = failed）", meta: [
+                    "host": isLocal ? "local" : (url.host ?? "-"),
+                    "error": observed.error?.localizedDescription ?? "-",
+                ])
             }
         }
 

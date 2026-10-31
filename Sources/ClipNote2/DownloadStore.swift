@@ -34,13 +34,16 @@ final class DownloadStore: ObservableObject {
     private let directory: URL
     private let indexURL: URL
     private let downloader = FileDownloader()
+    /// 日志由外部注入；截图模式传 nil
+    private weak var log: LogStore?
 
-    init(directory: URL? = nil) {
+    init(directory: URL? = nil, log: LogStore? = nil) {
         let fm = FileManager.default
         let base = directory ?? fm.urls(for: .documentDirectory, in: .userDomainMask).first!
         self.directory = base
         try? fm.createDirectory(at: base, withIntermediateDirectories: true)
         self.indexURL = base.appendingPathComponent("downloads.json")
+        self.log = log
         load()
         reconcile()
     }
@@ -89,6 +92,12 @@ final class DownloadStore: ObservableObject {
                     ? "视频源拒绝了请求，地址大概已过期。服务端还没接重新解析。"
                     : (error as NSError).localizedDescription
                 self.lastFailure = DownloadFailure(id: k, message: message)
+                let logger = self.log
+                Task { @MainActor in
+                    logger?.error("download.failed", message, meta: [
+                        "id": k, "code": "\(code)",
+                    ])
+                }
                 return
 
             case .success(let temporary):
@@ -101,6 +110,12 @@ final class DownloadStore: ObservableObject {
                     let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
                     self.records[k] = DownloadRecord(fileName: fileName, byteCount: size, finishedAt: Date())
                     self.save()
+                    let logger = self.log
+                    Task { @MainActor in
+                        logger?.info("download.finished", "下载完成", meta: [
+                            "id": k, "bytes": "\(size)",
+                        ])
+                    }
                 } catch {
                     // 移动失败就当这次下载没发生，不要把半截文件写进索引
                     self.lastFailure = DownloadFailure(id: k, message: "保存文件失败：\(error.localizedDescription)")

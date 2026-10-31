@@ -54,6 +54,7 @@ shot home-failed  failed  light
 shot home-empty   empty   light
 shot me           me      light
 shot import-sheet import  light
+shot logs         logs    light
 
 shot detail-idle        detail             light
 shot detail-ready       detail-ready       light

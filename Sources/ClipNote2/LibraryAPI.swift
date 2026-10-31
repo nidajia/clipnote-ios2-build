@@ -222,6 +222,17 @@ struct ClipNoteClient {
                 return "连不上服务端。\(detail)"
             }
         }
+
+        /// 日志里用的分类。给人看的是 `displayMessage`，给检索的是这个。
+        var logKind: String {
+            switch self {
+            case .gatewayIncomplete: return "gateway"
+            case .http(let status, _, _): return "http-\(status)"
+            case .notJSON: return "not-json"
+            case .malformed: return "malformed"
+            case .transport: return "transport"
+            }
+        }
     }
 
     var baseURL: URL
@@ -287,6 +298,44 @@ struct ClipNoteClient {
     /// 这种分享文案，各家格式不一样，清洗规则属于服务端。
     func importItem(url link: String) async throws -> APIImportResult {
         try await post("/api/v2/parse", body: ["url": link], as: APIImportResult.self)
+    }
+
+    /// 上报日志。
+    ///
+    /// 失败就丢掉：日志上报本身再产生日志，就成了递归。
+    /// 网络不通时这条本来最可能失败——而那时本地文件还在。
+    func uploadLog(_ entry: LogEntry) async {
+        await uploadLogs([entry])
+    }
+
+    /// 批量上报。服务端 `/api/log` 接受数组，能省掉几十次往返。
+    func uploadLogs(_ entries: [LogEntry]) async {
+        guard !entries.isEmpty else { return }
+        guard var components = URLComponents(
+            string: baseURL.absoluteString + "/api/log"
+        ) else { return }
+        // 网关要求 sharecode
+        components.queryItems = [URLQueryItem(name: "sharecode", value: shareCode)]
+        guard let url = components.url else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let payload: [[String: Any]] = entries.map { entry in
+            [
+                "app": "clipnote-ios",
+                "level": entry.level.rawValue,
+                "message": "[\(entry.key)] \(entry.message)",
+                "stack": "",
+                "meta": entry.meta.merging(["key": entry.key]) { _, new in new },
+            ]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        request.httpBody = data
+
+        _ = try? await session.data(for: request)
     }
 
     private func post<T: Decodable>(
@@ -383,10 +432,13 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var version: String = ""
 
     private let client: ClipNoteClient?
+    /// 日志由外部注入：截图模式传 nil，避免往真实日志文件里写假事件
+    private weak var log: LogStore?
 
     /// `client == nil` 表示不联网（截图与预览）。这时只能通过 `loadFixture` 供数。
-    init(client: ClipNoteClient?) {
+    init(client: ClipNoteClient?, log: LogStore? = nil) {
         self.client = client
+        self.log = log
     }
 
     /// 截图/预览模式：没有网络层。界面据此避免把「没配 client」显示成「取不到地址」。
@@ -397,14 +449,34 @@ final class LibraryStore: ObservableObject {
     func reload() async {
         guard let client else { return }
         phase = .loading
+        let started = Date()
         do {
             let library = try await client.library()
             apply(library)
+            log?.info("library.loaded", "同步完成 \(library.items.count) 条", meta: [
+                "count": "\(library.items.count)",
+                "version": library.libraryVersion,
+                "ms": ms(since: started),
+            ])
         } catch let failure as ClipNoteClient.Failure {
             phase = .failed(failure.displayMessage)
+            log?.error("network.failed", failure.displayMessage, meta: [
+                "path": "/api/v2/library",
+                "kind": failure.logKind,
+                "ms": ms(since: started),
+            ])
         } catch {
             phase = .failed("连不上服务端。")
+            log?.error("network.failed", error.localizedDescription, meta: [
+                "path": "/api/v2/library",
+                "kind": "unknown",
+                "ms": ms(since: started),
+            ])
         }
+    }
+
+    private func ms(since start: Date) -> String {
+        "\(Int(Date().timeIntervalSince(start) * 1000))"
     }
 
     /// 截图与测试入口：直接从一份 JSON 解码，走的是与线上完全相同的解码路径。
@@ -429,18 +501,49 @@ final class LibraryStore: ObservableObject {
     /// 截图模式下没有 client，一律返回 nil——于是播放键置灰，界面不会假装能播。
     func playback(for id: String) async throws -> APIPlaybackPayload? {
         guard let client else { return nil }
-        return try await client.playback(id: id)
+        let started = Date()
+        do {
+            let payload = try await client.playback(id: id)
+            if payload == nil {
+                log?.warn("playback.unavailable", "该内容没有视频流", meta: [
+                    "id": id, "ms": ms(since: started),
+                ])
+            }
+            return payload
+        } catch let failure as ClipNoteClient.Failure {
+            log?.error("network.failed", failure.displayMessage, meta: [
+                "path": "/api/v2/items/playback",
+                "kind": failure.logKind,
+                "id": id,
+                "ms": ms(since: started),
+            ])
+            throw failure
+        }
     }
 
     /// 导入一条链接，成功后立刻刷新列表——用户要看到「刚才那条出现了」。
     @discardableResult
     func importItem(url link: String) async throws -> APIImportResult {
         guard let client else { throw ClipNoteClient.Failure.transport("截图模式没有网络层") }
-        let result = try await client.importItem(url: link)
-        // 刷新而不是把 result.item 插进去：created == false 时列表里已经有这条，
-        // 插进去就重复了。多花一次请求，换「列表永远等于服务端」这条确定性。
-        await reload()
-        return result
+        let started = Date()
+        do {
+            let result = try await client.importItem(url: link)
+            // 刷新而不是把 result.item 插进去：created == false 时列表里已经有这条，
+            // 插进去就重复了。多花一次请求，换「列表永远等于服务端」这条确定性。
+            await reload()
+            log?.info("import.created", result.created ? "导入成功" : "库里已有这条", meta: [
+                "created": result.created ? "1" : "0",
+                "id": result.item.id,
+                "ms": ms(since: started),
+            ])
+            return result
+        } catch let failure as ClipNoteClient.Failure {
+            log?.error("import.failed", failure.displayMessage, meta: [
+                "kind": failure.logKind,
+                "ms": ms(since: started),
+            ])
+            throw failure
+        }
     }
 
     private func apply(_ library: APILibrary) {

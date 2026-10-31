@@ -10,6 +10,7 @@ import SwiftUI
 struct MeScreen: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var downloads: DownloadStore
+    @EnvironmentObject private var logs: LogStore
 
     var body: some View {
         List {
@@ -21,7 +22,12 @@ struct MeScreen: View {
             Section {
                 settingsRow("下载与存储", storageValue)
                 settingsRow("播放", "自动横屏")
-                settingsRow("运行日志", "最近 0 条")
+                NavigationLink {
+                    LogScreen()
+                } label: {
+                    // 不加自带 chevron：NavigationLink 已经给了一个
+                    settingsRow("运行日志", logCountText, showsChevron: false)
+                }
             }
             .listRowBackground(Color.cnCard)
 
@@ -124,7 +130,12 @@ struct MeScreen: View {
         return "\(downloads.downloadedCount) 条 · \(size)"
     }
 
-    private func settingsRow(_ title: String, _ value: String) -> some View {
+    private var logCountText: String {
+        guard logs.count > 0 else { return "暂无记录" }
+        return logs.errorCount > 0 ? "\(logs.count) 条 · \(logs.errorCount) 条错误" : "\(logs.count) 条"
+    }
+
+    private func settingsRow(_ title: String, _ value: String, showsChevron: Bool = true) -> some View {
         HStack(spacing: Metric.space2) {
             Text(title)
                 .font(.cnBody)
@@ -133,9 +144,11 @@ struct MeScreen: View {
             Text(value)
                 .font(.cnMeta)
                 .foregroundStyle(Color.cnInk3)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.cnInk3)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.cnInk3)
+            }
         }
         .frame(height: 44)
     }

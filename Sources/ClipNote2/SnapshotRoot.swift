@@ -18,6 +18,7 @@ struct SnapshotRoot: View {
     @State private var tab: Int
     @StateObject private var downloads: DownloadStore
     @StateObject private var library: LibraryStore
+    @StateObject private var logs: LogStore
 
     init(state: String, appearance: ColorScheme?) {
         self.state = state
@@ -28,7 +29,20 @@ struct SnapshotRoot: View {
         // 会留在 Documents 里，把这一次的「未下载」状态带脏。
         let sandbox = FileManager.default.temporaryDirectory
             .appendingPathComponent("snapshot-\(UUID().uuidString)", isDirectory: true)
-        let store = DownloadStore(directory: sandbox)
+        // 截图用独立的 LogStore：不写真实日志、不上报，避免把假事件灌进服务端
+        let logStore = LogStore(directory: sandbox, uploader: nil)
+        // 「我」和日志页需要内容可看，否则永远是空态
+        if state == "logs" || state == "me" {
+            logStore.info("app.launch", "启动", meta: ["version": "8.0.0 (1)"])
+            logStore.info("library.loaded", "同步完成 8 条",
+                          meta: ["count": "8", "version": "lv_1793265909_1", "ms": "412"])
+            logStore.info("import.created", "导入成功", meta: ["created": "1", "ms": "1913"])
+            logStore.warn("playback.unavailable", "该内容没有视频流",
+                          meta: ["id": "seed0000000005"])
+            logStore.error("network.failed", "连不上服务端。请求超时。",
+                           meta: ["path": "/api/v2/library", "kind": "transport", "ms": "20013"])
+        }
+        let store = DownloadStore(directory: sandbox, log: logStore)
 
         let lib = LibraryStore(client: nil)
         // 注意顺序：**只有需要数据的状态才加载**。
@@ -64,9 +78,26 @@ struct SnapshotRoot: View {
 
         _downloads = StateObject(wrappedValue: store)
         _library = StateObject(wrappedValue: lib)
+        _logs = StateObject(wrappedValue: logStore)
     }
 
     var body: some View {
+        Group {
+            if state == "logs" {
+                // 日志页在「我」里，截图没法点进去，直接作为根呈现
+                NavigationStack { LogScreen() }
+            } else {
+                tabs
+            }
+        }
+        .tint(Color.cnBrand)
+        .preferredColorScheme(appearance)
+        .environmentObject(downloads)
+        .environmentObject(library)
+        .environmentObject(logs)
+    }
+
+    private var tabs: some View {
         TabView(selection: $tab) {
             NavigationStack {
                 HomeScreen(
@@ -84,10 +115,6 @@ struct SnapshotRoot: View {
             .tabItem { Label("我", systemImage: "person.fill") }
             .tag(1)
         }
-        .tint(Color.cnBrand)
-        .preferredColorScheme(appearance)
-        .environmentObject(downloads)
-        .environmentObject(library)
     }
 
     /// 只给 `detail-ready` 用：模拟「已经取到播放地址」，
