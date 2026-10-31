@@ -88,16 +88,8 @@ struct ItemRow: View {
         }
         .frame(height: Metric.rowHeight)
         .contentShape(Rectangle())
-        // 放进 List 时生效；在画廊里是空操作
-        .listRowInsets(EdgeInsets(
-            top: 0,
-            leading: Metric.pagePad,
-            bottom: 0,
-            trailing: Metric.pagePad
-        ))
-        .listRowBackground(Color.cnBg)
-        // 分隔线交给 List 控制（HomeScreen 里用 listRowSeparatorTint），
-        // 行本身不硬关掉，否则调用方无法再开。
+        // 行内边距与背景交给调用方（List 的直接子视图）设置：
+        // `listRowInsets` 必须挂在行根上，挂在 label 内部会被忽略。
         .accessibilityElement(children: .combine)
     }
 }

@@ -5,6 +5,8 @@ import SwiftUI
 /// 当前只有两个 Tab：首页、我。
 /// 书签与知识库属于第二包——不要为了「看起来完整」先放空 Tab。
 struct RootView: View {
+    @StateObject private var downloads = DownloadStore()
+
     var body: some View {
         TabView {
             NavigationStack {
@@ -18,6 +20,7 @@ struct RootView: View {
             .tabItem { Label("我", systemImage: "person.fill") }
         }
         .tint(Color.cnBrand)
+        .environmentObject(downloads)
     }
 }
 

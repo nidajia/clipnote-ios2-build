@@ -51,6 +51,10 @@ shot home-empty empty light
 shot me         me    light
 shot home-dark  list  dark
 
+shot detail-idle        detail             light
+shot detail-downloading detail-downloading light
+shot detail-downloaded  detail-downloaded  light
+
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 
 ls -la screenshots

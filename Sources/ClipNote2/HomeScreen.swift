@@ -20,6 +20,7 @@ struct HomeScreen: View {
     @State private var query = ""
     @State private var filter: HomeFilter = .all
     @State private var showImport = false
+    @State private var selected: Item?
     @Environment(\.colorScheme) private var scheme
 
     private var filtered: [Item] {
@@ -49,6 +50,9 @@ struct HomeScreen: View {
                 prompt: "搜索标题、要点、标签"
             )
             .safeAreaInset(edge: .top, spacing: 0) { filterBar }
+            .navigationDestination(item: $selected) { item in
+                DetailScreen(item: item)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -76,7 +80,19 @@ struct HomeScreen: View {
             }
         } else {
             List(filtered) { item in
-                ItemRow(model: item)
+                Button {
+                    selected = item
+                } label: {
+                    ItemRow(model: item)
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(
+                    top: 0,
+                    leading: Metric.pagePad,
+                    bottom: 0,
+                    trailing: Metric.pagePad
+                ))
+                .listRowBackground(Color.cnBg)
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)

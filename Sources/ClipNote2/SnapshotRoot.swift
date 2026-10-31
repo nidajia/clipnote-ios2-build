@@ -11,21 +11,42 @@ struct SnapshotRoot: View {
     var appearance: ColorScheme?
 
     @State private var tab: Int
+    @StateObject private var downloads: DownloadStore
 
     init(state: String, appearance: ColorScheme?) {
         self.state = state
         self.appearance = appearance
         _tab = State(initialValue: state == "me" ? 1 : 0)
+
+        // 每次启动用独立的临时目录：否则上一次截图种下的「已下载」
+        // 会留在 Documents 里，把这一次的「未下载」状态带脏。
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("snapshot-\(UUID().uuidString)", isDirectory: true)
+        let store = DownloadStore(directory: sandbox)
+        let sample = Item.demoLibrary[0]
+        switch state {
+        case "detail-downloading":
+            store.seedDownloading(sample.id, value: 0.62)
+        case "detail-downloaded":
+            store.seedDownloaded(sample.id)
+        default:
+            break
+        }
+        _downloads = StateObject(wrappedValue: store)
     }
 
-    private var items: [Item] {
-        state == "empty" ? [] : Item.demoLibrary
-    }
+    private var items: [Item] { state == "empty" ? [] : Item.demoLibrary }
+
+    private var isDetail: Bool { state.hasPrefix("detail") }
 
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack {
-                HomeScreen(items: items)
+                if isDetail {
+                    DetailScreen(item: Item.demoLibrary[0])
+                } else {
+                    HomeScreen(items: items)
+                }
             }
             .tabItem { Label("首页", systemImage: "house.fill") }
             .tag(0)
@@ -38,5 +59,6 @@ struct SnapshotRoot: View {
         }
         .tint(Color.cnBrand)
         .preferredColorScheme(appearance)
+        .environmentObject(downloads)
     }
 }
