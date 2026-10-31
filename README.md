@@ -62,16 +62,28 @@ GH_TOKEN=<pat> python tools/push_api.py "commit message"
 
 **不要把 token 写进任何脚本或 remote URL。** 旧的 `ios/push.py` 就是反例。
 
-## 当前基线：CI 已跑通
+## 截图有两条路，不要混用
 
-2026-10-31 第一轮通过，产物为 390×N 的浅 / 深两张组件截图。
-首轮暴露并已修掉三个问题，值得记下来：
+| 层级 | 手段 | 产物 |
+|---|---|---|
+| 组件 / 画廊 | `ImageRenderer`（单元测试内） | `gallery-light.png` / `gallery-dark.png` |
+| 整屏（含导航栏、Tab 栏） | `simctl` 真机启动后截屏 | `home-list` / `home-empty` / `me` / `home-dark` |
+
+**`ImageRenderer` 画不出 `List` / `TabView` / `NavigationStack`。** 这几个容器由 UIKit
+背书，离屏渲染会整张变成系统「不可用」占位符（黄底红禁的图）。整屏图必须走 `simctl`：
+`Tools/screenshot.sh` 负责 装 App → 固定状态栏 9:41 → 按启动参数逐个进状态 → 截屏。
+
+App 通过 `-snapshotState list|empty|me` 与 `-snapshotAppearance light|dark` 进入指定状态。
+这条路径只在截图时启用，正常启动不经过它。
+
+## 踩过的坑
 
 | 现象 | 原因 |
 |---|---|
 | `actool` 报 "no matching app icon set named AppIcon" | 资源目录缺 `AppIcon.appiconset`，这是 error 不是 warning |
-| 加载按钮里出现橙色占位方块 | `ImageRenderer` 光栅化不了 `ProgressView`（UIKit 指示器），改用纯 Shape 环 |
-| 深色下选中 Chip 白字看不清 | 只修了主按钮没修 Chip，同一处 2.4:1 对比度问题漏了一处 |
+| 加载按钮里出现橙色占位方块 | `ImageRenderer` 光栅化不了 `ProgressView`，改用纯 Shape 环 |
+| 深色下选中 Chip 白字看不清 | 只修了主按钮没修 Chip，同一处 2.4:1 对比度漏了一处 |
+| 四张整屏图字节数完全一样 | `ImageRenderer` 渲染 `TabView` 失败，输出的是系统占位符 |
 
 ## 状态：未编译验证
 

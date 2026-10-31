@@ -37,14 +37,20 @@ jobs:
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
           echo "使用模拟器：$UDID"
 
-      - name: 跑快照测试
+      - name: 跑组件快照测试
         run: |
           set -o pipefail
           xcodebuild test \
             -project ClipNote2.xcodeproj \
             -scheme ClipNote2 \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath build \
             -resultBundlePath build/Screenshots.xcresult
+
+      # 组件用 ImageRenderer 就够了；整屏必须真的启动 App，
+      # 因为 ImageRenderer 画不出 List / TabView（会变成系统「不可用」占位符）。
+      - name: 整屏截图（simctl）
+        run: bash Tools/screenshot.sh "$SIM_UDID" build
 
       - name: 列出产物
         if: always()
