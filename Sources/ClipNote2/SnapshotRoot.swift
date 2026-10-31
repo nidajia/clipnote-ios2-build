@@ -42,11 +42,10 @@ struct SnapshotRoot: View {
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack {
-                if isDetail {
-                    DetailScreen(item: Item.demoLibrary[0])
-                } else {
-                    HomeScreen(items: items)
-                }
+                HomeScreen(
+                    items: items,
+                    initialSelection: isDetail ? Item.demoLibrary[0] : nil
+                )
             }
             .tabItem { Label("首页", systemImage: "house.fill") }
             .tag(0)

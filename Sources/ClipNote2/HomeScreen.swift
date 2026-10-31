@@ -23,6 +23,13 @@ struct HomeScreen: View {
     @State private var selected: Item?
     @Environment(\.colorScheme) private var scheme
 
+    /// `initialSelection` 只给截图用：让详情页以「被 push 进去」的形态出现，
+    /// 否则它会是导航栈的根，截图上没有返回按钮。
+    init(items: [Item], initialSelection: Item? = nil) {
+        self.items = items
+        _selected = State(initialValue: initialSelection)
+    }
+
     private var filtered: [Item] {
         var list = items
         switch filter {
