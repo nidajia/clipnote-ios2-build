@@ -92,15 +92,15 @@ struct TrashScreen: View {
                 .foregroundStyle(Color.cnInk)
                 .lineLimit(2)
 
-            HStack(spacing: Metric.space2) {
-                Text(api.metaLine)
-                    .font(.cnMeta)
-                    .foregroundStyle(Color.cnInk3)
-                    .lineLimit(1)
-                Text(deletedText(api.deletedAt))
-                    .font(.cnCaption)
-                    .foregroundStyle(Color.cnInk3)
-            }
+            Text(api.metaLine)
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnInk3)
+                .lineLimit(1)
+
+            // 单独一行：和 meta 挤在一起会读成「平台 · 作者 删除了」一句话
+            Text(deletedText(api.deletedAt))
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnInk3)
         }
         .padding(.vertical, 2)
         .listRowBackground(Color.cnCard)

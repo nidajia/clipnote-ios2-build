@@ -20,8 +20,10 @@ struct MeScreen: View {
             .listRowBackground(Color.cnCard)
 
             Section {
-                settingsRow("下载与存储", storageValue)
-                settingsRow("播放", "自动横屏")
+                // 这两行只显示信息，点不动——所以不给箭头。
+                // 带箭头却点不开，比没有箭头更让人困惑。
+                settingsRow("下载与存储", storageValue, showsChevron: false)
+                settingsRow("播放", "自动横屏", showsChevron: false)
                 NavigationLink {
                     TrashScreen()
                 } label: {
