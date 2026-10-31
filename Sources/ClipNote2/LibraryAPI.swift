@@ -189,10 +189,9 @@ struct ClipNoteClient {
     /// 拼 URL 用字符串拼接而不是 `appendingPathComponent`：
     /// 后者会把 `items/{id}/playback` 这类多段路径当成单个组件处理，行为随系统版本漂。
     func url(path: String) -> URL? {
-        guard var components = URLComponents(
-            string: baseURL.absoluteString + path,
-            resolvingAgainstBaseURL: false
-        ) else { return nil }
+        guard var components = URLComponents(string: baseURL.absoluteString + path) else {
+            return nil
+        }
         components.queryItems = [
             URLQueryItem(name: "sharecode", value: shareCode),
             URLQueryItem(name: "code", value: shareCode)
