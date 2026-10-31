@@ -58,6 +58,22 @@ def main():
         encoding="utf-8",
     )
 
+    # actool 默认会去找名为 AppIcon 的图标集，缺了直接编译失败（不是警告）。
+    # 这里先放一个空的 1024 槽位；真图标到位后把 filename 填进去即可。
+    appicon = ROOT / "AppIcon.appiconset"
+    appicon.mkdir(parents=True, exist_ok=True)
+    (appicon / "Contents.json").write_text(
+        json.dumps(
+            {
+                "images": [{"idiom": "universal", "platform": "ios", "size": "1024x1024"}],
+                "info": {"author": "xcode", "version": 1},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     for name, (lt, la, dt, da) in TOKENS.items():
         folder = ROOT / f"{name}.colorset"
         folder.mkdir(parents=True, exist_ok=True)
