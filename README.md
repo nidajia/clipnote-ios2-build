@@ -42,22 +42,36 @@ open screenshots/gallery-light.png
 推到 GitHub 后在 Actions 里手动触发 `Component Screenshots`，
 产物在 `component-screenshots` artifact 里，含两张 PNG 和 xcresult。
 
-## 接上 CI 的三步
+## 接上 CI
 
-这个目录必须单独成一个仓库——GitHub Actions 只读仓库根目录下的 `.github/workflows/`。
-不要塞进 `clipnote-ios-build` 的子目录，那样 workflow 不会被识别。
+这个目录已经是独立仓库：`github.com/nidajia/clipnote-ios2-build`（私有）。
+GitHub Actions 只读仓库根目录下的 `.github/workflows/`，所以它不能塞进
+`clipnote-ios-build` 的子目录。
+
+⚠️ **本机 `git push` 用不了**：github.com:443 直连和走代理都超时，
+只有 api.github.com 通。所以提交走 Git Data API：
 
 ```bash
-cd ios2
-git init -b main
-git add .
-git commit -m "feat: 组件层 + 截图验收链路"
-git remote add origin https://github.com/<你的账号>/clipnote-ios2-build.git
-git push -u origin main
+cd ../           # 回到 clipnote/
+GH_TOKEN=<pat> python tools/push_api.py "commit message"
 ```
 
-推之前先在 GitHub 上建好空仓库。**不要**把 token 写进任何脚本或 remote URL，
-用 `gh auth login` 或 credential helper。
+推上去会自动触发 `Component Screenshots`。产物在 Actions 的
+`component-screenshots` artifact 里，含 `gallery-light.png` / `gallery-dark.png`
+和 xcresult。
+
+**不要把 token 写进任何脚本或 remote URL。** 旧的 `ios/push.py` 就是反例。
+
+## 当前基线：CI 已跑通
+
+2026-10-31 第一轮通过，产物为 390×N 的浅 / 深两张组件截图。
+首轮暴露并已修掉三个问题，值得记下来：
+
+| 现象 | 原因 |
+|---|---|
+| `actool` 报 "no matching app icon set named AppIcon" | 资源目录缺 `AppIcon.appiconset`，这是 error 不是 warning |
+| 加载按钮里出现橙色占位方块 | `ImageRenderer` 光栅化不了 `ProgressView`（UIKit 指示器），改用纯 Shape 环 |
+| 深色下选中 Chip 白字看不清 | 只修了主按钮没修 Chip，同一处 2.4:1 对比度问题漏了一处 |
 
 ## 状态：未编译验证
 
