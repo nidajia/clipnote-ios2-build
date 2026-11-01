@@ -61,7 +61,9 @@ upright_if_sideways() {
   w=$(sips -g pixelWidth "$file" | awk '/pixelWidth/{print $2}')
   h=$(sips -g pixelHeight "$file" | awk '/pixelHeight/{print $2}')
   if [ -n "$w" ] && [ -n "$h" ] && [ "$w" -lt "$h" ]; then
-    sips -r 90 "$file" >/dev/null
+    # 270 而不是 90：实测这一版是逆时针躺着，顺转 90 会得到一张倒图（已踩）。
+    # 这个数字依赖 App 请求的方向，改了 OrientationLock 的请求就要重新核对。
+    sips -r 270 "$file" >/dev/null
     echo "     (内容躺在竖屏缓冲里，已转正：${w}x${h})"
   fi
 }

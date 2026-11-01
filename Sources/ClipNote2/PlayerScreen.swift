@@ -23,6 +23,7 @@ struct PlayerScreen: View {
         ZStack {
             Color.black.ignoresSafeArea()
             videoSurface
+            topScrim
             chrome
         }
         .statusBarHidden(true)
@@ -36,8 +37,9 @@ struct PlayerScreen: View {
         .task {
             guard player == nil else { return }
             try? await Task.sleep(nanoseconds: 900_000_000)
-            // 用 `.landscape` 而不是 `.landscapeRight`：后者可能在第一次已经转成
-            // landscapeLeft 时把画面再翻 180°，截图方向就变成随机的了。
+            // 和第一次请求保持同一个掩码（`.landscape`）。改成 `.landscapeRight`
+            // 会让系统可能翻 180°，而截图脚本的转正方向是按实测定的——
+            // 请求一变，那个实测结论就作废了。
             OrientationLock.shared.force(.landscape)
         }
     }
@@ -65,6 +67,24 @@ struct PlayerScreen: View {
     }
 
     // MARK: - 外壳
+
+    /// 顶部渐变：视频亮的时候白字会糊。
+    ///
+    /// 单独一层而不是挂在顶栏的 `.background` 上——挂在顶栏上时，它的宽度
+    /// 会被横屏的安全区（刘海那一侧）切掉一截，截图里表现为左侧突然断开的黑边。
+    private var topScrim: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [Color.black.opacity(0.6), Color.black.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 140)
+            Spacer(minLength: 0)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
 
     /// 顶栏常显而不是「几秒后自动隐藏」。
     ///
@@ -95,15 +115,6 @@ struct PlayerScreen: View {
             .padding(.horizontal, 20)
             .padding(.top, 10)
             .padding(.bottom, 18)
-            // 视频亮的时候白字会糊，垫一层从上到下的黑
-            .background(
-                LinearGradient(
-                    colors: [Color.black.opacity(0.55), Color.black.opacity(0)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea(edges: .top)
-            )
 
             Spacer(minLength: 0)
         }
