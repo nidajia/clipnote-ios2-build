@@ -42,7 +42,6 @@ jobs:
             -derivedDataPath build \
             MARKETING_VERSION=8.0.0 \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            INFOPLIST_KEY_ClipNoteCommit=${{ github.sha }} \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -56,6 +55,13 @@ jobs:
           rm -rf Payload ClipNote2-unsigned.ipa
           mkdir -p Payload
           cp -r "$APP" Payload/
+
+          # 提交号直接写进 Info.plist：`INFOPLIST_KEY_` 只对已知键生效，
+          # 自定义键在 xcodebuild 命令行上会被静静丢掉（试过一次，读出来是 None）。
+          APP_IN_PAYLOAD=$(ls -d Payload/*.app | head -1)
+          /usr/libexec/PlistBuddy -c "Add :ClipNoteCommit string ${GITHUB_SHA}" \
+            "$APP_IN_PAYLOAD/Info.plist"
+
           zip -qry ClipNote2-unsigned.ipa Payload
           ls -la ClipNote2-unsigned.ipa
 
@@ -68,6 +74,9 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist"
+          echo "--- 提交号（「我」页脚注要显示它）---"
+          /usr/libexec/PlistBuddy -c 'Print :ClipNoteCommit' "$APP/Info.plist" || {
+            echo "!! 没有写入 ClipNoteCommit"; exit 1; }
           echo "--- 图标（缺了就会是空白方块）---"
           ls "$APP"/*.png 2>/dev/null | head -5 || echo "!! 没有图标文件"
 
