@@ -474,8 +474,6 @@ struct ClipNoteClient {
 
 // MARK: - 载入状态
 
-/// 库的加载状态机。界面只读它，不自己判断「有没有数据」。
-@MainActor
 /// 一次同步里真实存在的三个时刻。
 ///
 /// 之所以只有三个：我们的同步就是一次 `GET /api/v2/library`，
@@ -487,6 +485,8 @@ enum SyncStep: Int, CaseIterable, Equatable {
     case ready
 }
 
+/// 库的加载状态机。界面只读它，不自己判断「有没有数据」。
+@MainActor
 final class LibraryStore: ObservableObject {
 
     enum Phase: Equatable {
@@ -517,10 +517,6 @@ final class LibraryStore: ObservableObject {
 
     // MARK: 加载
 
-    /// 标 `@MainActor`：`phase` 是 `@Published`，而 `onStep` 会直接驱动界面。
-    /// 不标的话整个函数体跑在协作线程池上，步骤回调与最终的 `.done` 之间会 race——
-    /// 表现是「已经完成，又被晚到的步骤回调改回进行中」。
-    @MainActor
     func reload() async {
         await reload(onStep: nil)
     }
@@ -531,7 +527,9 @@ final class LibraryStore: ObservableObject {
     /// `connecting` 在请求发出前，`fetched` 在响应解出来之后，
     /// `ready` 在写入本地状态之后。后两步通常在同一帧完成——
     /// 界面上会一起打勾，那是事实。
-    @MainActor
+    ///
+    /// 类本身就是 `@MainActor`，步骤回调与最终的 `.done` 在同一个 actor 上，
+    /// 不会出现「已经完成，又被晚到的回调改回进行中」。
     func reload(onStep: ((SyncStep) -> Void)?) async {
         guard let client else { return }
         phase = .loading
