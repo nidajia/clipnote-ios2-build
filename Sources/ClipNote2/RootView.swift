@@ -4,7 +4,13 @@ import SwiftUI
 ///
 /// 当前只有两个 Tab：首页、我。
 /// 书签与知识库属于第二包——不要为了「看起来完整」先放空 Tab。
+///
+/// 第一次启动先走引导（画布 01 / 02）：欢迎 → 首次同步 → 进首页。
+/// 「首次」用 `AppStorage` 记，只出现一次；想再看一遍得删掉 App 重装。
 struct RootView: View {
+    /// 引导走完才为 true。钥匙存在 UserDefaults，重装才会重置。
+    @AppStorage("clipnote.onboarded") private var onboarded = false
+
     @StateObject private var downloads: DownloadStore
     @StateObject private var library: LibraryStore
     @StateObject private var logs: LogStore
@@ -25,6 +31,26 @@ struct RootView: View {
     }
 
     var body: some View {
+        Group {
+            if onboarded {
+                tabs
+            } else {
+                OnboardingFlow {
+                    onboarded = true
+                }
+            }
+        }
+        .environmentObject(downloads)
+        .environmentObject(library)
+        .environmentObject(logs)
+        // 启动日志放在这里而不是 init：View 的 init 会被调用多次，
+        // 放 init 里会往日志文件写一串重复的「启动」。
+        .task {
+            logs.info("app.launch", "启动", meta: ["version": "8.0.0 (1)"])
+        }
+    }
+
+    private var tabs: some View {
         TabView {
             NavigationStack {
                 HomeScreen()
@@ -37,14 +63,11 @@ struct RootView: View {
             .tabItem { Label("我", systemImage: "person.fill") }
         }
         .tint(Color.cnBrand)
-        .environmentObject(downloads)
-        .environmentObject(library)
-        .environmentObject(logs)
-        // 首帧就拉一次库。失败会落到首页的失败态，也会进日志。
+        // 首次同步由引导页发起（它要在过程中点亮步骤行）。
+        // 这里只在「还没加载过」时补一次——否则一次冷启动会打两次接口，
+        // 日志里出现两条 library.loaded。
         .task {
-            // 启动日志放在这里而不是 init：View 的 init 会被调用多次，
-            // 放 init 里会往日志文件写一串重复的「启动」。
-            logs.info("app.launch", "启动", meta: ["version": "8.0.0 (1)"])
+            guard library.phase == .idle else { return }
             await library.reload()
         }
     }

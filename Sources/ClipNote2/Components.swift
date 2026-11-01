@@ -174,12 +174,21 @@ struct RingSpinner: View {
     var size: CGFloat = 16
     var color: Color
 
+    @State private var spinning = false
+
     var body: some View {
         Circle()
             .trim(from: 0, to: 0.72)
             .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-            .rotationEffect(.degrees(-90))
+            .rotationEffect(.degrees(spinning ? 360 : -90))
             .frame(width: size, height: size)
+            // 之前它是个**不会转**的圆弧：截图里像加载中，真机上就是个卡住的圈。
+            // 一个不动的加载指示器比没有更糟——用户会以为界面死了。
+            .onAppear {
+                withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+                    spinning = true
+                }
+            }
             .accessibilityHidden(true)
     }
 }

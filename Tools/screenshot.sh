@@ -70,6 +70,12 @@ upright_if_sideways() {
 
 # 走真实解码路径：App 从 bundle 里的 library-sample.json 解码后渲染，
 # 所以每张图同时证明「解码对不对」和「渲染对不对」，且不依赖网络。
+# 首启引导（画布 01 / 02）。放在最前面：它们本来就发生在首页之前。
+shot onboarding-welcome onboarding-welcome light
+shot onboarding-syncing onboarding-syncing light
+shot onboarding-done    onboarding-done    light
+shot onboarding-failed  onboarding-failed  light
+
 shot home-list    list    light
 shot home-loading loading light
 shot home-failed  failed  light

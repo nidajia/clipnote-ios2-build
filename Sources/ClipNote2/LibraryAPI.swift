@@ -476,6 +476,17 @@ struct ClipNoteClient {
 
 /// 库的加载状态机。界面只读它，不自己判断「有没有数据」。
 @MainActor
+/// 一次同步里真实存在的三个时刻。
+///
+/// 之所以只有三个：我们的同步就是一次 `GET /api/v2/library`，
+/// 能观测到的边界只有「请求发出 / 响应解出 / 状态写入」。
+/// 再拆细就只能靠编了——那正是引导页最容易变成假动画的地方。
+enum SyncStep: Int, CaseIterable, Equatable {
+    case connecting
+    case fetched
+    case ready
+}
+
 final class LibraryStore: ObservableObject {
 
     enum Phase: Equatable {
@@ -506,13 +517,31 @@ final class LibraryStore: ObservableObject {
 
     // MARK: 加载
 
+    /// 标 `@MainActor`：`phase` 是 `@Published`，而 `onStep` 会直接驱动界面。
+    /// 不标的话整个函数体跑在协作线程池上，步骤回调与最终的 `.done` 之间会 race——
+    /// 表现是「已经完成，又被晚到的步骤回调改回进行中」。
+    @MainActor
     func reload() async {
+        await reload(onStep: nil)
+    }
+
+    /// 同步。`onStep` 是可选的进度回调，只为引导页的步骤行服务。
+    ///
+    /// 三步对应三个**真实发生**的时刻，不是定时器：
+    /// `connecting` 在请求发出前，`fetched` 在响应解出来之后，
+    /// `ready` 在写入本地状态之后。后两步通常在同一帧完成——
+    /// 界面上会一起打勾，那是事实。
+    @MainActor
+    func reload(onStep: ((SyncStep) -> Void)?) async {
         guard let client else { return }
         phase = .loading
         let started = Date()
+        onStep?(.connecting)
         do {
             let library = try await client.library()
+            onStep?(.fetched)
             apply(library)
+            onStep?(.ready)
             log?.info("library.loaded", "同步完成 \(library.items.count) 条", meta: [
                 "count": "\(library.items.count)",
                 "version": library.libraryVersion,

@@ -88,6 +88,10 @@ struct SnapshotRoot: View {
                 NavigationStack { LogScreen() }
             } else if state == "trash" {
                 NavigationStack { TrashScreen(previewItems: previewTrash) }
+            } else if state.hasPrefix("onboarding") {
+                // 引导是首启才出现的，截图靠 previewPhase 直接停到某一帧。
+                // 真机上这条路径由 RootView 的 AppStorage 判定，与这里同一套视图。
+                OnboardingFlow(previewPhase: onboardingPhase)
             } else if state == "player-landscape" {
                 // 直接作为根呈现，不走 fullScreenCover：截图不关心转场动画，
                 // 只关心这一页在横屏尺寸下排得对不对。方向由 PlayerScreen
@@ -125,6 +129,22 @@ struct SnapshotRoot: View {
             }
             .tabItem { Label("我", systemImage: "person.fill") }
             .tag(1)
+        }
+    }
+
+    /// 引导截图停在的那一帧。`.welcome` 用 nil 表示（init 默认值）。
+    private var onboardingPhase: SyncPhase? {
+        switch state {
+        case "onboarding-syncing":
+            return .syncing(.connecting)
+        case "onboarding-done":
+            // 条数取真实样本的条数，不写死一个数字——
+            // 否则改了 fixture，截图会开始说谎
+            return .done(count: library.items.count, milliseconds: 620)
+        case "onboarding-failed":
+            return .failed(message: "连不上服务端。请求超时。", step: .connecting)
+        default:
+            return nil
         }
     }
 
