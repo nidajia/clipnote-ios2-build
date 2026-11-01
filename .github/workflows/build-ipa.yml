@@ -42,6 +42,7 @@ jobs:
             -derivedDataPath build \
             MARKETING_VERSION=8.0.0 \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            INFOPLIST_KEY_ClipNoteCommit=${{ github.sha }} \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \

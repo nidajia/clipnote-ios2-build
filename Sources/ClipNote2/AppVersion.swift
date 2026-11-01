@@ -10,6 +10,11 @@ enum AppVersion {
         let info = Bundle.main.infoDictionary
         let short = info?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         let build = info?["CFBundleVersion"] as? String ?? "0"
+        // 构建号每次 ipa 自增，但它说不清「哪次提交」。CI 会塞一个 ClipNoteCommit，
+        // 取前 7 位显示——真机上出问题时，这一串就是我能在仓库里定位到的东西。
+        if let sha = info?["ClipNoteCommit"] as? String, sha.count >= 7 {
+            return "\(short) (\(build)) · \(sha.prefix(7))"
+        }
         return "\(short) (\(build))"
     }
 }
