@@ -16,6 +16,9 @@ struct RootView: View {
             await ClipNoteClient.production.uploadLogs(entries)
         }
         let logStore = LogStore(uploader: uploader)
+        // 方向切换失败也要进日志：用户只会觉得「点了没反应」，
+        // 而这条日志能说明是系统拒绝了旋转请求。
+        OrientationLock.shared.logger = logStore
         _logs = StateObject(wrappedValue: logStore)
         _library = StateObject(wrappedValue: LibraryStore(client: .production, log: logStore))
         _downloads = StateObject(wrappedValue: DownloadStore(log: logStore))

@@ -36,6 +36,7 @@ struct DetailScreen: View {
 
     @State private var player: AVPlayer?
     @State private var playing = false
+    @State private var showFullscreen = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -107,6 +108,26 @@ struct DetailScreen: View {
         .background(Color.cnBg)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        // 全屏入口只放在导航栏，不放播放器右下角：
+        // 那块正是系统控制条的地盘，放上去要么互相遮挡，要么得写一套
+        // 「控制条出现时隐藏我」的观察逻辑，而 VideoPlayer 不暴露这个状态。
+        .toolbar {
+            if playing {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showFullscreen = true
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .accessibilityLabel("全屏播放")
+                }
+            }
+        }
+        // 共用同一个 AVPlayer 实例：退出全屏后接着播，不重建、不重新拉流。
+        .fullScreenCover(isPresented: $showFullscreen) {
+            PlayerScreen(item: item, player: player)
+        }
         // 进页面就先取一次地址：这样「下载到本地」旁边能标出体积，
         // 而不是让用户点下去才知道下多大。有 5 分钟缓存，来回切页不会重复打上游。
         .task { await prefetch() }

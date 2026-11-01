@@ -33,17 +33,37 @@ xcrun simctl status_bar "$UDID" override \
   --batteryState charged --batteryLevel 100 >/dev/null 2>&1 || true
 
 shot() {
-  local name="$1" state="$2" appearance="$3"
+  local name="$1" state="$2" appearance="$3" rotate="${4:-}"
 
   xcrun simctl ui "$UDID" appearance "$appearance" >/dev/null 2>&1 || true
   xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
   xcrun simctl launch "$UDID" "$BUNDLE_ID" \
     -snapshotState "$state" -snapshotAppearance "$appearance" >/dev/null
 
-  # 等首帧稳定；冷启动比热启动慢
-  sleep 4
+  # 等首帧稳定；冷启动比热启动慢。
+  # 横屏那张还要等 App 自己请求转方向，多给两秒。
+  if [ "$rotate" = "landscape" ]; then sleep 6; else sleep 4; fi
   xcrun simctl io "$UDID" screenshot "screenshots/$name.png"
+
+  if [ "$rotate" = "landscape" ]; then
+    upright_if_sideways "screenshots/$name.png"
+  fi
   echo "  -> screenshots/$name.png"
+}
+
+# `simctl` 没有「旋转设备」这个命令，所以是 App 自己喊「我要横屏」。
+# 此时内容会按 874×402 的横屏尺寸布局，但被画进竖屏缓冲里——拍出来是一张
+# 躺着内容的竖图。宽高颠倒就转回来：转正后是一张诚实的横屏截图，
+# 因为它确实是按横屏尺寸排的，不是把页面塞进竖屏里假装。
+upright_if_sideways() {
+  local file="$1"
+  local w h
+  w=$(sips -g pixelWidth "$file" | awk '/pixelWidth/{print $2}')
+  h=$(sips -g pixelHeight "$file" | awk '/pixelHeight/{print $2}')
+  if [ -n "$w" ] && [ -n "$h" ] && [ "$w" -lt "$h" ]; then
+    sips -r 90 "$file" >/dev/null
+    echo "     (内容躺在竖屏缓冲里，已转正：${w}x${h})"
+  fi
 }
 
 # 走真实解码路径：App 从 bundle 里的 library-sample.json 解码后渲染，
@@ -62,6 +82,9 @@ shot detail-ready       detail-ready       light
 shot detail-note        detail-note        light
 shot detail-downloading detail-downloading light
 shot detail-downloaded  detail-downloaded  light
+
+# 画布 06。第 4 个参数让脚本把它转正（见 upright_if_sideways）
+shot player-landscape player-landscape light landscape
 
 shot home-dark   list   dark
 shot detail-dark detail dark

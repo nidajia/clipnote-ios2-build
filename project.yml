@@ -41,7 +41,11 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: "片记"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+        # 这里放开横屏是**必要但不充分**的：真正决定「现在能不能转」的是
+        # AppDelegate.supportedInterfaceOrientationsFor，它平时只返回竖屏，
+        # 只有全屏播放页在屏幕上时才放开。Info.plist 里不写横屏，
+        # requestGeometryUpdate 会直接被系统拒绝——那种失败没有任何报错。
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
 
   ClipNote2Tests:
     type: bundle.unit-test

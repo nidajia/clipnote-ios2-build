@@ -3,6 +3,10 @@ import SwiftUI
 @main
 struct ClipNote2App: App {
 
+    /// 只为一件事存在：告诉系统「现在支持哪些方向」。
+    /// 纯 SwiftUI 的 App 没有 AppDelegate，而方向这个信息只有它能给。
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     /// CI 截图用的启动参数；正常启动时为 nil
     private let snapshot: (state: String, appearance: ColorScheme?)?
 

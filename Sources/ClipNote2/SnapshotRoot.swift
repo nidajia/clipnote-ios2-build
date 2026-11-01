@@ -88,6 +88,15 @@ struct SnapshotRoot: View {
                 NavigationStack { LogScreen() }
             } else if state == "trash" {
                 NavigationStack { TrashScreen(previewItems: previewTrash) }
+            } else if state == "player-landscape" {
+                // 直接作为根呈现，不走 fullScreenCover：截图不关心转场动画，
+                // 只关心这一页在横屏尺寸下排得对不对。方向由 PlayerScreen
+                // 自己的 onAppear 去要，和真机走的是同一段代码。
+                if let item = library.items.first {
+                    PlayerScreen(item: item, player: nil)
+                } else {
+                    Color.black
+                }
             } else {
                 tabs
             }
