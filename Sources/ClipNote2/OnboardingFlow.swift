@@ -161,7 +161,9 @@ struct OnboardingFlow: View {
         case .welcome: return ""
         case .syncing: return "正在同步"
         case .done: return "同步完成"
-        case .failed: return "没能连上服务端"
+        // 不写「没能连上服务端」：下面那行来自服务端/网络层，它自己就会说
+        // 「连不上服务端。请求超时。」——两句叠在一起等于同一句话说两遍。
+        case .failed: return "同步没能完成"
         }
     }
 
@@ -236,13 +238,14 @@ struct OnboardingFlow: View {
                 PrimaryButton(title: running ? "正在重试…" : "重试", isLoading: running) {
                     start()
                 }
-                // 没网时就等于装了个不能用的 App，所以必须给出口
+                // 没网时就等于装了个不能用的 App，所以必须给出口。
+                // 44 高是触控最小尺寸——32 看着紧凑，但手指点不准。
                 Button("先离线进入") { finish() }
                     .font(.cnChip)
                     .foregroundStyle(Color.cnInk3)
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 32)
+                    .frame(height: Metric.touch)
             }
         }
     }
