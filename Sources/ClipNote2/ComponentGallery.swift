@@ -120,12 +120,17 @@ struct ComponentGallery: View {
     }
 }
 
-#Preview("浅色") {
-    ComponentGallery()
-        .preferredColorScheme(.light)
-}
-
-#Preview("深色") {
-    ComponentGallery()
-        .preferredColorScheme(.dark)
+// `#Preview` 宏要求 iOS 17 部署目标。这里降到 16，所以用老的 PreviewProvider——
+// 反正预览只在 Xcode 里用，行为一样。
+struct ComponentGalleryPreviews: PreviewProvider {
+    static var previews: some View {
+        Group {
+            ComponentGallery()
+                .preferredColorScheme(.light)
+                .previewDisplayName("浅色")
+            ComponentGallery()
+                .preferredColorScheme(.dark)
+                .previewDisplayName("深色")
+        }
+    }
 }

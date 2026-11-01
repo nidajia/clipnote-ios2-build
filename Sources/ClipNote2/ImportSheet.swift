@@ -106,13 +106,15 @@ struct ImportSheet: View {
         .padding(.bottom, Metric.space6)
         .presentationDetents([.height(340)])
         .presentationDragIndicator(.visible)
-        .presentationBackground(Color.cnCard)
+        // `.presentationBackground` 要 iOS 16.4。部署目标是 16.0，所以改成
+        // 自己铺底色——效果一样，只是不再依赖那个修饰符。
+        .background(Color.cnCard)
         .onAppear {
             clipboardHasText = !(UIPasteboard.general.string ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         // 输入变了就把上一次的错误清掉，否则红字会挂在一条新链接下面
-        .onChange(of: link) { _, _ in
+        .onChange(of: link) { _ in
             if case .failed = phase { phase = .idle }
             if phase == .duplicate { phase = .idle }
         }

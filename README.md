@@ -251,6 +251,29 @@ App **默认锁竖屏**，只有全屏播放页在屏幕上时才放开横屏。
 顺带修了一处：`RingSpinner` 之前是个**不会转**的圆弧，截图里像加载中，
 真机上就是个卡住的圈。现在真的在转。
 
+## 打包与真机（2026-11-01 加）
+
+**最低系统降到 iOS 16.0。** 装机走 TrollStore（未签名 ipa），而它覆盖到 16.6.1。
+为此替换掉四处 iOS 17 专属写法，行为不变：
+
+| 原写法 | 16 的替代 |
+|---|---|
+| `navigationDestination(item:)` | `navigationDestination(isPresented:)` + 可选值投影 |
+| `.topBarTrailing` | `.navigationBarTrailing` |
+| `onChange(of:) { old, new in }` | `onChange(of:) { new in }` |
+| `.presentationBackground` | 自己铺底色 |
+| `#Preview` | `PreviewProvider` |
+
+**ipa 怎么出**：`.github/workflows/build-ipa.yml`，手动触发或打 `v*` tag。
+产物是未签名 ipa + `BUILD.txt`（含构建号与提交），Artifact 下载后 TrollStore 直接装。
+workflow 里有一条硬校验：`MinimumOSVersion` 不是 16.0 就直接失败——
+部署目标被谁改回 17，会在 CI 里当场发现，而不是等装不上才发现。
+
+**版本号**：原来「我」页脚注写死 `8.0.0 (1)`，两个分支还是同一个字符串。
+现在读 `Bundle` 的版本与构建号，CI 用运行号覆盖构建号，装两台机器能分清。
+
+**真机走查**：见 `真机走查清单.md`。按编号走，卡住就停，出问题走日志页「上报」。
+
 ## 已知缺口
 
 1. `/playback` 和 `/parse` 都只支持 B 站链路。抖音/小红书返回 501，需要接第三方聚合并验证。

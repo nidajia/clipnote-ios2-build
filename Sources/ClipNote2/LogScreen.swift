@@ -44,7 +44,7 @@ struct LogScreen: View {
         .navigationTitle("运行日志")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     Task { await upload() }
                 } label: {

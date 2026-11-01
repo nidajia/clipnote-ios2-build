@@ -124,7 +124,8 @@ struct MeScreen: View {
     /// 库版本号对用户没意义，但对排障有用：拉到的快照是不是最新、线上是哪一版，
     /// 都看这一串。所以放脚注，不占主视觉。
     private var footer: String {
-        library.version.isEmpty ? "版本 8.0.0 (1)" : "版本 8.0.0 (1) · \(library.version)"
+        let base = "版本 \(AppVersion.text)"
+        return library.version.isEmpty ? base : "\(base) · \(library.version)"
     }
 
     private var storageValue: String {

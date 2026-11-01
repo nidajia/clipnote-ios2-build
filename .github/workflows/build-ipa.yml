@@ -1,0 +1,98 @@
+name: Build iOS IPA (unsigned)
+
+# 产出**未签名** ipa，给 TrollStore 直接安装。
+# 不签名、不要证书、不要 Apple ID——这条链路是给巨魔用户的。
+#
+# 只在手动触发或打 tag 时构建：ipa 一次五六分钟，
+# 而一轮里往往要推两三次修复，每次 push 都编只是在编没人下载的包。
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      - name: 安装 xcodegen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+
+      - name: 编译 Release（未签名）
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project ClipNote2.xcodeproj \
+            -scheme ClipNote2 \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            MARKETING_VERSION=8.0.0 \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS=""
+
+      - name: 打包 ipa
+        run: |
+          set -euo pipefail
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "app: $APP"
+          rm -rf Payload ClipNote2-unsigned.ipa
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          zip -qry ClipNote2-unsigned.ipa Payload
+          ls -la ClipNote2-unsigned.ipa
+
+      - name: 校验（版本 / 最低系统 / 图标）
+        run: |
+          set -euo pipefail
+          APP=$(ls -d Payload/*.app | head -1)
+          echo "--- 基本信息 ---"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist"
+          echo "--- 图标（缺了就会是空白方块）---"
+          ls "$APP"/*.png 2>/dev/null | head -5 || echo "!! 没有图标文件"
+
+          # 部署目标被改回 17 的话，iOS 16 的机器装不上——这一步把它拦在 CI 里
+          MIN=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")
+          if [ "$MIN" != "16.0" ]; then
+            echo "!! MinimumOSVersion 是 $MIN，不是预期的 16.0"
+            exit 1
+          fi
+
+      - name: 附上构建信息
+        run: |
+          {
+            echo "版本 8.0.0 (${{ github.run_number }})"
+            echo "提交 ${{ github.sha }}"
+            echo "构建时间 $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "安装：TrollStore 打开 ipa 即可，无需签名。"
+          } > BUILD.txt
+          cat BUILD.txt
+
+      - name: 上传 ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipNote2-unsigned-ipa
+          path: |
+            ClipNote2-unsigned.ipa
+            BUILD.txt
+          if-no-files-found: error

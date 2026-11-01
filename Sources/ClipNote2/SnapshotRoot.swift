@@ -33,7 +33,7 @@ struct SnapshotRoot: View {
         let logStore = LogStore(directory: sandbox, uploader: nil)
         // 「我」和日志页需要内容可看，否则永远是空态
         if state == "logs" || state == "me" {
-            logStore.info("app.launch", "启动", meta: ["version": "8.0.0 (1)"])
+            logStore.info("app.launch", "启动", meta: ["version": AppVersion.text])
             logStore.info("library.loaded", "同步完成 8 条",
                           meta: ["count": "8", "version": "lv_1793265909_1", "ms": "412"])
             logStore.info("import.created", "导入成功", meta: ["created": "1", "ms": "1913"])

@@ -61,6 +61,14 @@ struct HomeScreen: View {
         }
     }
 
+    /// `selected` 的布尔投影，供 iOS 16 的 navigationDestination(isPresented:) 使用。
+    private var detailPushed: Binding<Bool> {
+        Binding(
+            get: { selected != nil },
+            set: { if !$0 { selected = nil } }
+        )
+    }
+
     var body: some View {
         content
             .background(Color.cnBg)
@@ -72,11 +80,15 @@ struct HomeScreen: View {
                 prompt: "搜索标题、要点、标签"
             )
             .safeAreaInset(edge: .top, spacing: 0) { filterBar }
-            .navigationDestination(item: $selected) { item in
-                DetailScreen(item: item, initialPrepare: detailPrepare)
+            // `navigationDestination(item:)` 是 iOS 17 才有的；16 上要用 isPresented
+            // 自己包一层。包出来的行为一致：selected 有值时推入，返回时置空。
+            .navigationDestination(isPresented: detailPushed) {
+                if let selected {
+                    DetailScreen(item: selected, initialPrepare: detailPrepare)
+                }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showImport = true
                     } label: {

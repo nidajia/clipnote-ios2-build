@@ -46,7 +46,7 @@ struct RootView: View {
         // 启动日志放在这里而不是 init：View 的 init 会被调用多次，
         // 放 init 里会往日志文件写一串重复的「启动」。
         .task {
-            logs.info("app.launch", "启动", meta: ["version": "8.0.0 (1)"])
+            logs.info("app.launch", "启动", meta: ["version": AppVersion.text])
         }
     }
 
@@ -73,10 +73,17 @@ struct RootView: View {
     }
 }
 
-#Preview("浅色") {
-    RootView().preferredColorScheme(.light)
-}
-
-#Preview("深色") {
-    RootView().preferredColorScheme(.dark)
+// `#Preview` 宏要求 iOS 17 部署目标。这里降到 16，所以用老的 PreviewProvider——
+// 反正预览只在 Xcode 里用，行为一样。
+struct RootViewPreviews: PreviewProvider {
+    static var previews: some View {
+        Group {
+            RootView()
+                .preferredColorScheme(.light)
+                .previewDisplayName("浅色")
+            RootView()
+                .preferredColorScheme(.dark)
+                .previewDisplayName("深色")
+        }
+    }
 }

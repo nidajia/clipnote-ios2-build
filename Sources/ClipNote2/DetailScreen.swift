@@ -113,7 +113,7 @@ struct DetailScreen: View {
         // 「控制条出现时隐藏我」的观察逻辑，而 VideoPlayer 不暴露这个状态。
         .toolbar {
             if playing {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showFullscreen = true
                     } label: {
@@ -131,7 +131,8 @@ struct DetailScreen: View {
         // 进页面就先取一次地址：这样「下载到本地」旁边能标出体积，
         // 而不是让用户点下去才知道下多大。有 5 分钟缓存，来回切页不会重复打上游。
         .task { await prefetch() }
-        .onChange(of: downloads.lastFailure) { _, failure in
+        // 单参数写法：iOS 16 没有「旧值、新值」那个双参数版本
+        .onChange(of: downloads.lastFailure) { failure in
             guard let failure, failure.id == item.id else { return }
             notice = failure.message
         }
