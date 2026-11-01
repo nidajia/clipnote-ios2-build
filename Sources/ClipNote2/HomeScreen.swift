@@ -74,12 +74,11 @@ struct HomeScreen: View {
             .background(Color.cnBg)
             .navigationTitle("片记")
             .navigationBarTitleDisplayMode(.large)
-            .searchable(
-                text: $query,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "搜索标题、要点、标签"
-            )
-            .safeAreaInset(edge: .top, spacing: 0) { filterBar }
+            // 不用 `.searchable`：iOS 16 下它的抽屉高度与大标题折叠会互相触发。
+            // 列表内容刚好卡在「勉强可滚动」的边界时，导航栏会**不需要任何输入**
+            // 就持续上下抽动，而导入按钮正夹在那两者中间（真机复现）。
+            // 自绘一个搜索框放进固定头部，导航栏就只剩标题，没有第二个变高度的头。
+            .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
             // `navigationDestination(item:)` 是 iOS 17 才有的；16 上要用 isPresented
             // 自己包一层。包出来的行为一致：selected 有值时推入，返回时置空。
             .navigationDestination(isPresented: detailPushed) {
@@ -184,10 +183,57 @@ struct HomeScreen: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            // 自绘搜索框后，滚动时得自己收键盘（系统搜索框以前管这件事）
+            .scrollDismissesKeyboard(.immediately)
             // 行本身不再硬关分隔线，由这里统一定义颜色
             .listRowSeparatorTint(Color.cnCard2)
             .listRowSpacing(0)
         }
+    }
+
+    /// 钉在顶部的整块头部：搜索框 + 筛选条，一个固定高度，不随列表滚动
+    private var pinnedHeader: some View {
+        VStack(spacing: 0) {
+            searchField
+                .padding(.horizontal, Metric.pagePad)
+                .padding(.top, Metric.space2)
+                .padding(.bottom, Metric.space1)
+            filterBar
+        }
+        .background(Color.cnBg)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.cnInk3)
+
+            TextField("搜索标题、要点、标签", text: $query)
+                .font(.cnBody)
+                .foregroundStyle(Color.cnInk)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.cnInk3)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清空搜索")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .background(
+            Color.cnCard2,
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
     }
 
     /// 钉在顶部的筛选条，不随列表滚动
