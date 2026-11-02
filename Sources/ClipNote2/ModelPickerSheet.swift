@@ -58,7 +58,7 @@ struct ModelPickerSheet: View {
                     Button(showAll ? "只看对话" : "显示全部") {
                         showAll.toggle()
                     }
-                    .font(.cnCaption)
+                    .font(.cnChip)
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -170,7 +170,9 @@ struct ModelPickerSheet: View {
         HStack(alignment: .top, spacing: Metric.space2) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(model.id)
-                    .font(.custom("Menlo", size: 13, relativeTo: .subheadline))
+                    // 等宽：模型名之间只差一两个字符（7B / 72B），
+                    // 比例字体下很难一眼看出区别
+                    .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(model.chattable ? Color.cnInk : Color.cnInk3)
                     .lineLimit(2)
                 Text(model.note)
