@@ -44,7 +44,7 @@ final class SummarizerTests: XCTestCase {
     func testCleansAndCapsArrays() throws {
         let raw = #"""
         {"summary":"有脏数据",
-         "keyPoints":["  两边有空格  ","", "很长的要点\u{2026}", null],
+         "keyPoints":["  两边有空格  ","", "一个正常长度的要点", null],
          "labels":["这是一个超过二十个字符长度的标签名称用来验证截断"]}
         """#
         let result = try Summarizer.parse(raw)
