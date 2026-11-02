@@ -249,12 +249,14 @@ struct DetailScreen: View {
                         Task { await startPlayback(at: segment.t) }
                     } label: {
                         ZStack {
+                            // 交替底色：纯靠 2pt 的缝隙分不清块边界，
+                            // 而这条带子存在的意义就是「一眼看出切成几段」
                             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(Color.cnCard3)
-                            if widths.indices.contains(index), widths[index] >= 30 {
+                                .fill(index.isMultiple(of: 2) ? Color.cnCard3 : Color.cnCard2)
+                            if widths.indices.contains(index), widths[index] >= 22 {
                                 Text(String(format: "%02d", index + 1))
                                     .font(.custom("Inter-Medium", size: 10, relativeTo: .caption2))
-                                    .foregroundStyle(Color.cnInk3)
+                                    .foregroundStyle(Color.cnInk2)
                             }
                         }
                         .contentShape(Rectangle())
