@@ -58,15 +58,15 @@ struct SegmentsScreen: View {
         .navigationTitle("分段")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
-        .fullScreenCover(isPresented: $showPlayer) {
-            if let player {
-                PlayerScreen(item: item, player: player)
-            }
-        } onDismiss: {
+        .fullScreenCover(isPresented: $showPlayer, onDismiss: {
             // 不加这一句，关掉全屏后音频还在响，而屏幕上已经没有任何播放控件——
             // 用户只能杀进程。
             player?.pause()
             player = nil
+        }) {
+            if let player {
+                PlayerScreen(item: item, player: player)
+            }
         }
     }
 
@@ -175,12 +175,10 @@ struct SegmentsScreen: View {
                 return
             }
             let newPlayer = AVPlayer(url: url)
-            // 先定位再播：直接 play 会让用户先听到开头那两秒再跳，很难受
-            await newPlayer.seek(
-                to: CMTime(seconds: Double(segment.t), preferredTimescale: 600),
-                toleranceBefore: .zero,
-                toleranceAfter: .zero
-            )
+            // 先定位再播：直接 play 会让用户先听到开头那两秒再跳，很难受。
+            // 用不带 completion 的版本——AVPlayer 会把 seek 排在自己的加载队列里，
+            // 不需要我们等；等待反而要处理「加载失败」这条额外分支。
+            newPlayer.seek(to: CMTime(seconds: Double(segment.t), preferredTimescale: 600))
             player = newPlayer
             showPlayer = true
             newPlayer.play()
