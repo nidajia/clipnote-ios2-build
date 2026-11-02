@@ -102,7 +102,12 @@ final class ClipNoteClientTests: XCTestCase {
             _ = try await makeClient().library()
             XCTFail("403 应当失败")
         } catch let failure as ClipNoteClient.Failure {
-            XCTAssertEqual(failure, .gatewayBlocked(snippet: nil))
+            // 只断言「归类成 403」，不绑 snippet 的具体内容：
+            // 那个字段是给排障用的，响应体里放什么都行，不该让测试跟着变。
+            guard case .gatewayBlocked(let snippet) = failure else {
+                return XCTFail("403 应当归类为 gatewayBlocked，实际是 \(failure)")
+            }
+            XCTAssertEqual(snippet, "链接不完整", "响应体要带出来，否则事后没法查")
         } catch {
             XCTFail("错误类型不对：\(error)")
         }
