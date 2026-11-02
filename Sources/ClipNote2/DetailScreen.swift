@@ -41,6 +41,9 @@ struct DetailScreen: View {
     @State private var showSegments = false
     @State private var aiState: AIState = .idle
     @State private var segmentState: SegmentState = .idle
+    /// 分段导航里高亮哪一段。只反映「上次点了哪块」，不跟播放进度走——
+    /// 跟进度要挂定时器，那是另一件事（progress bar），先不混进来。
+    @State private var activeSegment: Int?
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -94,7 +97,7 @@ struct DetailScreen: View {
                 // 进独立页再点时间戳那条路绕得太远——用户想的是「跳到第 3 分钟」，
                 // 不是「先去读一遍目录」。
                 if !current.segments.isEmpty {
-                    segmentStrip
+                    segmentRail
                 }
 
                 VStack(alignment: .leading, spacing: Metric.space3) {
@@ -231,67 +234,56 @@ struct DetailScreen: View {
             .clipped()
     }
 
-    // MARK: - 分段条
+    // MARK: - 分段导航
 
-    /// 播放器正下方的分段条：每块 = 一段，宽度按实际时长占比。
+    /// 播放器正下方的分段导航：一排可横滑的标题块，点一下跳到那一段。
     ///
-    /// 为什么不塞进播放器控件：全屏走的是系统 `AVPlayerViewController`，
-    /// 它的进度条我们改不了；而详情页这个播放器一开始播，系统控件就盖满画面。
-    /// 放在画面**外面**，才既常驻可见、又不跟系统手势抢。
+    /// 为什么不是「按时间比例分块」：试过，读不出来。
+    /// 段与段时间长度差 5 倍时，窄的那块放不下序号，宽的那块又像留白；
+    /// 9 块并排看过去只是一排灰方块，用户第一眼不知道那是什么。
+    /// 标题块牺牲了「按比例」的直觉，换回「我点进去的是哪一段」这件更重要的事。
     ///
-    /// 为什么不按段数均分：一段 8 分钟、一段 30 秒，均分会让人以为它们差不多长。
-    private var segmentStrip: some View {
-        GeometryReader { geo in
-            let widths = stripWidths(totalWidth: geo.size.width)
-            HStack(spacing: 2) {
+    /// 为什么不塞进播放器控件：全屏走系统 `AVPlayerViewController`，改不了；
+    /// 详情页这个播放器一开播，系统控件就盖满画面。放在画面外面才两全。
+    private var segmentRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
                 ForEach(Array(current.segments.enumerated()), id: \.offset) { index, segment in
                     Button {
+                        activeSegment = segment.t
                         Task { await startPlayback(at: segment.t) }
                     } label: {
-                        ZStack {
-                            // 交替底色：纯靠 2pt 的缝隙分不清块边界，
-                            // 而这条带子存在的意义就是「一眼看出切成几段」
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(index.isMultiple(of: 2) ? Color.cnCard3 : Color.cnCard2)
-                            if widths.indices.contains(index), widths[index] >= 22 {
-                                Text(String(format: "%02d", index + 1))
-                                    .font(.custom("Inter-Medium", size: 10, relativeTo: .caption2))
-                                    .foregroundStyle(Color.cnInk2)
-                            }
+                        HStack(spacing: 6) {
+                            Text(String(format: "%02d", index + 1))
+                                .font(.custom("Inter-SemiBold", size: 10, relativeTo: .caption2))
+                                .foregroundStyle(Color.cnBrand)
+                            Text(segment.title)
+                                .font(.cnChip)
+                                .foregroundStyle(Color.cnInk)
+                                .lineLimit(1)
                         }
-                        .contentShape(Rectangle())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            activeSegment == segment.t ? Color.cnBrandSoft : Color.cnCard3,
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(
+                                    activeSegment == segment.t ? Color.cnBrand : Color.clear,
+                                    lineWidth: 1
+                                )
+                        )
                     }
                     .buttonStyle(.plain)
-                    .frame(width: widths.indices.contains(index) ? widths[index] : 0)
                     .accessibilityLabel("从 \(Self.mmss(segment.t)) 开始播放：\(segment.title)")
                 }
             }
+            .padding(.horizontal, Metric.pagePad)
         }
-        .frame(height: 28)
-        .padding(.horizontal, Metric.pagePad)
         .padding(.top, Metric.space3)
         .padding(.bottom, Metric.space1)
-    }
-
-    private func stripWidths(totalWidth: CGFloat) -> [CGFloat] {
-        let segments = current.segments
-        guard !segments.isEmpty, totalWidth > 0 else { return [] }
-
-        let gap: CGFloat = 2
-        let usable = max(0, totalWidth - gap * CGFloat(segments.count - 1))
-        let total = Double(max(1, current.durationSeconds))
-
-        var spans: [Double] = []
-        for (index, segment) in segments.enumerated() {
-            let end = index + 1 < segments.count ? Double(segments[index + 1].t) : total
-            // 8 秒是下限：再短也留一块能点得到的区域
-            spans.append(max(8, end - Double(segment.t)))
-        }
-        let sum = spans.reduce(0, +)
-        guard sum > 0 else {
-            return segments.map { _ in usable / CGFloat(segments.count) }
-        }
-        return spans.map { CGFloat($0 / sum) * usable }
     }
 
     private var playButton: some View {        Button {
