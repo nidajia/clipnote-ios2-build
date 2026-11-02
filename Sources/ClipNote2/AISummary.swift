@@ -507,6 +507,33 @@ enum TranscriptCompressor {
     }
 }
 
+/// 一次分段生成的体检数据。
+///
+/// 为什么要记这些：分段的好坏在模拟器里看不出来（截图用的是手写常量）。
+/// 真机跑完只有四个能自动判定的信号，靠它们而不是靠肉眼：
+///   1. 段数是否落在 4–9
+///   2. 首段是否为 0、末段是否覆盖到 80% 以后
+///   3. 模型给的原始秒数里有多少**恰好**命中转写时间点（`exact`）
+///   4. 喂进去多少字（`chars`）——判断是不是顶到上下文上限了
+struct SegmentStats: Equatable {
+    /// 模型给了几段
+    var raw = 0
+    /// 原始 t 恰好等于某个已知时间点的条数。偏低说明模型在「自己换算」
+    var exact = 0
+    /// 被吸附改过位置的条数
+    var snapped = 0
+    var firstT = 0
+    var lastT = 0
+    /// 压缩后喂模型的块数与字数
+    var blocks = 0
+    var chars = 0
+}
+
+struct SegmentOutcome {
+    var segments: [APISegment]
+    var stats: SegmentStats
+}
+
 /// 把转写切成带时间戳的语义段。
 ///
 /// 和 `Summarizer` 分开而不是合一次调用：
@@ -520,7 +547,7 @@ struct Segmenter {
         title: String,
         lines: [APITranscriptLine],
         durationSeconds: Int
-    ) async throws -> [APISegment] {
+    ) async throws -> SegmentOutcome {
         guard config.isConfigured, let endpoint = config.endpoint else {
             throw SummarizeFailure.notConfigured
         }
@@ -573,7 +600,11 @@ struct Segmenter {
             throw SummarizeFailure.emptyReply
         }
 
-        return try Self.parse(content, transcript: lines)
+        let (segments, stats) = try Self.parseDetailed(content, transcript: lines)
+        var outcome = stats
+        outcome.blocks = blocks.count
+        outcome.chars = blocks.reduce(0) { $0 + $1.text.count }
+        return SegmentOutcome(segments: segments, stats: outcome)
     }
 
     // MARK: - 提示词
@@ -613,6 +644,14 @@ struct Segmenter {
     // MARK: - 解析
 
     static func parse(_ raw: String, transcript: [APITranscriptLine]) throws -> [APISegment] {
+        try parseDetailed(raw, transcript: transcript).segments
+    }
+
+    /// 真解析。多回一份 `stats`：真机上判断分段质量只能靠这几个数，
+    /// 而截图里用的永远是手写样本，证明不了提示词好不好。
+    static func parseDetailed(
+        _ raw: String, transcript: [APITranscriptLine]
+    ) throws -> (segments: [APISegment], stats: SegmentStats) {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix("```") {
             if let firstNewline = text.firstIndex(of: "\n") {
@@ -638,18 +677,26 @@ struct Segmenter {
         // 模型给的 t 常常落在两个时间戳中间（比如给 137，而转写只有 130 和 152）。
         // 不修正而是吸附到最近的已知时间点：这样点一下就一定能跳到有内容的位置。
         let known = transcript.map(\.t).sorted()
+        let knownSet = Set(known)
+        var stats = SegmentStats(raw: array.count)
         var out: [APISegment] = []
+
         for one in array {
             guard let dict = one as? [String: Any] else { continue }
             let title = (dict["title"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if title.isEmpty { continue }
-            let raw = (dict["t"] as? Int) ?? Int((dict["t"] as? Double) ?? 0)
+            let value = (dict["t"] as? Int) ?? Int((dict["t"] as? Double) ?? 0)
+            if knownSet.contains(value) {
+                stats.exact += 1
+            } else {
+                stats.snapped += 1
+            }
             let summary = (dict["summary"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             out.append(APISegment(
                 title: String(title.prefix(30)),
-                t: snap(raw, to: known),
+                t: snap(value, to: known),
                 summary: String(summary.prefix(80))
             ))
             if out.count >= 12 { break }
@@ -657,7 +704,9 @@ struct Segmenter {
 
         guard !out.isEmpty else { throw SummarizeFailure.unparsable(text) }
         out.sort { $0.t < $1.t }
-        return out
+        stats.firstT = out.first?.t ?? 0
+        stats.lastT = out.last?.t ?? 0
+        return (out, stats)
     }
 
     /// 吸附到最近的已知时间点。`known` 已排序，二分即可。

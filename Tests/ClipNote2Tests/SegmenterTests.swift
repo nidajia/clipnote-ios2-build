@@ -101,6 +101,32 @@ final class SegmenterTests: XCTestCase {
         XCTAssertThrowsError(try Segmenter.parse("模型今天不想干活", transcript: lines))
     }
 
+    // MARK: - 体检数据
+
+    func testStatsCountExactAndSnapped() throws {
+        let lines = [line(0, "a"), line(130, "b"), line(152, "c")]
+        // 第 1、3 段照抄了真实时间点，第 2 段自己算了一个 137
+        let raw = #"{"segments":[{"t":0,"title":"一"},{"t":137,"title":"二"},{"t":152,"title":"三"}]}"#
+
+        let (segments, stats) = try Segmenter.parseDetailed(raw, transcript: lines)
+        XCTAssertEqual(segments.count, 3)
+        XCTAssertEqual(stats.raw, 3)
+        XCTAssertEqual(stats.exact, 2, "只有原样照抄的才算命中")
+        XCTAssertEqual(stats.snapped, 1)
+        XCTAssertEqual(stats.firstT, 0)
+        XCTAssertEqual(stats.lastT, 152)
+    }
+
+    func testStatsCountsRawEntriesEvenIfDropped() throws {
+        // 没标题的段会被丢掉，但 raw 要如实记模型给了几条——
+        // 否则「模型只给 3 段」和「我们丢了 2 段」看起来一样
+        let lines = [line(0, "a")]
+        let raw = #"{"segments":[{"t":0,"title":"一"},{"t":0,"title":"  "}]}"#
+        let (segments, stats) = try Segmenter.parseDetailed(raw, transcript: lines)
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(stats.raw, 2)
+    }
+
     // MARK: - 模型备注
 
     func testModelNoteClassifiesByPurpose() {

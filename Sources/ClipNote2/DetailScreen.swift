@@ -643,11 +643,13 @@ struct DetailScreen: View {
                 )
                 return
             }
-            let segments = try await Segmenter(config: config).segments(
+            let outcome = try await Segmenter(config: config).segments(
                 title: current.title,
                 lines: transcript.lines,
                 durationSeconds: transcript.durationSeconds
             )
+            logSegmentQuality(outcome, id: current.id,
+                              duration: transcript.durationSeconds)
             // 字幕只覆盖前半段时，模型没见过结尾，只能按见到的东西收尾。
             // 与其让它假装讲完了，不如把这件事写在卡片上。
             if transcript.partial {
@@ -655,14 +657,47 @@ struct DetailScreen: View {
                 notice = "字幕只覆盖到第 \(minutes) 分钟，后面的内容没有算进去。"
             }
             let saved = await library.saveSegments(
-                id: current.id, segments: segments, by: config.model
+                id: current.id, segments: outcome.segments, by: config.model
             )
             segmentState = saved ? .idle : .failed("生成成功，但没存上。")
         } catch let failure as SummarizeFailure {
+            if case .unparsable(let raw) = failure {
+                // 一定要留原文：「模型没按 JSON 回答」这句话本身没法排查，
+                // 得看它到底回了什么（最常见是被 max_tokens 截断）
+                logs.error("segments.unparsable", "模型没按 JSON 回答", meta: [
+                    "id": current.id, "raw": String(raw.prefix(100)),
+                ])
+            }
             segmentState = .failed(failure.displayMessage)
         } catch {
             segmentState = .failed(failureMessage(error))
         }
+    }
+
+    /// 把「这次分段切得好不好」写成一行日志。
+    ///
+    /// 四个信号，全都能自动判定，不需要肉眼读一遍段落：
+    ///   n       段数，理想 4–9。太少说明模型把内容揉成一坨，太多说明它在按时间均分
+    ///   exact   模型给的原始秒数里，恰好命中转写时间点的比例。
+    ///           偏低说明它在「自己换算」，那 `snap` 就会把段落到错误的位置
+    ///   cover   末段覆盖到总时长的百分之多少，低于 0.8 说明它没读完
+    ///   chars   喂进去多少字，接近 12000 就是在顶上下文上限
+    private func logSegmentQuality(_ outcome: SegmentOutcome, id: String, duration: Int) {
+        let stats = outcome.stats
+        let coverage = duration > 0 ? Double(stats.lastT) / Double(duration) : 0
+        logs.info("segments.built", "分段完成，段数 \(outcome.segments.count)", meta: [
+            "id": id,
+            "n": String(outcome.segments.count),
+            "raw": String(stats.raw),
+            "exact": "\(stats.exact)/\(outcome.segments.count)",
+            "snapped": String(stats.snapped),
+            "first": String(stats.firstT),
+            "last": String(stats.lastT),
+            "dur": String(duration),
+            "cover": String(format: "%.2f", coverage),
+            "blocks": String(stats.blocks),
+            "chars": String(stats.chars),
+        ])
     }
 
     private func failureMessage(_ error: Error) -> String {
