@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 
 /// 分段总结的完整页。
@@ -6,15 +7,30 @@ import SwiftUI
 /// 实测一条 10 分钟的视频切出 9 段，更长的会更多；展开会把下载按钮
 /// 推到第三四屏，而且一展开页面高度翻倍，滚动位置会跳。
 ///
-/// 这一版只做一件事：把段落读清楚。点时间戳跳播放、按段加书签，
-/// 留到接播放器与书签那一步——先让「读」这件事成立。
+/// 这一版只做一件事：把段落读清楚，点时间戳从那里开始看。
 struct SegmentsScreen: View {
     var item: Item
+
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var logs: LogStore
+
+    @State private var player: AVPlayer?
+    @State private var showPlayer = false
+    /// 正在取地址的那一段（存 t，用来只让那一行转圈）
+    @State private var preparing: Int?
+    @State private var notice: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metric.space4) {
                 header
+
+                if let notice {
+                    Text(notice)
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnRed)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if item.segments.isEmpty {
                     Text("这条还没有分段。回到详情页点「按段落读」生成。")
@@ -42,6 +58,16 @@ struct SegmentsScreen: View {
         .navigationTitle("分段")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .fullScreenCover(isPresented: $showPlayer) {
+            if let player {
+                PlayerScreen(item: item, player: player)
+            }
+        } onDismiss: {
+            // 不加这一句，关掉全屏后音频还在响，而屏幕上已经没有任何播放控件——
+            // 用户只能杀进程。
+            player?.pause()
+            player = nil
+        }
     }
 
     private var header: some View {
@@ -64,60 +90,107 @@ struct SegmentsScreen: View {
     }
 
     private func row(index: Int, segment: APISegment) -> some View {
-        HStack(alignment: .top, spacing: Metric.space3) {
-            // 编号用 Inter：中文数字在 10 以后宽度不一，编号会参差不齐
-            Text(String(format: "%02d", index))
-                .font(.custom("Inter-SemiBold", size: 13, relativeTo: .subheadline))
-                .foregroundStyle(Color.cnBrand)
-                .frame(width: 24, alignment: .leading)
-                .padding(.top, 3)
+        Button {
+            Task { await play(from: segment) }
+        } label: {
+            HStack(alignment: .top, spacing: Metric.space3) {
+                // 编号用 Inter：中文数字在 10 以后宽度不一，编号会参差不齐
+                Text(String(format: "%02d", index))
+                    .font(.custom("Inter-SemiBold", size: 13, relativeTo: .subheadline))
+                    .foregroundStyle(Color.cnBrand)
+                    .frame(width: 24, alignment: .leading)
+                    .padding(.top, 3)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: Metric.space2) {
-                    Text(segment.title)
-                        .font(.cnRowTitle)
-                        .foregroundStyle(Color.cnInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Text(DetailScreen.mmss(segment.t))
-                        .font(.cnDuration)
-                        .foregroundStyle(Color.cnInk3)
-                }
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: Metric.space2) {
+                        Text(segment.title)
+                            .font(.cnRowTitle)
+                            .foregroundStyle(Color.cnInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        timeBadge(segment)
+                    }
 
-                if !segment.summary.isEmpty {
-                    Text(segment.summary)
-                        .font(.cnChip)
-                        .foregroundStyle(Color.cnInk2)
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if !segment.summary.isEmpty {
+                        Text(segment.summary)
+                            .font(.cnChip)
+                            .foregroundStyle(Color.cnInk2)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
+            .contentShape(Rectangle())
+            .padding(.vertical, Metric.space3)
         }
-        .padding(.vertical, Metric.space3)
+        .buttonStyle(.plain)
+        .disabled(preparing != nil)
+        .accessibilityLabel("从 \(DetailScreen.mmss(segment.t)) 开始播放：\(segment.title)")
     }
-}
 
-struct SegmentsScreenPreviews: PreviewProvider {
-    static var previews: some View {
-        NavigationStack {
-            SegmentsScreen(item: Item(
-                id: "p1",
-                title: "为什么大多数人的笔记系统最后都会废掉",
-                metaLine: "B 站 · 老蒋巨靠谱",
-                durationText: "12:34",
-                aiSummary: "收藏夹不是知识库。这条视频把「为什么你收藏了却从不回看」拆成三个层次。",
-                keyPoints: ["入口太多", "没有回头路", "缺少标记"],
-                labels: ["笔记", "方法"],
-                segments: [
-                    APISegment(title: "提出「收藏≠学习」", t: 0,
-                               summary: "开头先给判断：收藏满足的是占有感，不是学习需求。"),
-                    APISegment(title: "三组对照实验", t: 200,
-                               summary: "用两组对照数据说明，回看率和收藏数量没有关系。"),
-                    APISegment(title: "你为什么会反复收藏", t: 465,
-                               summary: "把责任从自制力挪到产品结构上，这是全片最重要的一次转场。"),
-                ]
-            ))
+    /// 时间戳就是按钮。给它一个播放三角，用户才知道这里能点——
+    /// 光是一串 01:02 看起来只是标注，不会有人去点。
+    @ViewBuilder
+    private func timeBadge(_ segment: APISegment) -> some View {
+        HStack(spacing: 3) {
+            if preparing == segment.t {
+                ActivitySpinner(style: .medium)
+                    .scaleEffect(0.6)
+                    .frame(width: 9, height: 9)
+            } else {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            Text(DetailScreen.mmss(segment.t))
+                .font(.cnDuration)
         }
-        .preferredColorScheme(.light)
+        .foregroundStyle(item.playbackAvailable ? Color.cnBrand : Color.cnInk3)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            item.playbackAvailable ? Color.cnBrandSoft : Color.cnCard3,
+            in: Capsule()
+        )
+    }
+
+    /// 从这一段开始看。
+    ///
+    /// 为什么不在这一页嵌一个播放器：这一页是「读」的场景，一个占半屏的
+    /// 播放器会把段落切碎。点了就全屏播——和详情页走的是同一个
+    /// `PlayerScreen`，转屏逻辑也只维护一份。
+    private func play(from segment: APISegment) async {
+        guard item.playbackAvailable else {
+            notice = "这条内容没有视频流，不能从时间点播放。"
+            return
+        }
+        guard preparing == nil else { return }
+
+        preparing = segment.t
+        defer { preparing = nil }
+
+        do {
+            guard let payload = try await library.playback(for: item.id),
+                  let url = URL(string: payload.url) else {
+                notice = "这条没有可播放的视频。"
+                return
+            }
+            let newPlayer = AVPlayer(url: url)
+            // 先定位再播：直接 play 会让用户先听到开头那两秒再跳，很难受
+            await newPlayer.seek(
+                to: CMTime(seconds: Double(segment.t), preferredTimescale: 600),
+                toleranceBefore: .zero,
+                toleranceAfter: .zero
+            )
+            player = newPlayer
+            showPlayer = true
+            newPlayer.play()
+            logs.info("segments.jump", "从分段起播", meta: [
+                "id": item.id, "t": String(segment.t),
+            ])
+        } catch let failure as ClipNoteClient.Failure {
+            notice = failure.displayMessage
+        } catch {
+            notice = "取播放地址失败，稍后再试。"
+        }
     }
 }
