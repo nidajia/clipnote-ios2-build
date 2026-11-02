@@ -9,10 +9,10 @@ struct AISettingsScreen: View {
     @State private var config: AIConfig
     @State private var status: Status = .idle
     @State private var revealKey = false
+    @Environment(\.dismiss) private var dismiss
 
     enum Status: Equatable {
         case idle
-        case saved
         case testing
         case ok
         case failed(String)
@@ -116,8 +116,6 @@ struct AISettingsScreen: View {
         switch status {
         case .idle:
             EmptyView()
-        case .saved:
-            label("已保存", color: .cnGreen)
         case .testing:
             label("正在测试…", color: .cnInk3)
         case .ok:
@@ -134,12 +132,22 @@ struct AISettingsScreen: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    /// 带左标签的输入行。
+    ///
+    /// 只靠 placeholder 不行：填完之后「哪个是地址、哪个是模型」就看不出来了，
+    /// 而这两个值一旦填错，报错信息是模型服务给的（401/404），很难反推。
     private func row(_ title: String, text: Binding<String>, placeholder: String) -> some View {
-        TextField(placeholder, text: text)
-            .font(.cnBody)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .accessibilityLabel(title)
+        HStack(spacing: Metric.space2) {
+            Text(title)
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnInk3)
+                .frame(width: 40, alignment: .leading)
+            TextField(placeholder, text: text)
+                .font(.cnBody)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func save() {
@@ -147,7 +155,9 @@ struct AISettingsScreen: View {
             status = .failed("保存失败：钥匙串拒绝了写入。")
             return
         }
-        status = .saved
+        // 存完就回去：从「我」进来是返回上一页，从详情页的弹层进来是收起弹层，
+        // 两种都对。留一条「已保存」在页面上反而要多按一次返回。
+        dismiss()
     }
 
     private func test() async {
