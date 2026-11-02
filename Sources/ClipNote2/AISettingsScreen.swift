@@ -9,6 +9,10 @@ struct AISettingsScreen: View {
     @State private var config: AIConfig
     @State private var status: Status = .idle
     @State private var revealKey = false
+    @State private var showModels = false
+    /// 进详情页要不要自动总结。默认关：AI 花的是用户自己的额度，
+    /// 只是路过看一眼不该先扣一次调用。
+    @AppStorage("clipnote.autoSummary") private var autoSummary = false
     @Environment(\.dismiss) private var dismiss
 
     enum Status: Equatable {
@@ -43,11 +47,33 @@ struct AISettingsScreen: View {
                 }
 
                 row("地址", text: $config.base, placeholder: "https://api.example.com/v1")
-                row("模型", text: $config.model, placeholder: "gpt-4o-mini")
+
+                HStack(spacing: Metric.space2) {
+                    Text("模型")
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnInk3)
+                        .frame(width: 40, alignment: .leading)
+                    // 手填和选列表都留着：自定义网关给的模型名往往不在 /models 里
+                    TextField("gpt-4o-mini", text: $config.model)
+                        .font(.cnBody)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button {
+                        showModels = true
+                    } label: {
+                        Text("选择")
+                            .font(.cnChip)
+                            .foregroundStyle(config.key.isEmpty || config.base.isEmpty
+                                             ? Color.cnInk3 : Color.cnBrand)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(config.key.isEmpty || config.base.isEmpty)
+                    .accessibilityLabel("从服务商读取模型列表")
+                }
             } header: {
                 Text("服务")
             } footer: {
-                Text("填 OpenAI 兼容的地址即可，末尾的 /v1 要带上。")
+                Text("填 OpenAI 兼容的地址即可，末尾的 /v1 要带上。点「选择」可以让服务商把模型列表发过来。")
             }
 
             Section {
@@ -106,6 +132,20 @@ struct AISettingsScreen: View {
             }
 
             Section {
+                Toggle(isOn: $autoSummary) {
+                    Text("进详情页自动总结")
+                        .font(.cnBody)
+                }
+                .tint(Color.cnBrand)
+            } header: {
+                Text("什么时候生成")
+            } footer: {
+                // 说清楚「自动」覆盖到哪：这条边界不写明白，
+                // 用户会以为打开后连长视频的转写也会自己跑起来。
+                Text("关掉时，详情页只给一行「生成摘要」，点了才跑。打开后进页面就生成。两种都只覆盖能直接拿到字幕的内容；需要先转成文字的，仍然要手动点。")
+            }
+
+            Section {
                 PrimaryButton(title: "保存", isEnabled: config.isConfigured) {
                     save()
                 }
@@ -118,6 +158,15 @@ struct AISettingsScreen: View {
         .background(Color.cnBg)
         .navigationTitle("AI 摘要")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showModels) {
+            NavigationStack {
+                ModelPickerSheet(
+                    base: config.base,
+                    key: config.key,
+                    selected: $config.model
+                )
+            }
+        }
     }
 
     @ViewBuilder

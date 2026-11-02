@@ -28,6 +28,76 @@ struct APISource: Decodable, Equatable {
     var platform: String?
 }
 
+/// 一段总结。`t` 是这段开始的时间（秒），用来和播放器对齐。
+struct APISegment: Decodable, Equatable, Hashable, Identifiable {
+    var title: String
+    var t: Int
+    var summary: String
+
+    /// 只用于列表 diff。**不能当成唯一键**：模型偶尔会给两段同一个时间，
+    /// 吸附之后更可能撞上。界面里一律按 offset 遍历，不拿它当 ForEach 的 id。
+    var id: String { "\(t)-\(title)" }
+
+    private enum CodingKeys: String, CodingKey { case title, t, summary }
+
+    init(title: String, t: Int, summary: String = "") {
+        self.title = title
+        self.t = t
+        self.summary = summary
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        t = try c.decodeIfPresent(Int.self, forKey: .t) ?? 0
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+    }
+}
+
+// MARK: - 转写
+//
+// 服务端只回三种 source，客户端只认这三种分支：
+//   subtitle —— lines 直接可用
+//   audio    —— 没字幕但有音轨，客户端自己去转写（本版未接）
+//   none     —— 都没有，reason 说明为什么
+
+struct APITranscriptLine: Decodable, Equatable {
+    var t: Int
+    var text: String
+}
+
+struct APITranscript: Decodable, Equatable {
+    var source: String
+    var lines: [APITranscriptLine]
+    /// 字幕末句时间 / 视频总时长。B 站的 AI 字幕偶尔会中途断掉，
+    /// 小于 0.8 时界面要如实写「只覆盖到第 X 分钟」。
+    var coverage: Double
+    var durationSeconds: Int
+    var partial: Bool
+    var reason: String
+    /// source == "audio" 时才有
+    var audio: APIAudio?
+
+    private enum CodingKeys: String, CodingKey {
+        case source, lines, coverage, durationSeconds, partial, reason, audio
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = try c.decodeIfPresent(String.self, forKey: .source) ?? "none"
+        lines = try c.decodeIfPresent([APITranscriptLine].self, forKey: .lines) ?? []
+        coverage = try c.decodeIfPresent(Double.self, forKey: .coverage) ?? 0
+        durationSeconds = try c.decodeIfPresent(Int.self, forKey: .durationSeconds) ?? 0
+        partial = try c.decodeIfPresent(Bool.self, forKey: .partial) ?? false
+        reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        audio = try c.decodeIfPresent(APIAudio.self, forKey: .audio)
+    }
+}
+
+struct APIAudio: Decodable, Equatable {
+    var url: String
+}
+
 struct APILibraryItem: Decodable, Equatable, Identifiable {
     var id: String
     var kind: String
@@ -44,13 +114,17 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var aiSummary: String = ""
     var keyPoints: [String] = []
     var labels: [String] = []
+    /// 分段总结：摘要的下一层，每段带开始时间（秒）。
+    /// 段数不固定（5±3），所以界面不能假设「一定有 5 段」。
+    var segments: [APISegment] = []
+    var segmentsAt: Int = 0
     /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
     var deletedAt: Int?
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, title, metaLine, durationText, durationSeconds
         case summary, cover, playback, publishedAt, source, deletedAt
-        case aiSummary, keyPoints, labels
+        case aiSummary, keyPoints, labels, segments, segmentsAt
     }
 
     init(
@@ -65,7 +139,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         playback: APIPlayback = APIPlayback(available: true, reason: nil),
         publishedAt: Int = 0,
         source: APISource? = nil,
-        deletedAt: Int? = nil
+        deletedAt: Int? = nil,
+        segments: [APISegment] = []
     ) {
         self.id = id
         self.kind = kind
@@ -79,6 +154,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         self.publishedAt = publishedAt
         self.source = source
         self.deletedAt = deletedAt
+        self.segments = segments
     }
 
     init(from decoder: Decoder) throws {
@@ -101,6 +177,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         aiSummary = try c.decodeIfPresent(String.self, forKey: .aiSummary) ?? ""
         keyPoints = try c.decodeIfPresent([String].self, forKey: .keyPoints) ?? []
         labels = try c.decodeIfPresent([String].self, forKey: .labels) ?? []
+        segments = try c.decodeIfPresent([APISegment].self, forKey: .segments) ?? []
+        segmentsAt = try c.decodeIfPresent(Int.self, forKey: .segmentsAt) ?? 0
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
         playback = try c.decodeIfPresent(APIPlayback.self, forKey: .playback)
             ?? APIPlayback(available: kind == "video", reason: nil)
@@ -357,6 +435,14 @@ struct ClipNoteClient {
         }
     }
 
+    /// 取一条内容的转写原料（字幕）。
+    ///
+    /// 服务端会现网去 B 站取字幕，约 0.1–0.6 秒。**不做缓存**：
+    /// 缓存得住正文，缓存不住「这条视频昨天刚补了字幕」。
+    func transcript(id: String) async throws -> APITranscript {
+        try await get("/api/v2/items/\(encode(id))/transcript", as: APITranscript.self)
+    }
+
     private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         guard let url = url(path: path) else { throw Failure.transport("地址拼不出来") }
         let (data, response) = try await send(url)
@@ -403,6 +489,18 @@ struct ClipNoteClient {
                 "summary": result.summary,
                 "keyPoints": result.keyPoints,
                 "labels": result.labels,
+                "by": model,
+            ],
+            as: APILibraryItem.self
+        )
+    }
+
+    /// 写回分段。和摘要一样：生成在手机上，存却在服务端。
+    func saveSegments(id: String, segments: [APISegment], by model: String) async throws -> APILibraryItem {
+        try await post(
+            "/api/v2/items/\(encode(id))/segments",
+            body: [
+                "segments": segments.map { ["title": $0.title, "t": $0.t, "summary": $0.summary] },
                 "by": model,
             ],
             as: APILibraryItem.self
@@ -833,12 +931,57 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// 取转写原料。截图模式下没有 client，抛错而不是返回空——
+    /// 让调用方走「失败」分支，而不是假装「这条没有字幕」。
+    func transcript(for id: String) async throws -> APITranscript {
+        guard let client else { throw ClipNoteClient.Failure.transport("截图模式没有网络层") }
+        let started = Date()
+        do {
+            let payload = try await client.transcript(id: id)
+            log?.info("transcript.fetched", "取到转写原料", meta: [
+                "id": id,
+                "source": payload.source,
+                "lines": String(payload.lines.count),
+                "ms": ms(since: started),
+            ])
+            return payload
+        } catch let failure as ClipNoteClient.Failure {
+            log?.error("transcript.failed", failure.displayMessage, meta: [
+                "id": id, "kind": failure.logKind, "ms": ms(since: started),
+            ])
+            throw failure
+        }
+    }
+
+    /// 保存分段。返回是否成功。
+    @discardableResult
+    func saveSegments(id: String, segments: [APISegment], by model: String) async -> Bool {
+        guard let client else { return false }
+        do {
+            _ = try await client.saveSegments(id: id, segments: segments, by: model)
+            await reload()
+            log?.info("segments.saved", "分段已写回快照", meta: [
+                "id": id, "count": String(segments.count), "by": model,
+            ])
+            return true
+        } catch {
+            log?.error("segments.save_failed", "分段保存失败", meta: ["id": id])
+            return false
+        }
+    }
+
     /// 截图/预览用：把摘要直接塞进内存里的条目，不经过网络与服务端。
     func seedSummary(id: String, summary: String, keyPoints: [String], labels: [String]) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].aiSummary = summary
         items[index].keyPoints = keyPoints
         items[index].labels = labels
+    }
+
+    /// 截图/预览用：同上，塞分段。
+    func seedSegments(id: String, segments: [APISegment]) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].segments = segments
     }
 
     func loadTrash() async throws -> [APILibraryItem] {

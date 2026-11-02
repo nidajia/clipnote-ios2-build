@@ -28,6 +28,8 @@ struct Item: Identifiable, Hashable {
     var aiSummary: String = ""
     var keyPoints: [String] = []
     var labels: [String] = []
+    /// 分段总结。段数不固定，界面只能保证「至少 0 段」，不能假设 5 段。
+    var segments: [APISegment] = []
     var coverURL: URL?
     /// `false` 不是错误，是「这类内容没有视频流」（笔记、图集）
     var playbackAvailable: Bool
@@ -48,6 +50,7 @@ struct Item: Identifiable, Hashable {
         self.aiSummary = api.aiSummary
         self.keyPoints = api.keyPoints
         self.labels = api.labels
+        self.segments = api.segments
         self.playbackAvailable = api.playback.available
         self.publishedAt = api.publishedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
@@ -75,6 +78,7 @@ struct Item: Identifiable, Hashable {
         aiSummary: String = "",
         keyPoints: [String] = [],
         labels: [String] = [],
+        segments: [APISegment] = [],
         coverURL: URL? = nil,
         playbackAvailable: Bool = true,
         publishedAt: Date? = nil
@@ -88,6 +92,7 @@ struct Item: Identifiable, Hashable {
         self.aiSummary = aiSummary
         self.keyPoints = keyPoints
         self.labels = labels
+        self.segments = segments
         self.coverURL = coverURL
         self.playbackAvailable = playbackAvailable
         self.publishedAt = publishedAt

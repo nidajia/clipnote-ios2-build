@@ -109,6 +109,134 @@ enum AIConfigStore {
     }
 }
 
+// MARK: - 模型列表
+//
+// 服务商的 `/models` 只返回 id，**不返回「这是不是对话模型」**。
+// 所以「备注」只能本地按名字猜。猜错的代价是用户选了个向量模型、
+// 然后收到一句看不懂的 400，所以宁可多藏几个：embed / rerank / tts
+// 这些默认不出现在列表里，要看得手动打开「显示全部」。
+
+struct AIModel: Identifiable, Equatable {
+    var id: String
+    /// 「通义千问 · 对话模型」这种，帮用户看懂这串 id 是什么
+    var note: String
+    /// 能不能拿来聊天。不能的默认收起来。
+    var chattable: Bool
+}
+
+enum ModelCatalog {
+    /// 拉服务商的模型列表。`GET {base}/models`，OpenAI 兼容接口都有这个。
+    static func fetch(
+        base: String,
+        key: String,
+        session: URLSession = .shared
+    ) async throws -> [AIModel] {
+        let trimmed = base.trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty, let url = URL(string: trimmed + "/models") else {
+            throw SummarizeFailure.notConfigured
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw SummarizeFailure.transport(error.localizedDescription)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let text = String(data: data.prefix(200), encoding: .utf8) ?? ""
+            throw SummarizeFailure.http(http.statusCode, text)
+        }
+
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SummarizeFailure.unparsable(String(data: data.prefix(80), encoding: .utf8) ?? "")
+        }
+
+        // OpenAI / 硅基流动 / 月之暗面 都是 {"data":[{"id":…}]}；
+        // 少数网关用 {"models":[…]}，一起认了。
+        var ids: [String] = []
+        if let list = root["data"] as? [[String: Any]] {
+            ids = list.compactMap { $0["id"] as? String }
+        } else if let list = root["models"] as? [[String: Any]] {
+            ids = list.compactMap { ($0["id"] as? String) ?? ($0["name"] as? String) }
+        }
+
+        var seen = Set<String>()
+        var out: [AIModel] = []
+        for id in ids {
+            let name = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if name.isEmpty || seen.contains(name) { continue }
+            seen.insert(name)
+            let info = note(for: name)
+            out.append(AIModel(id: name, note: info.note, chattable: info.chattable))
+        }
+        guard !out.isEmpty else {
+            throw SummarizeFailure.unparsable("列表是空的")
+        }
+        // 能聊天的排前面，其次按名字：用户九成是在找第一个
+        return out.sorted { lhs, rhs in
+            if lhs.chattable != rhs.chattable { return lhs.chattable }
+            return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+        }
+    }
+
+    /// 按名字猜用途。这是**猜测**，不是接口给的事实——
+    /// 所以文案里只说「对话模型」这种粗分类，不说参数量、不说上下文长度。
+    static func note(for id: String) -> (note: String, chattable: Bool) {
+        let lower = id.lowercased()
+
+        func kind(_ text: String, chattable: Bool = true) -> (String, Bool) {
+            let vendor = vendorName(lower)
+            return (vendor.isEmpty ? text : "\(vendor) · \(text)", chattable)
+        }
+
+        if lower.contains("embed") { return kind("向量模型", chattable: false) }
+        if lower.contains("rerank") { return kind("重排模型", chattable: false) }
+        if lower.contains("whisper") || lower.contains("sensevoice")
+            || lower.contains("paraformer") || lower.contains("asr") {
+            return kind("语音识别", chattable: false)
+        }
+        if lower.contains("tts") || lower.contains("cosyvoice") || lower.contains("audio") {
+            return kind("语音合成", chattable: false)
+        }
+        if lower.contains("flux") || lower.contains("sdxl") || lower.contains("stable-diffusion")
+            || lower.contains("kolors") || lower.contains("image") {
+            return kind("图片生成", chattable: false)
+        }
+        if lower.contains("reasoner") || lower.contains("-r1") || lower.contains("thinking")
+            || lower.contains("-think") {
+            return kind("推理模型")
+        }
+        if lower.contains("-vl") || lower.contains("vision") || lower.contains("omni") {
+            return kind("视觉理解")
+        }
+        if lower.contains("coder") || lower.contains("code") {
+            return kind("代码模型")
+        }
+        return kind("对话模型")
+    }
+
+    private static func vendorName(_ lower: String) -> String {
+        if lower.contains("qwen") || lower.contains("qwq") { return "通义千问" }
+        if lower.contains("deepseek") { return "DeepSeek" }
+        if lower.contains("glm") || lower.contains("chatglm") { return "智谱" }
+        if lower.contains("moonshot") || lower.contains("kimi") { return "月之暗面" }
+        if lower.contains("gpt") || lower.contains("o1") || lower.contains("o3") { return "OpenAI" }
+        if lower.contains("claude") { return "Anthropic" }
+        if lower.contains("llama") { return "Llama" }
+        if lower.contains("yi-") { return "零一万物" }
+        if lower.contains("internlm") { return "书生" }
+        if lower.contains("baichuan") { return "百川" }
+        return ""
+    }
+}
+
 /// 生成结果
 struct SummaryResult: Equatable {
     var summary: String
@@ -284,5 +412,235 @@ struct Summarizer {
             if out.count >= limit { break }
         }
         return out
+    }
+}
+
+// MARK: - 分段总结
+//
+// 为什么要在手机上报一次再发：B 站的 AI 字幕是「按 1~2 秒硬切、没有标点」的碎片，
+// 一条 30 分钟的视频有 800 多行。原样丢给模型有两个问题：
+//   1. 每行带一个时间戳，结构开销比正文还大；
+//   2. 句子被切碎了，模型读到的是「综合能力反超CLAUDE」接「重夺地表最强」，
+//      它会把两件事当成一件。
+// 所以先按时间窗口合并成整句，再喂。这不是省 token，是让模型能读。
+
+enum TranscriptCompressor {
+    /// 单行喂给模型时，前面挂的秒数标记。用原始秒数而不是「12:30」：
+    /// 让模型做一次「分:秒 → 秒」的换算，就一定会出现 ±1 秒的误差，
+    /// 而我们要求它**原样抄**这个数字，换算误差从源头上没有了。
+    static func compress(
+        _ lines: [APITranscriptLine],
+        window: Int
+    ) -> [(t: Int, text: String)] {
+        var out: [(t: Int, text: String)] = []
+        var start: Int?
+        var bucket: [String] = []
+
+        func flush() {
+            guard let begin = start, !bucket.isEmpty else { return }
+            out.append((t: begin, text: bucket.joined(separator: "，")))
+            start = nil
+            bucket = []
+        }
+
+        for line in lines {
+            let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty { continue }
+            if start == nil { start = line.t }
+            bucket.append(text)
+            // 一旦这一桶跨过窗口，就在**下一句**之前收口，
+            // 不把正在说的半句话切成两段。
+            if line.t - (start ?? line.t) >= window {
+                flush()
+            }
+        }
+        flush()
+        return out
+    }
+
+    /// 按总字数自动选窗口：短内容 25 秒，长的逐步放宽到 60 秒。
+    ///
+    /// 目标不是「压到多少字」，而是「让 8k 上下文的模型装得下」。
+    /// 实测中文约 1.5 字一个 token，所以 12000 字 ≈ 8000 token，是上限。
+    static func plan(_ lines: [APITranscriptLine]) -> [(t: Int, text: String)] {
+        var window = 25
+        var blocks = compress(lines, window: window)
+        while window < 60 {
+            let chars = blocks.reduce(0) { $0 + $1.text.count }
+            if blocks.count <= 140, chars <= 12000 { break }
+            window += 5
+            blocks = compress(lines, window: window)
+        }
+        return blocks
+    }
+}
+
+/// 把转写切成带时间戳的语义段。
+///
+/// 和 `Summarizer` 分开而不是合一次调用：
+/// 摘要的提示词是调好的（用户认可了输出），把它和分段揉在一起，
+/// 等于拿一个已验证的效果去赌一个没验证的。
+struct Segmenter {
+    var config: AIConfig
+    var session: URLSession = .shared
+
+    func segments(
+        title: String,
+        lines: [APITranscriptLine],
+        durationSeconds: Int
+    ) async throws -> [APISegment] {
+        guard config.isConfigured, let endpoint = config.endpoint else {
+            throw SummarizeFailure.notConfigured
+        }
+        let blocks = TranscriptCompressor.plan(lines)
+        guard !blocks.isEmpty else {
+            throw SummarizeFailure.emptyReply
+        }
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        // 输入比摘要大一个量级，45 秒不够
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
+
+        let payload: [String: Any] = [
+            "model": config.model,
+            "temperature": 0.2,
+            "messages": [
+                ["role": "system", "content": Self.instructions],
+                ["role": "user", "content": Self.userContent(
+                    title: title, duration: durationSeconds, blocks: blocks
+                )],
+            ],
+        ]
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
+            throw SummarizeFailure.unparsable("请求体拼不出来")
+        }
+        request.httpBody = body
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw SummarizeFailure.transport(error.localizedDescription)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let text = String(data: data.prefix(200), encoding: .utf8) ?? ""
+            throw SummarizeFailure.http(http.statusCode, text)
+        }
+
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = root["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String,
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            throw SummarizeFailure.emptyReply
+        }
+
+        return try Self.parse(content, transcript: lines)
+    }
+
+    // MARK: - 提示词
+
+    private static let instructions = """
+    你是「片记」的分段整理助手。用户会给你一条视频的转写，每行以 [秒] 开头。
+
+    把整条内容按语义转折切成若干段，每段给一个标题和一句理解。
+    只输出一个 JSON 对象，不要任何解释、不要 Markdown 代码块：
+    {"segments":[{"t":0,"title":"…","summary":"…"}]}
+
+    要求：
+    - t 必须原样抄某一行的方括号数字，不要自己换算，不要加偏移。第一段用 0。
+    - 段数按内容定：内容少就 4 段，不要为凑数硬拆；最多 9 段。
+    - 段与段之间必须是真正的转折（换话题、换案例、下结论），不是按时间均分。
+    - 标题不超过 14 字，用陈述句；不要写「第一部分」「接下来」这种编号。
+    - summary 是 20 到 45 字的一句理解：这段讲了什么、为什么重要。
+      不要把标题换个说法再写一遍，也不要复述原话。
+    - 转写没有标点、可能有错别字，按上下文理解。不要纠正专有名词，也不要补上原文没有的数字。
+    - 按时间顺序输出。
+    """
+
+    private static func userContent(
+        title: String, duration: Int, blocks: [(t: Int, text: String)]
+    ) -> String {
+        var lines = ["标题：\(title)"]
+        if duration > 0 {
+            lines.append("时长：\(duration / 60) 分 \(duration % 60) 秒")
+        }
+        lines.append("转写：")
+        for block in blocks {
+            lines.append("[\(block.t)] \(block.text)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    // MARK: - 解析
+
+    static func parse(_ raw: String, transcript: [APITranscriptLine]) throws -> [APISegment] {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("```") {
+            if let firstNewline = text.firstIndex(of: "\n") {
+                text = String(text[text.index(after: firstNewline)...])
+            }
+            if let fence = text.range(of: "```", options: .backwards) {
+                text = String(text[..<fence.lowerBound])
+            }
+        }
+        guard let start = text.firstIndex(of: "{"),
+              let end = text.lastIndex(of: "}"),
+              start < end,
+              let data = String(text[start...end]).data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw SummarizeFailure.unparsable(text)
+        }
+
+        guard let array = root["segments"] as? [Any] else {
+            throw SummarizeFailure.unparsable(text)
+        }
+
+        // 模型给的 t 常常落在两个时间戳中间（比如给 137，而转写只有 130 和 152）。
+        // 不修正而是吸附到最近的已知时间点：这样点一下就一定能跳到有内容的位置。
+        let known = transcript.map(\.t).sorted()
+        var out: [APISegment] = []
+        for one in array {
+            guard let dict = one as? [String: Any] else { continue }
+            let title = (dict["title"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if title.isEmpty { continue }
+            let raw = (dict["t"] as? Int) ?? Int((dict["t"] as? Double) ?? 0)
+            let summary = (dict["summary"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            out.append(APISegment(
+                title: String(title.prefix(30)),
+                t: snap(raw, to: known),
+                summary: String(summary.prefix(80))
+            ))
+            if out.count >= 12 { break }
+        }
+
+        guard !out.isEmpty else { throw SummarizeFailure.unparsable(text) }
+        out.sort { $0.t < $1.t }
+        return out
+    }
+
+    /// 吸附到最近的已知时间点。`known` 已排序，二分即可。
+    static func snap(_ value: Int, to known: [Int]) -> Int {
+        guard !known.isEmpty else { return max(0, value) }
+        var low = 0
+        var high = known.count - 1
+        while low < high {
+            let mid = (low + high) / 2
+            if known[mid] < value { low = mid + 1 } else { high = mid }
+        }
+        // low 是第一个 >= value 的位置，比较它和前一个哪个更近
+        if low > 0, abs(known[low - 1] - value) <= abs(known[low] - value) {
+            return known[low - 1]
+        }
+        return known[low]
     }
 }

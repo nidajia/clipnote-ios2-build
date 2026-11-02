@@ -93,6 +93,26 @@ struct SnapshotRoot: View {
             )
         }
 
+        // 分段截图：摘要 + 分段同时给，验的是「摘要卡里怎么塞下分段」
+        if state == "detail-segments", let id = detail?.id {
+            lib.seedSummary(
+                id: id,
+                summary: "这条片子讨论的是：现在的 AI 热潮与 2000 年互联网泡沫，究竟哪里像、哪里不一样。"
+                    + "结论不是「一定会崩」，而是估值与收入之间的缺口比当年更难解释。",
+                keyPoints: [
+                    "估值跑在收入前面，且集中在少数几家公司",
+                    "与 2000 年不同：这次的基础设施是真实在用的",
+                ],
+                labels: ["AI", "投资", "互联网史"]
+            )
+            lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
+        }
+
+        // 分段页单独截图：它验的是「9 段排下来会不会挤在一起」
+        if state == "segments", let id = lib.items.first?.id {
+            lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
+        }
+
         _downloads = StateObject(wrappedValue: store)
         _library = StateObject(wrappedValue: lib)
         _logs = StateObject(wrappedValue: logStore)
@@ -107,6 +127,22 @@ struct SnapshotRoot: View {
                 NavigationStack { TrashScreen(previewItems: previewTrash) }
             } else if state == "ai-settings" {
                 NavigationStack { AISettingsScreen() }
+            } else if state == "ai-models" {
+                // 列表是从服务商读来的，截图里用固定样本模拟「已读到」
+                NavigationStack {
+                    ModelPickerSheet(
+                        base: AIProviderPreset.siliconflow.base,
+                        key: "sk-preview",
+                        selected: .constant("Qwen/Qwen2.5-7B-Instruct"),
+                        initialModels: SnapshotRoot.sampleModels
+                    )
+                }
+            } else if state == "segments" {
+                if let item = library.items.first {
+                    NavigationStack { SegmentsScreen(item: item) }
+                } else {
+                    Color.cnBg
+                }
             } else if state.hasPrefix("onboarding") {
                 // 引导是首启才出现的，截图靠 previewPhase 直接停到某一帧。
                 // 真机上这条路径由 RootView 的 AppStorage 判定，与这里同一套视图。
@@ -190,4 +226,39 @@ struct SnapshotRoot: View {
             expiresAt: 0
         ))
     }
+
+    /// 分段样本。9 段是实测出来的段数（10 分钟的视频），
+    /// 用它做截图才知道「真到 9 段时会不会挤」。
+    static let sampleSegments: [APISegment] = [
+        APISegment(title: "先给结论：缺口在哪", t: 0,
+                   summary: "开场不谈涨跌，先把「估值」和「收入」两条线摆在一起，缺口一眼可见。"),
+        APISegment(title: "和 2000 年像的地方", t: 62,
+                   summary: "叙事驱动定价、散户集中入场、卖方报告互相引用同一套假设。"),
+        APISegment(title: "不一样的地方：真在用的基建", t: 155,
+                   summary: "算力与电力是真的被消耗掉的，这部分收入能对上账。"),
+        APISegment(title: "资本开支的回收周期", t: 248,
+                   summary: "折旧年限被拉长，利润表比现金流好看，这是容易被忽略的一层。"),
+        APISegment(title: "谁在付钱", t: 341,
+                   summary: "企业客户占比上升，但预算来自实验经费而不是生产预算。"),
+        APISegment(title: "两个反方观点", t: 430,
+                   summary: "作者没有一边倒：给出「这次不一样」的最强论据，再逐条拆。"),
+        APISegment(title: "崩不崩不是重点", t: 525,
+                   summary: "重点是谁能在估值回落时活下来，而不是预测哪一天回落。"),
+        APISegment(title: "对普通人的含义", t: 618,
+                   summary: "别把判断押在时间点上；把仓位和现金流留出余地。"),
+        APISegment(title: "结尾的自我修正", t: 700,
+                   summary: "作者承认自己上一次也判断错了时间，这段是整条片子里最诚实的地方。"),
+    ]
+
+    /// 模型列表样本。挑的都是真实存在的 id，备注按本地的名字规则推。
+    static let sampleModels: [AIModel] = [
+        AIModel(id: "Qwen/Qwen2.5-7B-Instruct", note: "通义千问 · 对话模型", chattable: true),
+        AIModel(id: "Qwen/Qwen2.5-72B-Instruct", note: "通义千问 · 对话模型", chattable: true),
+        AIModel(id: "deepseek-ai/DeepSeek-V3", note: "DeepSeek · 对话模型", chattable: true),
+        AIModel(id: "deepseek-ai/DeepSeek-R1", note: "DeepSeek · 推理模型", chattable: true),
+        AIModel(id: "Qwen/Qwen2-VL-72B-Instruct", note: "通义千问 · 视觉理解", chattable: true),
+        AIModel(id: "BAAI/bge-m3", note: "向量模型", chattable: false),
+        AIModel(id: "BAAI/bge-reranker-v2-m3", note: "重排模型", chattable: false),
+        AIModel(id: "FunAudioLLM/SenseVoiceSmall", note: "语音识别", chattable: false),
+    ]
 }

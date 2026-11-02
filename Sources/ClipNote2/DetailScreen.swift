@@ -38,10 +38,15 @@ struct DetailScreen: View {
     @State private var playing = false
     @State private var showFullscreen = false
     @State private var showAISettings = false
+    @State private var showSegments = false
     @State private var aiState: AIState = .idle
+    @State private var segmentState: SegmentState = .idle
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
+    /// 进页面要不要自动总结。默认**不自动**：AI 是用户自己的额度，
+    /// 只是路过看一眼不该先花一次调用。设置里可以改成自动。
+    @AppStorage("clipnote.autoSummary") private var autoSummary = false
 
     /// `initialPrepare` 只给截图用：让「已取到地址」这一态可被拍下来。
     /// 正常路径一律 `.idle`，由 `prefetch()` 去取。
@@ -58,6 +63,16 @@ struct DetailScreen: View {
         case idle
         case running
         case needsSetup
+        case failed(String)
+    }
+
+    /// 分段这一块的状态。和 `AIState` 分开：
+    /// 摘要已经有了、分段却还没做，是很常见的一态，不能共用一个状态机。
+    enum SegmentState: Equatable {
+        case idle
+        case running
+        /// 服务端明确说了拿不到原料（没字幕 / 平台没接）。这不是失败，重试也没用。
+        case blocked(String)
         case failed(String)
     }
 
@@ -146,6 +161,10 @@ struct DetailScreen: View {
         .task {
             await prefetch()
             await maybeSummarize()
+            await maybeLoadSegments()
+        }
+        .navigationDestination(isPresented: $showSegments) {
+            SegmentsScreen(item: current)
         }
         .sheet(isPresented: $showAISettings) {
             NavigationStack { AISettingsScreen() }
@@ -261,6 +280,9 @@ struct DetailScreen: View {
             failedCard(message)
         } else if aiState == .needsSetup {
             setupRow
+        } else {
+            // 手动模式下的常态：给一行入口，不自动花钱
+            startRow
         }
     }
 
@@ -309,6 +331,10 @@ struct DetailScreen: View {
                     }
                 }
             }
+
+            // 分段放在要点和标签之间：先看「讲了什么」，再看「怎么一步步讲的」，
+            // 最后才是归类用的标签。反过来读会像目录压着正文。
+            segmentSection(value)
         }
         .padding(Metric.space4)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -393,9 +419,178 @@ struct DetailScreen: View {
         .buttonStyle(.plain)
     }
 
-    /// 进页面时自动生成一次；已生成、没配置、上次失败过都不再自动跑。
+    /// 手动模式下的一行入口。和 `setupRow` 同一套样式：
+    /// 淡淡的、只占一行——用户可能根本不想用 AI，不该每进一条都被推销。
+    private var startRow: some View {
+        Button {
+            Task { await generateSummary() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("生成摘要")
+                    .font(.cnChip)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(Color.cnBrand)
+            .padding(.horizontal, Metric.space3)
+            .padding(.vertical, 10)
+            .background(
+                Color.cnBrandSoft,
+                in: RoundedRectangle(cornerRadius: Metric.radiusButton, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 分段
+
+    @ViewBuilder
+    private func segmentSection(_ value: Item) -> some View {
+        if !value.segments.isEmpty {
+            VStack(alignment: .leading, spacing: Metric.space2) {
+                Rectangle()
+                    .fill(Color.cnHairlineSoft)
+                    .frame(height: 1)
+                    .padding(.vertical, 2)
+
+                HStack(spacing: 5) {
+                    Image(systemName: "list.number")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("分段")
+                        .font(.cnCaption)
+                    Spacer(minLength: 0)
+                    if value.segments.count > previewSegmentCount {
+                        Button {
+                            showSegments = true
+                        } label: {
+                            HStack(spacing: 2) {
+                                Text("全部 \(value.segments.count) 段")
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .font(.cnCaption)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .foregroundStyle(Color.cnInk3)
+
+                ForEach(Array(value.segments.prefix(previewSegmentCount).enumerated()), id: \.offset) { _, segment in
+                    segmentRow(segment)
+                }
+            }
+        } else {
+            segmentEntry
+        }
+    }
+
+    /// 详情页露几段。3 段约占一屏，既让人确认「确实拆开讲了」，
+    /// 又不至于把下面的下载按钮推出屏幕。
+    private var previewSegmentCount: Int { 3 }
+
+    private func segmentRow(_ segment: APISegment) -> some View {
+        HStack(alignment: .top, spacing: Metric.space2) {
+            Text(Self.mmss(segment.t))
+                .font(.cnDuration)
+                .foregroundStyle(Color.cnInk3)
+                .frame(width: 38, alignment: .leading)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(segment.title)
+                    .font(.cnChip)
+                    .foregroundStyle(Color.cnInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !segment.summary.isEmpty {
+                    Text(segment.summary)
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnInk3)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// 还没有分段时那一行：可能是入口，也可能正在跑、或已经明确拿不到。
+    @ViewBuilder
+    private var segmentEntry: some View {
+        Rectangle()
+            .fill(Color.cnHairlineSoft)
+            .frame(height: 1)
+            .padding(.vertical, 2)
+
+        switch segmentState {
+        case .running:
+            HStack(spacing: Metric.space2) {
+                ActivitySpinner(style: .medium)
+                Text("正在按段落整理…")
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+                Spacer(minLength: 0)
+            }
+
+        case .blocked(let message):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(message)
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("重试") {
+                    segmentState = .idle
+                    Task { await generateSegments() }
+                }
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnBrand)
+                .buttonStyle(.plain)
+            }
+
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 4) {
+                Text("分段没能生成：\(message)")
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("重试") {
+                    segmentState = .idle
+                    Task { await generateSegments() }
+                }
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnBrand)
+                .buttonStyle(.plain)
+            }
+
+        case .idle:
+            Button {
+                Task { await generateSegments() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "list.number")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("按段落读")
+                        .font(.cnChip)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(Color.cnBrand)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// 进页面时自动生成一次。默认**不**跑：AI 是用户自己的额度。
     private func maybeSummarize() async {
-        guard !library.isOffline, current.aiSummary.isEmpty, aiState == .idle else { return }
+        guard autoSummary else { return }
+        await generateSummary()
+    }
+
+    private func generateSummary() async {
+        guard !library.isOffline, current.aiSummary.isEmpty, aiState != .running else { return }
 
         let config = AIConfigStore.load()
         guard config.isConfigured else {
@@ -420,6 +615,66 @@ struct DetailScreen: View {
         } catch {
             aiState = .failed("生成失败：\(error.localizedDescription)")
         }
+    }
+
+    /// 自动模式才跑，且只在「秒级可得」这条路上跑——
+    /// 需要转写的条目仍然等用户点，否则进页面就开始烧几分钟电。
+    private func maybeLoadSegments() async {
+        guard autoSummary else { return }
+        await generateSegments()
+    }
+
+    private func generateSegments() async {
+        guard !library.isOffline, current.segments.isEmpty, segmentState != .running else { return }
+
+        let config = AIConfigStore.load()
+        guard config.isConfigured else {
+            segmentState = .blocked("还没配置 AI 服务。先点上面的「开启 AI 摘要」。")
+            return
+        }
+
+        segmentState = .running
+        do {
+            let transcript = try await library.transcript(for: current.id)
+            guard transcript.source == "subtitle", !transcript.lines.isEmpty else {
+                // 服务端已经解释了为什么拿不到，照抄比另编一句准
+                segmentState = .blocked(
+                    transcript.reason.isEmpty ? "这条没有可用字幕。" : transcript.reason
+                )
+                return
+            }
+            let segments = try await Segmenter(config: config).segments(
+                title: current.title,
+                lines: transcript.lines,
+                durationSeconds: transcript.durationSeconds
+            )
+            // 字幕只覆盖前半段时，模型没见过结尾，只能按见到的东西收尾。
+            // 与其让它假装讲完了，不如把这件事写在卡片上。
+            if transcript.partial {
+                let minutes = max(1, transcript.lines.last.map { $0.t } ?? 0) / 60
+                notice = "字幕只覆盖到第 \(minutes) 分钟，后面的内容没有算进去。"
+            }
+            let saved = await library.saveSegments(
+                id: current.id, segments: segments, by: config.model
+            )
+            segmentState = saved ? .idle : .failed("生成成功，但没存上。")
+        } catch let failure as SummarizeFailure {
+            segmentState = .failed(failure.displayMessage)
+        } catch {
+            segmentState = .failed(failureMessage(error))
+        }
+    }
+
+    private func failureMessage(_ error: Error) -> String {
+        if let failure = error as? ClipNoteClient.Failure {
+            return failure.displayMessage
+        }
+        return error.localizedDescription
+    }
+
+    static func mmss(_ seconds: Int) -> String {
+        let value = max(0, seconds)
+        return String(format: "%02d:%02d", value / 60, value % 60)
     }
 
     // MARK: - 取地址
