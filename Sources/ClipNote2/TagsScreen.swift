@@ -55,8 +55,14 @@ struct TagsScreen: View {
     }
 
     private func summaryLine(_ tags: [TagCount]) -> String {
-        let covered = tags.reduce(0) { $0 + $1.count }
-        return "\(tags.count) 个分类 · 覆盖 \(covered) 条内容"
+        TagsScreen.summary(tags: tags, items: library.items)
+    }
+
+    /// 顶部那行说明。抽成静态函数是为了能测：
+    /// 「各标签次数相加」很容易被写成「覆盖 N 条」，而那个数会大于库里总条数。
+    static func summary(tags: [TagCount], items: [Item]) -> String {
+        let withLabels = items.filter { !$0.labels.isEmpty }.count
+        return "\(tags.count) 个分类 · \(withLabels) 条内容带标签"
     }
 
     private func row(_ tag: TagCount) -> some View {

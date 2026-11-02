@@ -37,6 +37,20 @@ final class TagsTests: XCTestCase {
         XCTAssertTrue(TagsScreen.aggregate([]).isEmpty)
     }
 
+    // MARK: - 顶部说明
+
+    func testSummaryCountsItemsNotTagOccurrences() {
+        // 一条内容带两个标签，不能把 2 算成「2 条内容」
+        let items = [
+            item("a", ["AI", "科技"]),
+            item("b", ["科技"]),
+            item("c", []),
+        ]
+        let tags = TagsScreen.aggregate(items)
+        let line = TagsScreen.summary(tags: tags, items: items)
+        XCTAssertEqual(line, "2 个分类 · 2 条内容带标签")
+    }
+
     // MARK: - 词表
 
     func testVocabularyIsClosedAndUnique() {
