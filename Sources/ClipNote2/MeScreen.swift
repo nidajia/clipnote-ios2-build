@@ -31,6 +31,11 @@ struct MeScreen: View {
                                 showsChevron: false)
                 }
                 NavigationLink {
+                    TagsScreen()
+                } label: {
+                    settingsRow("标签", tagText, showsChevron: false)
+                }
+                NavigationLink {
                     TrashScreen()
                 } label: {
                     settingsRow("回收站", trashText, showsChevron: false)
@@ -146,6 +151,12 @@ struct MeScreen: View {
 
     private var trashText: String {
         library.trashCount > 0 ? "\(library.trashCount) 条" : "空"
+    }
+
+    /// 和标签页用同一个聚合函数，免得「我」页显示 8 个、点进去只有 7 个
+    private var tagText: String {
+        let count = TagsScreen.aggregate(library.items).count
+        return count > 0 ? "\(count) 个分类" : "暂无"
     }
 
     private var logCountText: String {

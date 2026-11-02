@@ -984,6 +984,12 @@ final class LibraryStore: ObservableObject {
         items[index].segments = segments
     }
 
+    /// 截图/预览用：塞标签，好让标签页有真实分布可拍
+    func seedLabels(id: String, labels: [String]) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].labels = labels
+    }
+
     func loadTrash() async throws -> [APILibraryItem] {
         guard let client else { return [] }
         return try await client.trash().items

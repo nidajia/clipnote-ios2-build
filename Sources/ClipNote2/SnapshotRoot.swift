@@ -113,6 +113,13 @@ struct SnapshotRoot: View {
             lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
         }
 
+        // 标签页截图：要一份像真跑过几轮的分布，不是「每个标签 1 条」
+        if state == "tags" {
+            for (index, labels) in SnapshotRoot.sampleTagPlan where index < lib.items.count {
+                lib.seedLabels(id: lib.items[index].id, labels: labels)
+            }
+        }
+
         _downloads = StateObject(wrappedValue: store)
         _library = StateObject(wrappedValue: lib)
         _logs = StateObject(wrappedValue: logStore)
@@ -143,6 +150,8 @@ struct SnapshotRoot: View {
                 } else {
                     Color.cnBg
                 }
+            } else if state == "tags" {
+                NavigationStack { TagsScreen() }
             } else if state.hasPrefix("onboarding") {
                 // 引导是首启才出现的，截图靠 previewPhase 直接停到某一帧。
                 // 真机上这条路径由 RootView 的 AppStorage 判定，与这里同一套视图。
@@ -248,6 +257,19 @@ struct SnapshotRoot: View {
                    summary: "别把判断押在时间点上；把仓位和现金流留出余地。"),
         APISegment(title: "结尾的自我修正", t: 700,
                    summary: "作者承认自己上一次也判断错了时间，这段是整条片子里最诚实的地方。"),
+    ]
+
+    /// 标签页样本：一份像「真跑过几轮摘要」的分布——
+    /// 「效率」压在 6 条上，而不是每个标签各 1 条。
+    static let sampleTagPlan: [(Int, [String])] = [
+        (0, ["AI", "科技"]),
+        (1, ["效率", "学习"]),
+        (2, ["效率", "心理"]),
+        (3, ["学习", "效率"]),
+        (4, ["产品", "设计"]),
+        (5, ["效率"]),
+        (6, ["产品", "心理"]),
+        (7, ["效率", "健康"]),
     ]
 
     /// 模型列表样本。挑的都是真实存在的 id，备注按本地的名字规则推。

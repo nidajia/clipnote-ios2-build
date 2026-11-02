@@ -242,6 +242,34 @@ enum ModelCatalog {
     }
 }
 
+/// 标签的封闭分类表。
+///
+/// 为什么不让模型自由发挥：线上实测 3 条内容产出 12 个标签，**每个都只出现一次**，
+/// 而且「互联网泡沫 / AI泡沫 / 资本泡沫 / 科技泡沫」说的是同一件事。
+/// 这样的标签页等于「12 个词，每个点进去 1 条」，比收藏夹本身还没用。
+///
+/// 标签的职责是**聚合**，不是描述。描述已经由 summary 和 keyPoints 承担了。
+/// 所以这份表要足够宽（覆盖常见内容类型），但必须封闭。
+enum TagVocabulary {
+    static let all: [String] = [
+        "AI", "科技", "编程", "产品", "设计",
+        "商业", "投资", "财经", "创业", "营销",
+        "职场", "效率", "学习", "教育", "心理",
+        "健康", "运动", "饮食", "旅行", "生活",
+        "历史", "文化", "艺术", "影视", "音乐",
+        "游戏", "科普", "法律", "其他",
+    ]
+
+    /// 提示词里那一句。单独抽出来，改词表时不用去动整段 instructions。
+    static var promptLine: String {
+        "- labels 只能从下面这份分类表里选，选 2 到 3 个，**原样照抄**，不要自造，不要改写：\n"
+            + "  " + all.joined(separator: "、") + "\n"
+            + "  这份表是封闭的。它是用来把多条内容串起来的分类，不是这一条的描述；\n"
+            + "  具体的人名、事件、产品名写在 summary 里，不要塞进 labels。\n"
+            + "  实在没有合适的才用「其他」，且最多一个。"
+    }
+}
+
 /// 生成结果
 struct SummaryResult: Equatable {
     var summary: String
@@ -348,13 +376,12 @@ struct Summarizer {
     private static let instructions = """
     你是「片记」的内容摘要助手。只输出一个 JSON 对象，不要任何解释、不要 Markdown 代码块。
     格式：
-    {"summary": "60-110 字的中文概述", "keyPoints": ["3-6 条要点"], "labels": ["3-6 个标签"]}
+    {"summary": "60-110 字的中文概述", "keyPoints": ["3-6 条要点"], "labels": ["2-3 个分类"]}
     要求：
     - 只依据用户给出的标题与简介，不要编造具体数字、时间或结论。
     - 信息不足时，summary 直说「可用信息有限」，不要硬凑。
     - keyPoints 每条不超过 30 字，说人话。
-    - labels 是名词性标签，每个不超过 6 字。
-    """
+    """ + "\n" + TagVocabulary.promptLine
 
     private static func userContent(
         title: String, description: String, platform: String, duration: String

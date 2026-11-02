@@ -81,6 +81,7 @@ shot home-loading loading light
 shot home-failed  failed  light
 shot home-empty   empty   light
 shot me           me      light
+shot tags         tags    light
 shot ai-settings  ai-settings light
 shot ai-models    ai-models   light
 shot import-sheet import  light
