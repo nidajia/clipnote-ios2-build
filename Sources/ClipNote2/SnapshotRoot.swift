@@ -44,7 +44,9 @@ struct SnapshotRoot: View {
         }
         let store = DownloadStore(directory: sandbox, log: logStore)
 
-        let lib = LibraryStore(client: nil)
+        // 传 sandbox 作为缓存目录：不让某次真实运行留下的缓存混进截图，
+        // 每张图的数据只来自 bundle 里的 fixture。
+        let lib = LibraryStore(client: nil, cacheDirectory: sandbox)
         // 注意顺序：**只有需要数据的状态才加载**。
         // 之前先无条件 loadFixture 再切状态，结果 loading / failed 两张图都带着
         // 一屏数据，和列表图长得一模一样——截图「拍到了」，但拍的是别的东西。

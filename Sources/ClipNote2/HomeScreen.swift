@@ -278,7 +278,9 @@ struct HomeScreen: View {
 struct LoadingStateView: View {
     var body: some View {
         VStack(spacing: Metric.space4) {
-            RingSpinner(size: 28, color: .cnBrand)
+            // 用系统转圈而不是自绘的 RingSpinner：详见 ActivitySpinner 里的注释——
+            // 自绘那个每帧都在改几何，会把导航栏里的「导入」按钮带着一起抖。
+            ActivitySpinner(style: .large)
             Text("正在同步云端快照")
                 .font(.cnChip)
                 .foregroundStyle(Color.cnInk3)

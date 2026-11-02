@@ -63,11 +63,12 @@ struct RootView: View {
             .tabItem { Label("我", systemImage: "person.fill") }
         }
         .tint(Color.cnBrand)
-        // 首次同步由引导页发起（它要在过程中点亮步骤行）。
-        // 这里只在「还没加载过」时补一次——否则一次冷启动会打两次接口，
-        // 日志里出现两条 library.loaded。
+        // 首次同步由引导页发起（它要在过程中点亮步骤行）。这里只补一次：
+        // 判据是「本次进程里还没同步过」，而不是「phase 是不是 idle」——
+        // 有缓存时启动就是 loaded，那样会变成「有缓存就永不刷新」。
+        // 刷新期间界面显示的是缓存列表，不会闪加载态。
         .task {
-            guard library.phase == .idle else { return }
+            guard library.lastSyncAt == nil else { return }
             await library.reload()
         }
     }

@@ -102,7 +102,7 @@ final class ClipNoteClientTests: XCTestCase {
             _ = try await makeClient().library()
             XCTFail("403 应当失败")
         } catch let failure as ClipNoteClient.Failure {
-            XCTAssertEqual(failure, .gatewayIncomplete)
+            XCTAssertEqual(failure, .gatewayBlocked(snippet: nil))
         } catch {
             XCTFail("错误类型不对：\(error)")
         }

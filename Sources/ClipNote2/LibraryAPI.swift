@@ -230,8 +230,10 @@ struct APIErrorBody: Decodable, Equatable {
 struct ClipNoteClient {
 
     enum Failure: Error, Equatable {
-        /// 网关要求 query 带 sharecode，缺了会被拦在 `app.py` 之前
-        case gatewayIncomplete
+        /// 网关直接返回 403。**不是**我们的服务端——服务端鉴权失败是 401。
+        /// 之前这里叫 `gatewayIncomplete` 并显示「链接缺少共享码」，
+        /// 真机上出过一次：明明带了码，却被这句话带偏了半天。403 就是 403。
+        case gatewayBlocked(snippet: String?)
         /// 其它非 2xx；带服务端错误体时一并带出
         case http(status: Int, code: String?, message: String?)
         /// 200 但返回的不是 JSON。线上未知路径会回落首页 HTML，就是这个坑。
@@ -244,8 +246,8 @@ struct ClipNoteClient {
         /// 给人看的一句话。不暴露状态码给最终用户，但保留在日志里。
         var displayMessage: String {
             switch self {
-            case .gatewayIncomplete:
-                return "服务端没有就绪（链接缺少共享码）。"
+            case .gatewayBlocked:
+                return "网关拒绝了这次请求（403），稍后会自动重试。"
             case .http(let status, _, let message):
                 if let message, !message.isEmpty { return message }
                 return "服务端返回 \(status)。"
@@ -258,10 +260,25 @@ struct ClipNoteClient {
             }
         }
 
+        /// 值不值得隔一秒再试一次。
+        ///
+        /// 只有「重试有可能变好」的才算：网关 403（实测是瞬时的）、连接层失败、
+        /// 5xx / 429。「不是 JSON」「解不出来」重试一百次也一样。
+        var isTransient: Bool {
+            switch self {
+            case .gatewayBlocked, .transport:
+                return true
+            case .http(let status, _, _):
+                return status >= 500 || status == 429
+            case .notJSON, .malformed:
+                return false
+            }
+        }
+
         /// 日志里用的分类。给人看的是 `displayMessage`，给检索的是这个。
         var logKind: String {
             switch self {
-            case .gatewayIncomplete: return "gateway"
+            case .gatewayBlocked: return "gateway-403"
             case .http(let status, _, _): return "http-\(status)"
             case .notJSON: return "not-json"
             case .malformed: return "malformed"
@@ -296,7 +313,25 @@ struct ClipNoteClient {
     }
 
     func library() async throws -> APILibrary {
-        try await get("/api/v2/library", as: APILibrary.self)
+        try await libraryPayload().library
+    }
+
+    /// 拉库，并把**原始字节**一并交回。
+    ///
+    /// 本地缓存要存服务端原样，不能存我们编码回去的模型：
+    /// 模型一改（字段增删、重命名），缓存就成了第二个真相源，
+    /// 而它比线上那份旧——这类 bug 只有真机联网才看得见。
+    func libraryPayload() async throws -> (library: APILibrary, data: Data) {
+        guard let url = url(path: "/api/v2/library") else {
+            throw Failure.transport("地址拼不出来")
+        }
+        let (data, response) = try await send(url)
+        try validate(response: response, data: data)
+        do {
+            return (try JSONDecoder().decode(APILibrary.self, from: data), data)
+        } catch {
+            throw Failure.malformed(String(describing: error))
+        }
     }
 
     /// 取一条内容的播放地址。
@@ -378,7 +413,7 @@ struct ClipNoteClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 20
+        request.timeoutInterval = 12
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [[String: Any]] = entries.map { entry in
@@ -436,7 +471,7 @@ struct ClipNoteClient {
 
     private func send(_ url: URL) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
-        request.timeoutInterval = 20
+        request.timeoutInterval = 12
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // 共享码也是缓存键的一部分；不额外处理，第一包不缓存响应
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -458,7 +493,8 @@ struct ClipNoteClient {
 
         guard (200..<300).contains(response.statusCode) else {
             if response.statusCode == 403 {
-                throw Failure.gatewayIncomplete
+                let snippet = String(data: data.prefix(160), encoding: .utf8)
+                throw Failure.gatewayBlocked(snippet: snippet)
             }
             let body = try? JSONDecoder().decode(APIErrorBody.self, from: data)
             throw Failure.http(status: response.statusCode, code: body?.code, message: body?.message)
@@ -501,15 +537,39 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var version: String = ""
     /// 回收站条数。跟着 library 一起回来，不用为一行字单独请求。
     @Published private(set) var trashCount: Int = 0
+    /// 本次进程里上一次成功同步的时刻。
+    ///
+    /// 不能再用「phase == .idle」判断要不要补一次同步了：有缓存时启动就是
+    /// `.loaded`，那样会变成「有缓存就永不刷新」。用这个时间戳才问得对。
+    @Published private(set) var lastSyncAt: Date?
 
     private let client: ClipNoteClient?
     /// 日志由外部注入：截图模式传 nil，避免往真实日志文件里写假事件
     private weak var log: LogStore?
+    /// 上一次成功的库快照。放 Caches：系统可以回收，丢了也只是多一次联网。
+    private let cacheURL: URL?
 
     /// `client == nil` 表示不联网（截图与预览）。这时只能通过 `loadFixture` 供数。
-    init(client: ClipNoteClient?, log: LogStore? = nil) {
+    /// `cacheDirectory` 只给测试用，正常传 nil 走 Caches。
+    init(client: ClipNoteClient?, log: LogStore? = nil, cacheDirectory: URL? = nil) {
         self.client = client
         self.log = log
+
+        let dir = cacheDirectory
+            ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        self.cacheURL = dir?.appendingPathComponent("library-cache.json")
+
+        // 启动先把上次的列表摆出来。
+        //
+        // 为什么要这么做：真机上第二次启动时，界面会整屏停在「正在同步云端快照」，
+        // 而用户装的视频明明在本地。同步是「更新」，不是「获取」——
+        // 有旧数据就先显示旧数据，刷新在后台悄悄做。
+        if let url = cacheURL,
+           let data = try? Data(contentsOf: url),
+           let cached = try? JSONDecoder().decode(APILibrary.self, from: data) {
+            apply(cached)
+            phase = .loaded
+        }
     }
 
     /// 截图/预览模式：没有网络层。界面据此避免把「没配 client」显示成「取不到地址」。
@@ -532,34 +592,80 @@ final class LibraryStore: ObservableObject {
     /// 不会出现「已经完成，又被晚到的回调改回进行中」。
     func reload(onStep: ((SyncStep) -> Void)?) async {
         guard let client else { return }
-        phase = .loading
+
+        // 有缓存就不要切到全屏加载态：那会把已经能看的列表整块换掉，
+        // 而这次刷新很可能只是慢一拍。没数据时才需要那块转圈。
+        if items.isEmpty { phase = .loading }
+
         let started = Date()
         onStep?(.connecting)
-        do {
-            let library = try await client.library()
-            onStep?(.fetched)
-            apply(library)
-            onStep?(.ready)
-            log?.info("library.loaded", "同步完成 \(library.items.count) 条", meta: [
-                "count": "\(library.items.count)",
-                "version": library.libraryVersion,
-                "ms": ms(since: started),
+
+        var attempt = 0
+        while true {
+            do {
+                let payload = try await client.libraryPayload()
+                onStep?(.fetched)
+                apply(payload.library)
+                lastSyncAt = Date()
+                saveCache(payload.data)
+                onStep?(.ready)
+                log?.info("library.loaded", "同步完成 \(payload.library.items.count) 条", meta: [
+                    "count": "\(payload.library.items.count)",
+                    "version": payload.library.libraryVersion,
+                    "ms": ms(since: started),
+                    "attempt": "\(attempt + 1)",
+                ])
+                return
+
+            } catch let failure as ClipNoteClient.Failure {
+                // 网关 403、超时、5xx 这类是瞬时的，值得隔一秒再试一次。
+                // 实测真机上就遇到过一次 403，而一分钟后同样的请求是 200。
+                if attempt == 0, failure.isTransient {
+                    attempt += 1
+                    log?.warn("library.retry", "第一次失败，1.2 秒后重试", meta: [
+                        "kind": failure.logKind,
+                    ])
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    continue
+                }
+                handleFailure(failure, started: started, phaseMessage: failure.displayMessage)
+                return
+
+            } catch {
+                handleFailure(nil, started: started, phaseMessage: "连不上服务端。")
+                return
+            }
+        }
+    }
+
+    /// 失败时的两种收场，取决于**手上有没有东西可显示**。
+    private func handleFailure(
+        _ failure: ClipNoteClient.Failure?,
+        started: Date,
+        phaseMessage: String
+    ) {
+        let kind = failure?.logKind ?? "unknown"
+        let detail = failure?.displayMessage ?? phaseMessage
+
+        if items.isEmpty {
+            // 没缓存：只能给失败页 + 重试
+            phase = .failed(phaseMessage)
+            log?.error("network.failed", detail, meta: [
+                "path": "/api/v2/library", "kind": kind, "ms": ms(since: started),
             ])
-        } catch let failure as ClipNoteClient.Failure {
-            phase = .failed(failure.displayMessage)
-            log?.error("network.failed", failure.displayMessage, meta: [
-                "path": "/api/v2/library",
-                "kind": failure.logKind,
-                "ms": ms(since: started),
-            ])
-        } catch {
-            phase = .failed("连不上服务端。")
-            log?.error("network.failed", error.localizedDescription, meta: [
-                "path": "/api/v2/library",
-                "kind": "unknown",
-                "ms": ms(since: started),
+        } else {
+            // 有缓存：界面一动不动。用户看到的是上次的列表，
+            // 而不是一块报错——他要看的东西还在那儿。
+            log?.warn("library.refresh_failed", "刷新失败，继续显示上次的列表", meta: [
+                "path": "/api/v2/library", "kind": kind,
+                "ms": ms(since: started), "cached": "\(items.count)",
             ])
         }
+    }
+
+    private func saveCache(_ data: Data) {
+        guard let cacheURL else { return }
+        try? data.write(to: cacheURL, options: .atomic)
     }
 
     private func ms(since start: Date) -> String {
