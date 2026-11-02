@@ -196,8 +196,13 @@ enum ModelCatalog {
             return (vendor.isEmpty ? text : "\(vendor) · \(text)", chattable)
         }
 
-        if lower.contains("embed") { return kind("向量模型", chattable: false) }
+        // 先判重排：`bge-reranker` 里也含 `bge`，顺序反了会被认成向量模型
         if lower.contains("rerank") { return kind("重排模型", chattable: false) }
+        // bge / gte / m3e 是常见的向量模型前缀，名字里根本不带 embed
+        if lower.contains("embed") || lower.contains("bge")
+            || lower.contains("gte-") || lower.contains("m3e") {
+            return kind("向量模型", chattable: false)
+        }
         if lower.contains("whisper") || lower.contains("sensevoice")
             || lower.contains("paraformer") || lower.contains("asr") {
             return kind("语音识别", chattable: false)

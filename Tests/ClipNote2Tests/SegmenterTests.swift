@@ -14,13 +14,14 @@ final class SegmenterTests: XCTestCase {
     // MARK: - 压缩
 
     func testCompressMergesIntoWindows() {
-        // 每 5 秒一句，窗口 25 秒 → 桶边界落在 0 / 25 / 50
+        // 每 5 秒一句，窗口 25 秒：第一桶从 0 收到 25，第二桶从 30 收到结尾
         let lines = (0..<10).map { line($0 * 5, "第\($0)句") }
         let blocks = TranscriptCompressor.compress(lines, window: 25)
 
-        XCTAssertEqual(blocks.count, 3, "10 句 × 5 秒 = 45 秒，25 秒窗口应该切出 3 桶")
+        XCTAssertEqual(blocks.count, 2)
         XCTAssertEqual(blocks[0].t, 0)
         XCTAssertEqual(blocks[1].t, 30, "跨过 25 秒之后的第一句才开新桶")
+        XCTAssertTrue(blocks[0].text.hasSuffix("第5句"), "第 5 句正好落在边界上，归前一桶")
     }
 
     func testCompressKeepsEveryWord() {
