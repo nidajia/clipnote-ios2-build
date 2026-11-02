@@ -42,7 +42,7 @@ struct AISettingsScreen: View {
                     }
                 }
 
-                row("接口地址", text: $config.base, placeholder: "https://api.example.com/v1")
+                row("地址", text: $config.base, placeholder: "https://api.example.com/v1")
                 row("模型", text: $config.model, placeholder: "gpt-4o-mini")
             } header: {
                 Text("服务")
@@ -52,8 +52,17 @@ struct AISettingsScreen: View {
 
             Section {
                 HStack(spacing: Metric.space2) {
+                    // 三行的标签宽度一致，才对得齐
+                    Text("Key")
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnInk3)
+                        .frame(width: 40, alignment: .leading)
+
                     if revealKey {
-                        row("Key", text: $config.key, placeholder: "sk-…")
+                        TextField("sk-…", text: $config.key)
+                            .font(.cnBody)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
                     } else {
                         SecureField("sk-…", text: $config.key)
                             .font(.cnBody)
