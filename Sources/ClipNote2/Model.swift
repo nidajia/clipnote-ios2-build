@@ -24,6 +24,10 @@ struct Item: Identifiable, Hashable {
     var metaLine: String
     var durationText: String
     var summary: String
+    /// AI 生成的摘要。和 `summary`（原简介）是两个东西，界面上也要分开显示。
+    var aiSummary: String = ""
+    var keyPoints: [String] = []
+    var labels: [String] = []
     var coverURL: URL?
     /// `false` 不是错误，是「这类内容没有视频流」（笔记、图集）
     var playbackAvailable: Bool
@@ -41,6 +45,9 @@ struct Item: Identifiable, Hashable {
         self.metaLine = api.metaLine
         self.durationText = api.durationText
         self.summary = api.summary
+        self.aiSummary = api.aiSummary
+        self.keyPoints = api.keyPoints
+        self.labels = api.labels
         self.playbackAvailable = api.playback.available
         self.publishedAt = api.publishedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
@@ -65,6 +72,9 @@ struct Item: Identifiable, Hashable {
         metaLine: String,
         durationText: String,
         summary: String = "",
+        aiSummary: String = "",
+        keyPoints: [String] = [],
+        labels: [String] = [],
         coverURL: URL? = nil,
         playbackAvailable: Bool = true,
         publishedAt: Date? = nil
@@ -75,6 +85,9 @@ struct Item: Identifiable, Hashable {
         self.metaLine = metaLine
         self.durationText = durationText
         self.summary = summary
+        self.aiSummary = aiSummary
+        self.keyPoints = keyPoints
+        self.labels = labels
         self.coverURL = coverURL
         self.playbackAvailable = playbackAvailable
         self.publishedAt = publishedAt

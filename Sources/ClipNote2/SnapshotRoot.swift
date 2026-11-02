@@ -78,6 +78,21 @@ struct SnapshotRoot: View {
         }
         self.detailItem = detail
 
+        // 摘要截图：直接塞一份示例，不联网、不调模型（截图里不该有真实调用）
+        if state == "detail-summary", let id = detail?.id {
+            lib.seedSummary(
+                id: id,
+                summary: "这条片子讨论的是：现在的 AI 热潮与 2000 年互联网泡沫，究竟哪里像、哪里不一样。"
+                    + "结论不是「一定会崩」，而是估值与收入之间的缺口比当年更难解释。",
+                keyPoints: [
+                    "估值跑在收入前面，且集中在少数几家公司",
+                    "与 2000 年不同：这次的基础设施是真实在用的",
+                    "资本开支的回收周期比市场预期更长",
+                ],
+                labels: ["AI", "投资", "互联网史"]
+            )
+        }
+
         _downloads = StateObject(wrappedValue: store)
         _library = StateObject(wrappedValue: lib)
         _logs = StateObject(wrappedValue: logStore)
@@ -90,6 +105,8 @@ struct SnapshotRoot: View {
                 NavigationStack { LogScreen() }
             } else if state == "trash" {
                 NavigationStack { TrashScreen(previewItems: previewTrash) }
+            } else if state == "ai-settings" {
+                NavigationStack { AISettingsScreen() }
             } else if state.hasPrefix("onboarding") {
                 // 引导是首启才出现的，截图靠 previewPhase 直接停到某一帧。
                 // 真机上这条路径由 RootView 的 AppStorage 判定，与这里同一套视图。

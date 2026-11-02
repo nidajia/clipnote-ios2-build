@@ -40,12 +40,17 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var playback: APIPlayback
     var publishedAt: Int
     var source: APISource?
+    /// AI 生成的摘要 / 要点 / 标签。老条目没有，一律空。
+    var aiSummary: String = ""
+    var keyPoints: [String] = []
+    var labels: [String] = []
     /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
     var deletedAt: Int?
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, title, metaLine, durationText, durationSeconds
         case summary, cover, playback, publishedAt, source, deletedAt
+        case aiSummary, keyPoints, labels
     }
 
     init(
@@ -93,6 +98,9 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         publishedAt = try c.decodeIfPresent(Int.self, forKey: .publishedAt) ?? 0
         source = try c.decodeIfPresent(APISource.self, forKey: .source)
         deletedAt = try c.decodeIfPresent(Int.self, forKey: .deletedAt)
+        aiSummary = try c.decodeIfPresent(String.self, forKey: .aiSummary) ?? ""
+        keyPoints = try c.decodeIfPresent([String].self, forKey: .keyPoints) ?? []
+        labels = try c.decodeIfPresent([String].self, forKey: .labels) ?? []
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
         playback = try c.decodeIfPresent(APIPlayback.self, forKey: .playback)
             ?? APIPlayback(available: kind == "video", reason: nil)
@@ -382,6 +390,23 @@ struct ClipNoteClient {
     /// 彻底删除。不可恢复，所以只在回收站里给这个操作。
     func purgeItem(id: String) async throws {
         _ = try await post("/api/v2/items/\(encode(id))/purge", body: [:], as: APIOkResponse.self)
+    }
+
+    /// 把手机上生成的摘要写回快照。
+    ///
+    /// 生成在客户端（用户自己的 key），存却在服务端——两端才看得见同一份，
+    /// 换设备也不丢。
+    func saveSummary(id: String, result: SummaryResult, by model: String) async throws -> APILibraryItem {
+        try await post(
+            "/api/v2/items/\(encode(id))/summary",
+            body: [
+                "summary": result.summary,
+                "keyPoints": result.keyPoints,
+                "labels": result.labels,
+                "by": model,
+            ],
+            as: APILibraryItem.self
+        )
     }
 
     /// 回收站列表
@@ -791,6 +816,29 @@ final class LibraryStore: ObservableObject {
             log?.error("item.purge_failed", "彻底删除失败", meta: ["id": id])
             return false
         }
+    }
+
+    /// 保存 AI 摘要。返回是否成功——界面据此决定「已生成」还是「生成成功但没存上」。
+    @discardableResult
+    func saveSummary(id: String, result: SummaryResult, by model: String) async -> Bool {
+        guard let client else { return false }
+        do {
+            _ = try await client.saveSummary(id: id, result: result, by: model)
+            await reload()
+            log?.info("summary.saved", "摘要已写回快照", meta: ["id": id, "by": model])
+            return true
+        } catch {
+            log?.error("summary.save_failed", "摘要保存失败", meta: ["id": id])
+            return false
+        }
+    }
+
+    /// 截图/预览用：把摘要直接塞进内存里的条目，不经过网络与服务端。
+    func seedSummary(id: String, summary: String, keyPoints: [String], labels: [String]) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].aiSummary = summary
+        items[index].keyPoints = keyPoints
+        items[index].labels = labels
     }
 
     func loadTrash() async throws -> [APILibraryItem] {

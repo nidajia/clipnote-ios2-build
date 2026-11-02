@@ -81,6 +81,7 @@ shot home-loading loading light
 shot home-failed  failed  light
 shot home-empty   empty   light
 shot me           me      light
+shot ai-settings  ai-settings light
 shot import-sheet import  light
 shot logs         logs    light
 shot trash        trash   light
@@ -90,6 +91,7 @@ shot detail-ready       detail-ready       light
 shot detail-note        detail-note        light
 shot detail-downloading detail-downloading light
 shot detail-downloaded  detail-downloaded  light
+shot detail-summary     detail-summary     light
 
 # 画布 06。第 4 个参数让脚本把它转正（见 upright_if_sideways）
 shot player-landscape player-landscape light landscape

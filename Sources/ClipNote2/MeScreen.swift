@@ -25,6 +25,12 @@ struct MeScreen: View {
                 settingsRow("下载与存储", storageValue, showsChevron: false)
                 settingsRow("播放", "自动横屏", showsChevron: false)
                 NavigationLink {
+                    AISettingsScreen()
+                } label: {
+                    settingsRow("AI 摘要", AIConfigStore.load().isConfigured ? "已配置" : "未配置",
+                                showsChevron: false)
+                }
+                NavigationLink {
                     TrashScreen()
                 } label: {
                     settingsRow("回收站", trashText, showsChevron: false)

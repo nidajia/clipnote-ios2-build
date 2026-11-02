@@ -37,6 +37,8 @@ struct DetailScreen: View {
     @State private var player: AVPlayer?
     @State private var playing = false
     @State private var showFullscreen = false
+    @State private var showAISettings = false
+    @State private var aiState: AIState = .idle
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -48,6 +50,15 @@ struct DetailScreen: View {
         if let initialPrepare {
             _prepare = State(initialValue: initialPrepare)
         }
+    }
+
+    /// 摘要这一块自己的状态。和播放地址的 `PrepareState` 分开：
+    /// 一个是「能不能播」，一个是「有没有文稿」，混在一起会互相牵制。
+    enum AIState: Equatable {
+        case idle
+        case running
+        case needsSetup
+        case failed(String)
     }
 
     private var isPreparing: Bool { prepare == .loading }
@@ -74,6 +85,8 @@ struct DetailScreen: View {
                     Text(metaLine)
                         .font(.cnMeta)
                         .foregroundStyle(Color.cnInk3)
+
+                    aiSection
 
                     if showsSummary {
                         Rectangle()
@@ -130,7 +143,19 @@ struct DetailScreen: View {
         }
         // 进页面就先取一次地址：这样「下载到本地」旁边能标出体积，
         // 而不是让用户点下去才知道下多大。有 5 分钟缓存，来回切页不会重复打上游。
-        .task { await prefetch() }
+        .task {
+            await prefetch()
+            await maybeSummarize()
+        }
+        .sheet(isPresented: $showAISettings) {
+            NavigationStack { AISettingsScreen() }
+        }
+        .onChange(of: showAISettings) { presented in
+            // 从设置页回来：之前因为没配置而停下的，重新试一次
+            guard !presented, aiState == .needsSetup else { return }
+            aiState = .idle
+            Task { await maybeSummarize() }
+        }
         // 单参数写法：iOS 16 没有「旧值、新值」那个双参数版本
         .onChange(of: downloads.lastFailure) { failure in
             guard let failure, failure.id == item.id else { return }
@@ -214,6 +239,187 @@ struct DetailScreen: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.black.opacity(0.5), in: Capsule())
+    }
+
+    // MARK: - AI 摘要
+
+    /// 始终读库里最新的那份。
+    ///
+    /// 详情页拿到的 `item` 是值拷贝：生成完写回快照后父列表会刷新，
+    /// 但这一页如果只读拷贝，就永远显示「还没生成」。
+    private var current: Item {
+        library.items.first { $0.id == item.id } ?? item
+    }
+
+    @ViewBuilder
+    private var aiSection: some View {
+        if !current.aiSummary.isEmpty {
+            summaryCard(current)
+        } else if aiState == .running {
+            runningCard
+        } else if case .failed(let message) = aiState {
+            failedCard(message)
+        } else if aiState == .needsSetup {
+            setupRow
+        }
+    }
+
+    private func summaryCard(_ value: Item) -> some View {
+        VStack(alignment: .leading, spacing: Metric.space3) {
+            HStack(spacing: 5) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("AI 摘要")
+                    .font(.cnCaption)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Color.cnBrand)
+
+            Text(value.aiSummary)
+                .font(.cnBody)
+                .foregroundStyle(Color.cnInk2)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !value.keyPoints.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(value.keyPoints, id: \.self) { point in
+                        HStack(alignment: .top, spacing: 6) {
+                            Text("·")
+                                .font(.cnChip)
+                                .foregroundStyle(Color.cnInk3)
+                            Text(point)
+                                .font(.cnChip)
+                                .foregroundStyle(Color.cnInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+
+            if !value.labels.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(value.labels, id: \.self) { label in
+                        Text(label)
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnBrand)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.cnBrandSoft, in: Capsule())
+                    }
+                }
+            }
+        }
+        .padding(Metric.space4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.cnCard,
+            in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+                .strokeBorder(Color.cnHairline, lineWidth: 1)
+        )
+    }
+
+    private var runningCard: some View {
+        HStack(spacing: Metric.space3) {
+            ActivitySpinner(style: .medium)
+            Text("正在生成摘要…")
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk3)
+            Spacer(minLength: 0)
+        }
+        .padding(Metric.space4)
+        .background(
+            Color.cnCard,
+            in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+        )
+    }
+
+    private func failedCard(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: Metric.space2) {
+            Text("摘要没能生成")
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk)
+            Text(message)
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("重试") {
+                aiState = .idle
+                Task { await maybeSummarize() }
+            }
+            .font(.cnChip)
+            .foregroundStyle(Color.cnBrand)
+            .buttonStyle(.plain)
+            .padding(.top, 2)
+        }
+        .padding(Metric.space4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.cnCard,
+            in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+                .strokeBorder(Color.cnHairline, lineWidth: 1)
+        )
+    }
+
+    /// 没配置时的入口。用一行淡淡的按钮，不占一整张卡——
+    /// 用户可能根本不想用 AI，不该每进一条都被推销一次。
+    private var setupRow: some View {
+        Button {
+            showAISettings = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("开启 AI 摘要")
+                    .font(.cnChip)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(Color.cnBrand)
+            .padding(.horizontal, Metric.space3)
+            .padding(.vertical, 10)
+            .background(
+                Color.cnBrandSoft,
+                in: RoundedRectangle(cornerRadius: Metric.radiusButton, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 进页面时自动生成一次；已生成、没配置、上次失败过都不再自动跑。
+    private func maybeSummarize() async {
+        guard !library.isOffline, current.aiSummary.isEmpty, aiState == .idle else { return }
+
+        let config = AIConfigStore.load()
+        guard config.isConfigured else {
+            aiState = .needsSetup
+            return
+        }
+
+        aiState = .running
+        do {
+            let result = try await Summarizer(config: config).summarize(
+                title: current.title,
+                description: current.summary,
+                platform: current.metaLine,
+                duration: current.durationText
+            )
+            let saved = await library.saveSummary(
+                id: current.id, result: result, by: config.model
+            )
+            aiState = saved ? .idle : .failed("生成成功，但没存上。检查网络后再试。")
+        } catch let failure as SummarizeFailure {
+            aiState = .failed(failure.displayMessage)
+        } catch {
+            aiState = .failed("生成失败：\(error.localizedDescription)")
+        }
     }
 
     // MARK: - 取地址
