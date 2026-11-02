@@ -23,6 +23,9 @@ struct Item: Identifiable, Hashable {
     var title: String
     var metaLine: String
     var durationText: String
+    /// 秒。`durationText` 是给眼睛看的（"16:57"），这个是给计算用的——
+    /// 分段条的每块宽度按时间占比算，拿字符串没法算。
+    var durationSeconds: Int = 0
     var summary: String
     /// AI 生成的摘要。和 `summary`（原简介）是两个东西，界面上也要分开显示。
     var aiSummary: String = ""
@@ -46,6 +49,7 @@ struct Item: Identifiable, Hashable {
         self.title = api.title
         self.metaLine = api.metaLine
         self.durationText = api.durationText
+        self.durationSeconds = api.durationSeconds
         self.summary = api.summary
         self.aiSummary = api.aiSummary
         self.keyPoints = api.keyPoints
@@ -74,6 +78,7 @@ struct Item: Identifiable, Hashable {
         title: String,
         metaLine: String,
         durationText: String,
+        durationSeconds: Int = 0,
         summary: String = "",
         aiSummary: String = "",
         keyPoints: [String] = [],
@@ -88,6 +93,7 @@ struct Item: Identifiable, Hashable {
         self.title = title
         self.metaLine = metaLine
         self.durationText = durationText
+        self.durationSeconds = durationSeconds
         self.summary = summary
         self.aiSummary = aiSummary
         self.keyPoints = keyPoints

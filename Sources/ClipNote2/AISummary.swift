@@ -282,6 +282,9 @@ enum SummarizeFailure: Error, Equatable {
     case http(Int, String)
     case transport(String)
     case emptyReply
+    /// 模型被输出上限截断了。和 `unparsable` 分开：
+    /// 前者是「把上限调大就好」，后者是「模型没按格式回答」，处理方式完全不同。
+    case truncated
     case unparsable(String)
 
     var displayMessage: String {
@@ -294,6 +297,8 @@ enum SummarizeFailure: Error, Equatable {
             return "连不上模型服务。\(detail)"
         case .emptyReply:
             return "模型返回了空内容。"
+        case .truncated:
+            return "模型的回复被截断了，分段没写完。换一个输出上限更大的模型，或先缩短这条视频。"
         case .unparsable(let raw):
             return "模型没有按 JSON 回答：\(raw.prefix(40))"
         }
@@ -566,6 +571,11 @@ struct Segmenter {
         let payload: [String: Any] = [
             "model": config.model,
             "temperature": 0.2,
+            // 必须显式给上限。不给的话各家默认值不一样（硅基流动 512 上下），
+            // 长视频要 8–9 段、每段标题 + 一句理解，输出会**正好卡在中间被截断**，
+            // 表现是 `segments.unparsable`，而模型其实答得没问题。
+            // 12 段 × 约 100 token = 1200，给 2400 留一倍余量。
+            "max_tokens": 2400,
             "messages": [
                 ["role": "system", "content": Self.instructions],
                 ["role": "user", "content": Self.userContent(
@@ -598,6 +608,12 @@ struct Segmenter {
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             throw SummarizeFailure.emptyReply
+        }
+
+        // 先看有没有被截断，再解析。反过来的话，截断会伪装成「模型没按 JSON 回答」，
+        // 而这两件事的处理方式完全相反：一个要调大上限，一个要改提示词。
+        if let reason = choices.first?["finish_reason"] as? String, reason == "length" {
+            throw SummarizeFailure.truncated
         }
 
         let (segments, stats) = try Self.parseDetailed(content, transcript: lines)

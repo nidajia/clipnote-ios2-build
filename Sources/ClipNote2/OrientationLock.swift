@@ -48,25 +48,38 @@ final class OrientationLock {
 
     /// 切换允许方向并请求系统转过去。
     ///
-    /// 顺序不能反：先 `setNeedsUpdateOfSupportedInterfaceOrientations()` 让系统知道
-    /// 支持的方向变了，再 `requestGeometryUpdate`。反过来会得到一次静默失败——
-    /// 代码看着写了，界面一动不动，而且没有任何报错。
+    /// 顺序不能反，而且**中间必须隔一次 runloop**：
+    /// `setNeedsUpdateOfSupportedInterfaceOrientations()` 只是打个标记，
+    /// 系统要到下一轮才重新向 AppDelegate 要 mask。在同一帧里立刻
+    /// `requestGeometryUpdate`，它拿到的还是旧值，报错原文是
+    /// 「已请求 landscapeLeft/Right；受支持 portrait」——真机日志里出现过。
+    ///
+    /// 另外要把 presented 链上每一层 VC 都标记：
+    /// 全屏播放是用 `fullScreenCover` 呈现的，只标记 root 不一定会传播过去。
     @MainActor
     private func apply(allow: UIInterfaceOrientationMask, request: UIInterfaceOrientationMask) {
         mask = allow
 
-        guard let scene = activeScene else { return }
+        guard let scene = activeScene, let window = scene.keyWindow else { return }
 
-        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: request)) { [weak self] error in
-            // 没转成不是功能故障（用户还能再点一次），但要看得到。
-            // 这条回调不保证在主线程，所以弹回主线程再写日志。
-            let detail = error.localizedDescription
-            Task { @MainActor in
-                self?.logger?.error("orientation.failed", "方向没有切换过去", meta: [
-                    "target": "\(request.rawValue)",
-                    "reason": detail,
-                ])
+        var controller = window.rootViewController
+        while let current = controller {
+            current.setNeedsUpdateOfSupportedInterfaceOrientations()
+            controller = current.presentedViewController
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: request)) { error in
+                // 没转成不是功能故障（用户还能再点一次），但要看得到。
+                // 这条回调不保证在主线程，所以弹回主线程再写日志。
+                let detail = error.localizedDescription
+                Task { @MainActor in
+                    self?.logger?.error("orientation.failed", "方向没有切换过去", meta: [
+                        "target": "\(request.rawValue)",
+                        "allow": "\(allow.rawValue)",
+                        "reason": detail,
+                    ])
+                }
             }
         }
     }

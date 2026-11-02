@@ -90,6 +90,13 @@ struct DetailScreen: View {
             VStack(alignment: .leading, spacing: 0) {
                 playerSurface
 
+                // 分段条贴在播放器正下方，常驻可见。
+                // 进独立页再点时间戳那条路绕得太远——用户想的是「跳到第 3 分钟」，
+                // 不是「先去读一遍目录」。
+                if !current.segments.isEmpty {
+                    segmentStrip
+                }
+
                 VStack(alignment: .leading, spacing: Metric.space3) {
                     Text(item.title)
                         .font(.cnTitle)
@@ -224,8 +231,68 @@ struct DetailScreen: View {
             .clipped()
     }
 
-    private var playButton: some View {
-        Button {
+    // MARK: - 分段条
+
+    /// 播放器正下方的分段条：每块 = 一段，宽度按实际时长占比。
+    ///
+    /// 为什么不塞进播放器控件：全屏走的是系统 `AVPlayerViewController`，
+    /// 它的进度条我们改不了；而详情页这个播放器一开始播，系统控件就盖满画面。
+    /// 放在画面**外面**，才既常驻可见、又不跟系统手势抢。
+    ///
+    /// 为什么不按段数均分：一段 8 分钟、一段 30 秒，均分会让人以为它们差不多长。
+    private var segmentStrip: some View {
+        GeometryReader { geo in
+            let widths = stripWidths(totalWidth: geo.size.width)
+            HStack(spacing: 2) {
+                ForEach(Array(current.segments.enumerated()), id: \.offset) { index, segment in
+                    Button {
+                        Task { await startPlayback(at: segment.t) }
+                    } label: {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(Color.cnCard3)
+                            if widths.indices.contains(index), widths[index] >= 30 {
+                                Text(String(format: "%02d", index + 1))
+                                    .font(.custom("Inter-Medium", size: 10, relativeTo: .caption2))
+                                    .foregroundStyle(Color.cnInk3)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: widths.indices.contains(index) ? widths[index] : 0)
+                    .accessibilityLabel("从 \(Self.mmss(segment.t)) 开始播放：\(segment.title)")
+                }
+            }
+        }
+        .frame(height: 28)
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.top, Metric.space3)
+        .padding(.bottom, Metric.space1)
+    }
+
+    private func stripWidths(totalWidth: CGFloat) -> [CGFloat] {
+        let segments = current.segments
+        guard !segments.isEmpty, totalWidth > 0 else { return [] }
+
+        let gap: CGFloat = 2
+        let usable = max(0, totalWidth - gap * CGFloat(segments.count - 1))
+        let total = Double(max(1, current.durationSeconds))
+
+        var spans: [Double] = []
+        for (index, segment) in segments.enumerated() {
+            let end = index + 1 < segments.count ? Double(segments[index + 1].t) : total
+            // 8 秒是下限：再短也留一块能点得到的区域
+            spans.append(max(8, end - Double(segment.t)))
+        }
+        let sum = spans.reduce(0, +)
+        guard sum > 0 else {
+            return segments.map { _ in usable / CGFloat(segments.count) }
+        }
+        return spans.map { CGFloat($0 / sum) * usable }
+    }
+
+    private var playButton: some View {        Button {
             Task { await startPlayback() }
         } label: {
             ZStack {
@@ -321,14 +388,22 @@ struct DetailScreen: View {
 
             if !value.labels.isEmpty {
                 HStack(spacing: 6) {
+                    // 标签是**入口**不是装饰：点了应该能看到同类内容。
+                    // 去的是和「我 · 标签」同一个页面，只是直接落在分类里。
                     ForEach(value.labels, id: \.self) { label in
-                        Text(label)
-                            .font(.cnCaption)
-                            .foregroundStyle(Color.cnBrand)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.cnBrandSoft, in: Capsule())
+                        NavigationLink {
+                            TagItemsScreen(tag: label)
+                        } label: {
+                            Text(label)
+                                .font(.cnCaption)
+                                .foregroundStyle(Color.cnBrand)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.cnBrandSoft, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
+                    Spacer(minLength: 0)
                 }
             }
 
@@ -771,14 +846,19 @@ struct DetailScreen: View {
 
     // MARK: - 播放
 
-    private func startPlayback() async {
+    private func startPlayback(at seconds: Int? = nil) async {
         // 已下载优先：本地文件离线可看，也不必再去要一次地址
         if let local = downloads.localURL(for: item.id) {
-            play(local)
+            play(local, at: seconds)
             return
         }
 
         if let player {
+            if let seconds {
+                _ = await player.seek(
+                    to: CMTime(seconds: Double(seconds), preferredTimescale: 600)
+                )
+            }
             player.play()
             playing = true
             return
@@ -786,18 +866,25 @@ struct DetailScreen: View {
 
         guard let payload = await ensurePlayback(),
               let url = URL(string: payload.url) else { return }
-        play(url)
+        play(url, at: seconds)
     }
 
-    private func play(_ url: URL) {
+    private func play(_ url: URL, at seconds: Int? = nil) {
         let playerItem = AVPlayerItem(url: url)
         let newPlayer = AVPlayer(playerItem: playerItem)
         player = newPlayer
         playing = true
         notice = nil
+        // 先定位再播：直接 play 会先放出开头那两秒再跳
+        if let seconds {
+            Task { _ = await newPlayer.seek(
+                to: CMTime(seconds: Double(seconds), preferredTimescale: 600)
+            ) }
+        }
         let isLocal = url.isFileURL
         logs.info("playback.started", isLocal ? "开始播放（本地文件）" : "开始播放（服务端代理）",
-                  meta: ["host": isLocal ? "local" : (url.host ?? "-")])
+                  meta: ["host": isLocal ? "local" : (url.host ?? "-"),
+                         "from": seconds.map(String.init) ?? "0"])
 
         // 地址过期时 AVPlayer **不会**抛错，它只是一直转圈。
         // 不观察 status 的话，用户看到的就是「点了没反应」——最差的一种失败。

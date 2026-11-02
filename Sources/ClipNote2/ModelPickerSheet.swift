@@ -15,6 +15,7 @@ struct ModelPickerSheet: View {
     @Binding var selected: String
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var logs: LogStore
     @State private var state: LoadState
     @State private var showAll = false
     @State private var keyword = ""
@@ -201,12 +202,23 @@ struct ModelPickerSheet: View {
 
     private func load() async {
         state = .loading
+        // 这条日志是必须的：上一版没有任何记录，「点了没反应」时
+        // 完全分不清是按钮没触发、请求没发出、还是请求挂了。
+        logs.info("models.load", "开始读取模型列表", meta: ["base": base])
         do {
             let models = try await ModelCatalog.fetch(base: base, key: key)
+            logs.info("models.loaded", "读到模型列表", meta: [
+                "count": String(models.count),
+                "chat": String(models.filter(\.chattable).count),
+            ])
             state = .loaded(models)
         } catch let failure as SummarizeFailure {
+            logs.error("models.failed", failure.displayMessage, meta: [
+                "base": base, "kind": String(describing: failure).prefix(40).description,
+            ])
             state = .failed(failure.displayMessage)
         } catch {
+            logs.error("models.failed", error.localizedDescription, meta: ["base": base])
             state = .failed(error.localizedDescription)
         }
     }

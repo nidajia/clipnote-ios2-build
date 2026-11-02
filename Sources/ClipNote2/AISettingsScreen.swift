@@ -14,6 +14,7 @@ struct AISettingsScreen: View {
     /// 只是路过看一眼不该先扣一次调用。
     @AppStorage("clipnote.autoSummary") private var autoSummary = false
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var logs: LogStore
 
     enum Status: Equatable {
         case idle
@@ -59,6 +60,11 @@ struct AISettingsScreen: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Button {
+                        // 点一下就记一条：如果日志里连这条都没有，
+                        // 说明按钮根本没被按到（置灰或被别的东西挡住）
+                        logs.info("models.open", "打开模型选择器", meta: [
+                            "base": config.base, "hasKey": config.key.isEmpty ? "0" : "1",
+                        ])
                         showModels = true
                     } label: {
                         Text("选择")
