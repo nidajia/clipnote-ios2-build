@@ -50,11 +50,12 @@ struct ModelPickerSheet: View {
             }
         }
         .background(Color.cnBg)
-        .navigationTitle("选择模型")
+        .navigationTitle(titleText)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                // 只有读到列表之后，这个开关才有意义
+            ToolbarItem(placement: .navigationBarTrailing) {
+                // 只有读到列表之后，这个开关才有意义。
+                // 关闭按钮交给导航栏自带的返回——不再自己画一个。
                 if case .loaded = state {
                     Button(showAll ? "只看对话" : "显示全部") {
                         showAll.toggle()
@@ -62,11 +63,18 @@ struct ModelPickerSheet: View {
                     .font(.cnChip)
                 }
             }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button("关闭") { dismiss() }
-                    .font(.cnChip)
-            }
         }
+    }
+
+    /// 标题里带数量，是有意为之：这一页连续两次「读到 98 个但屏幕上什么都没有」，
+    /// 而日志只能证明请求成功、证明不了界面拿到没有。
+    /// 有了数字，用户一眼就能告诉我卡在哪一环。
+    private var titleText: String {
+        if case .loaded(let models) = state {
+            let count = showAll ? models.count : models.filter(\.chattable).count
+            return "选择模型（\(count)）"
+        }
+        return "选择模型"
     }
 
     // MARK: - 三态
@@ -126,10 +134,36 @@ struct ModelPickerSheet: View {
 
     private func listView(_ models: [AIModel]) -> some View {
         let visible = filtered(models)
-        // List 必须是根，不能塞进 VStack：塞进去之后它的高度由父级决定，
-        // 而 sheet 里父级的理想高度是 0，结果就是「读到 98 个模型但屏幕全白」。
-        // 真机日志确认过这一点：models.loaded count=98，界面什么都没有。
+        // List 必须是根，不能塞进 VStack：塞进去之后高度由父级决定，
+        // 而父级的理想高度是 0，结果就是「读到 98 个模型但屏幕全白」。
+        // 真机日志确认过：models.loaded count=98，界面什么都没有。
         return List {
+            // 搜索用一行 TextField，不用 `.searchable`：
+            // 后者在 sheet / 推入页里会把内容压到搜索栏下面，
+            // 而这一页已经因为「看不见内容」返工过两次，不再赌它。
+            Section {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.cnInk3)
+                    TextField("搜索模型名", text: $keyword)
+                        .font(.cnBody)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if !keyword.isEmpty {
+                        Button {
+                            keyword = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color.cnInk3)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .listRowBackground(Color.cnCard)
+            }
+
             Section {
                 ForEach(visible) { model in
                     Button {
@@ -149,7 +183,7 @@ struct ModelPickerSheet: View {
                     .foregroundStyle(Color.cnInk3)
             }
         }
-        .listStyle(.plain)
+        .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .overlay {
             if visible.isEmpty {
@@ -169,7 +203,6 @@ struct ModelPickerSheet: View {
                 .padding(Metric.pagePad)
             }
         }
-        .searchable(text: $keyword, prompt: "搜索模型名")
     }
 
     private func row(_ model: AIModel) -> some View {

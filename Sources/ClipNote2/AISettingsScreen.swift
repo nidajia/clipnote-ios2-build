@@ -164,14 +164,14 @@ struct AISettingsScreen: View {
         .background(Color.cnBg)
         .navigationTitle("AI 摘要")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showModels) {
-            NavigationStack {
-                ModelPickerSheet(
-                    base: config.base,
-                    key: config.key,
-                    selected: $config.model
-                )
-            }
+        .navigationDestination(isPresented: $showModels) {
+            // 用 push 不用 sheet：弹层在 iOS 16 上有一堆布局特例，
+            // 而这一页只是「一个列表 + 一个搜索框」，没必要承担那些风险。
+            ModelPickerSheet(
+                base: config.base,
+                key: config.key,
+                selected: $config.model
+            )
         }
     }
 
