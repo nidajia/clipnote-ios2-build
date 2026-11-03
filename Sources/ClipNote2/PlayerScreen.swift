@@ -28,6 +28,10 @@ struct PlayerScreen: View {
         }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
+        // 这一页现在是 push 进来的（见 DetailScreen 的注释），
+        // 所以要把导航栏和底栏都藏掉，才等于原来的全屏
+        .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
         // 进出各锁一次。写在 onAppear / onDisappear 而不是 init：
         // 视图可能被重建（init 会跑），但只有真的出现在屏幕上才该动方向。
         .onAppear { OrientationLock.shared.enterFullscreenPlayer() }

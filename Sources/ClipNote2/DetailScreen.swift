@@ -163,7 +163,12 @@ struct DetailScreen: View {
             }
         }
         // 共用同一个 AVPlayer 实例：退出全屏后接着播，不重建、不重新拉流。
-        .fullScreenCover(isPresented: $showFullscreen) {
+        // 用 push 而不是 fullScreenCover：模态页在 iOS 上由 SwiftUI 自己创建
+        // 宿主控制器，那个控制器固定返回 `portrait`，于是
+        // `requestGeometryUpdate(landscape)` 一定被拒——真机日志里
+        // 「受支持：portrait」就是这么来的。push 进同一个导航栈后，
+        // 顶层控制器回到根宿主（支持全部方向），转屏才有机会成功。
+        .navigationDestination(isPresented: $showFullscreen) {
             PlayerScreen(item: item, player: player)
         }
         // 进页面就先取一次地址：这样「下载到本地」旁边能标出体积，
@@ -519,69 +524,33 @@ struct DetailScreen: View {
     @ViewBuilder
     private func segmentSection(_ value: Item) -> some View {
         if !value.segments.isEmpty {
-            VStack(alignment: .leading, spacing: Metric.space2) {
-                Rectangle()
-                    .fill(Color.cnHairlineSoft)
-                    .frame(height: 1)
-                    .padding(.vertical, 2)
+            // 只留一行入口。分段内容已经在播放器下方那排导航里了，
+            // 卡片里再列一遍等于同一份信息出现两次。
+            Rectangle()
+                .fill(Color.cnHairlineSoft)
+                .frame(height: 1)
+                .padding(.vertical, 2)
 
+            Button {
+                showSegments = true
+            } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "list.number")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("分段")
+                    Text("分段 · \(value.segments.count) 段")
                         .font(.cnCaption)
                     Spacer(minLength: 0)
-                    if value.segments.count > previewSegmentCount {
-                        Button {
-                            showSegments = true
-                        } label: {
-                            HStack(spacing: 2) {
-                                Text("全部 \(value.segments.count) 段")
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 9, weight: .semibold))
-                            }
-                            .font(.cnCaption)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    Text("通读")
+                        .font(.cnCaption)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
                 }
                 .foregroundStyle(Color.cnInk3)
-
-                ForEach(Array(value.segments.prefix(previewSegmentCount).enumerated()), id: \.offset) { _, segment in
-                    segmentRow(segment)
-                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
         } else {
             segmentEntry
-        }
-    }
-
-    /// 详情页露几段。3 段约占一屏，既让人确认「确实拆开讲了」，
-    /// 又不至于把下面的下载按钮推出屏幕。
-    private var previewSegmentCount: Int { 3 }
-
-    private func segmentRow(_ segment: APISegment) -> some View {
-        HStack(alignment: .top, spacing: Metric.space2) {
-            Text(Self.mmss(segment.t))
-                .font(.cnDuration)
-                .foregroundStyle(Color.cnInk3)
-                .frame(width: 38, alignment: .leading)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(segment.title)
-                    .font(.cnChip)
-                    .foregroundStyle(Color.cnInk)
-                    .fixedSize(horizontal: false, vertical: true)
-                if !segment.summary.isEmpty {
-                    Text(segment.summary)
-                        .font(.cnMeta)
-                        .foregroundStyle(Color.cnInk3)
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 0)
         }
     }
 
@@ -731,10 +700,14 @@ struct DetailScreen: View {
             segmentState = saved ? .idle : .failed("生成成功，但没存上。")
         } catch let failure as SummarizeFailure {
             if case .unparsable(let raw) = failure {
-                // 一定要留原文：「模型没按 JSON 回答」这句话本身没法排查，
-                // 得看它到底回了什么（最常见是被 max_tokens 截断）
+                // 必须留**尾巴**和**长度**，不能只留开头：
+                // 截断和格式错的开头长得一模一样，区别全在结尾。
+                // 上一版只印 prefix(100)，结果两次报错都没法判断是哪种。
                 logs.error("segments.unparsable", "模型没按 JSON 回答", meta: [
-                    "id": current.id, "raw": String(raw.prefix(100)),
+                    "id": current.id,
+                    "len": String(raw.count),
+                    "head": String(raw.prefix(80)),
+                    "tail": String(raw.suffix(80)),
                 ])
             }
             segmentState = .failed(failure.displayMessage)

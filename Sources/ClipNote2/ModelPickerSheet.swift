@@ -126,7 +126,32 @@ struct ModelPickerSheet: View {
 
     private func listView(_ models: [AIModel]) -> some View {
         let visible = filtered(models)
-        return VStack(spacing: 0) {
+        // List 必须是根，不能塞进 VStack：塞进去之后它的高度由父级决定，
+        // 而 sheet 里父级的理想高度是 0，结果就是「读到 98 个模型但屏幕全白」。
+        // 真机日志确认过这一点：models.loaded count=98，界面什么都没有。
+        return List {
+            Section {
+                ForEach(visible) { model in
+                    Button {
+                        selected = model.id
+                        dismiss()
+                    } label: {
+                        row(model)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.cnCard)
+                }
+            } footer: {
+                Text(showAll
+                     ? "备注是按模型名猜的用途，不是服务商给的能力说明。"
+                     : "默认只显示能对话的模型；向量、重排、语音、图片模型已隐藏。")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .overlay {
             if visible.isEmpty {
                 VStack(spacing: Metric.space2) {
                     Text(keyword.isEmpty ? "列表里没有能聊天的模型" : "没有匹配「\(keyword)」的模型")
@@ -141,27 +166,7 @@ struct ModelPickerSheet: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    Section {
-                        ForEach(visible) { model in
-                            Button {
-                                selected = model.id
-                                dismiss()
-                            } label: {
-                                row(model)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    } footer: {
-                        Text(showAll
-                             ? "备注是按模型名猜的用途，不是服务商给的能力说明。"
-                             : "默认只显示能对话的模型；向量、重排、语音、图片模型已隐藏。")
-                    }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                .padding(Metric.pagePad)
             }
         }
         .searchable(text: $keyword, prompt: "搜索模型名")

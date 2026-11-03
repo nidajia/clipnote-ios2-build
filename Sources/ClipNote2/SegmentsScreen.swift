@@ -58,15 +58,18 @@ struct SegmentsScreen: View {
         .navigationTitle("分段")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
-        .fullScreenCover(isPresented: $showPlayer, onDismiss: {
-            // 不加这一句，关掉全屏后音频还在响，而屏幕上已经没有任何播放控件——
-            // 用户只能杀进程。
-            player?.pause()
-            player = nil
-        }) {
+        // 和详情页同样用 push 而不是模态：模态宿主固定竖屏，转不过去
+        .navigationDestination(isPresented: $showPlayer) {
             if let player {
                 PlayerScreen(item: item, player: player)
             }
+        }
+        .onChange(of: showPlayer) { showing in
+            // 不加这一句，退出后音频还在响，而屏幕上已经没有任何播放控件——
+            // 用户只能杀进程。
+            guard !showing else { return }
+            player?.pause()
+            player = nil
         }
     }
 
