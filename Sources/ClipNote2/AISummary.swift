@@ -552,6 +552,141 @@ struct SegmentOutcome {
     var stats: SegmentStats
 }
 
+/// 从转写里挑几个「值得回看的点」。
+///
+/// 和分段的分工：分段回答「这条讲了什么」（覆盖全片、按顺序），
+/// 建议回答「如果我只看三分钟，该看哪三分钟」（稀疏、按价值）。
+/// 两者都基于同一份字幕，所以**不需要额外拉一次转写**。
+struct BookmarkSuggestor {
+    var config: AIConfig
+    var session: URLSession = .shared
+
+    func suggest(
+        title: String,
+        lines: [APITranscriptLine],
+        existing: [APIBookmark]
+    ) async throws -> [APIBookmark] {
+        guard config.isConfigured, let endpoint = config.endpoint else {
+            throw SummarizeFailure.notConfigured
+        }
+        let blocks = TranscriptCompressor.plan(lines)
+        guard !blocks.isEmpty else { throw SummarizeFailure.emptyReply }
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
+
+        let payload: [String: Any] = [
+            "model": config.model,
+            "temperature": 0.4,
+            // 3 条建议 × 约 60 token，1200 够用且不会被默认值截断
+            "max_tokens": 1200,
+            "messages": [
+                ["role": "system", "content": Self.instructions],
+                ["role": "user", "content": Self.userContent(
+                    title: title, blocks: blocks, existing: existing
+                )],
+            ],
+        ]
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
+            throw SummarizeFailure.unparsable("请求体拼不出来")
+        }
+        request.httpBody = body
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw SummarizeFailure.transport(error.localizedDescription)
+        }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let text = String(data: data.prefix(200), encoding: .utf8) ?? ""
+            throw SummarizeFailure.http(http.statusCode, text)
+        }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = root["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String,
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { throw SummarizeFailure.emptyReply }
+        if let reason = choices.first?["finish_reason"] as? String, reason == "length" {
+            throw SummarizeFailure.truncated
+        }
+
+        return try Self.parse(content, transcript: lines)
+    }
+
+    // MARK: - 提示词
+
+    private static let instructions = """
+    你是「片记」的标记助手。用户把视频转成了文字稿，请从中挑出 3 个最值得回看的点。
+    只输出一个 JSON 对象，不要任何解释、不要 Markdown 代码块。
+    格式：{"bookmarks":[{"t": 123, "note": "为什么值得回看，20 字以内"}]}
+    要求：
+    - 必须正好 3 条。
+    - t 必须是方括号里的**原始秒数**，原样照抄，不要自己换算、不要四舍五入。
+    - 三条之间至少隔 60 秒，别挤在一起。
+    - note 要说「看到了什么」或「为什么值得回看」，不要写「重点」「精彩」这种空话。
+    - 挑的是「一眼会想再看一遍」的地方：关键结论、反转、具体案例、有数字的段。
+    """
+
+    private static func userContent(
+        _ title: String, blocks: [(t: Int, text: String)], existing: [APIBookmark]
+    ) -> String {
+        var head = "视频标题：\(title)\n\n文字稿（方括号内是秒数）：\n"
+        head += blocks.map { "[\($0.t)] \($0.text)" }.joined(separator: "\n")
+        if !existing.isEmpty {
+            // 已经标过的位置不用再建议一遍，否则用户会觉得 AI 没记住
+            let marked = existing.map { "\($0.t)" }.joined(separator: "、")
+            head += "\n\n用户已经标过这些秒数，请避开：\(marked)"
+        }
+        return head
+    }
+
+    // MARK: - 解析
+
+    static func parse(_ raw: String, transcript: [APITranscriptLine]) throws -> [APIBookmark] {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("```") {
+            if let firstNewline = text.firstIndex(of: "\n") {
+                text = String(text[text.index(after: firstNewline)...])
+            }
+            if let fence = text.range(of: "```", options: .backwards) {
+                text = String(text[..<fence.lowerBound])
+            }
+        }
+        guard let start = text.firstIndex(of: "{"),
+              let end = text.lastIndex(of: "}"),
+              start < end,
+              let data = String(text[start...end]).data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let array = root["bookmarks"] as? [Any]
+        else { throw SummarizeFailure.unparsable(text) }
+
+        let known = transcript.map(\.t).sorted()
+        var out: [APIBookmark] = []
+        var seen = Set<Int>()
+        for one in array {
+            guard let dict = one as? [String: Any] else { continue }
+            let note = (dict["note"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = (dict["t"] as? Int) ?? Int((dict["t"] as? Double) ?? 0)
+            let t = Segmenter.snap(value, to: known)
+            // 吸附之后可能两条撞到同一秒，去重，否则用户会看到两个旗子重叠
+            guard !seen.contains(t) else { continue }
+            seen.insert(t)
+            out.append(APIBookmark(t: t, note: String(note.prefix(40)), by: "ai"))
+            if out.count >= 5 { break }
+        }
+        guard !out.isEmpty else { throw SummarizeFailure.unparsable(text) }
+        out.sort { $0.t < $1.t }
+        return out
+    }
+}
+
 /// 把转写切成带时间戳的语义段。
 ///
 /// 和 `Summarizer` 分开而不是合一次调用：

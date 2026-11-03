@@ -51,6 +51,35 @@ final class TagsTests: XCTestCase {
         XCTAssertEqual(line, "2 个分类 · 2 条内容带标签")
     }
 
+    // MARK: - AI 建议书签
+
+    private func line(_ t: Int) -> APITranscriptLine { APITranscriptLine(t: t, text: "x") }
+
+    func testSuggestParsesAndMarksAsAI() throws {
+        let raw = #"{"bookmarks":[{"t":30,"note":"关键结论"}]}"#
+        let list = try BookmarkSuggestor.parse(raw, transcript: [line(0), line(30)])
+        XCTAssertEqual(list, [APIBookmark(t: 30, note: "关键结论", by: "ai")])
+    }
+
+    func testSuggestSnapsAndDedupes() throws {
+        // 模型给了两个都落在 30 附近的值，吸附后撞车，必须去重
+        let raw = #"{"bookmarks":[{"t":2,"note":"a"},{"t":3,"note":"b"}]}"#
+        let list = try BookmarkSuggestor.parse(raw, transcript: [line(0), line(30)])
+        XCTAssertEqual(list.count, 1)
+        XCTAssertEqual(list.first?.t, 0)
+    }
+
+    func testSuggestDefaultsByToAI() throws {
+        let raw = #"{"bookmarks":[{"t":0}]}"#
+        let list = try BookmarkSuggestor.parse(raw, transcript: [line(0)])
+        XCTAssertEqual(list.first?.by, "ai")
+    }
+
+    func testSuggestRejectsGarbage() {
+        XCTAssertThrowsError(try BookmarkSuggestor.parse("模型不想干活", transcript: [line(0)]))
+        XCTAssertThrowsError(try BookmarkSuggestor.parse(#"{"bookmarks":[]}"#, transcript: [line(0)]))
+    }
+
     // MARK: - 词表
 
     func testVocabularyIsClosedAndUnique() {

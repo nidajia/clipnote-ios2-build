@@ -53,6 +53,9 @@ struct DetailScreen: View {
     @State private var timeObserver: Any?
     /// 跳到书签后临时显示的那行（时间 + 备注），3 秒后自己消失
     @State private var bookmarkHint: String?
+    @State private var suggesting = false
+    @State private var suggestions: [APIBookmark] = []
+    @State private var showSuggest = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -225,6 +228,13 @@ struct DetailScreen: View {
             }
             timeObserver = nil
         }
+        .sheet(isPresented: $showSuggest) {
+            BookmarkSuggestSheet(suggestions: suggestions) { chosen in
+                var list = current.bookmarks
+                list.append(contentsOf: chosen)
+                Task { await persistBookmarks(list) }
+            }
+        }
         .sheet(item: $editingBookmark) { draft in
             BookmarkEditSheet(
                 draft: draft,
@@ -304,10 +314,35 @@ struct DetailScreen: View {
     private var bookmarkBar: some View {
         HStack(spacing: Metric.space2) {
             bookmarkRail
+            suggestButton
             markButton
         }
         .padding(.horizontal, Metric.pagePad)
         .padding(.top, Metric.space2)
+    }
+
+    /// 「让模型挑三个点」。只在已经有字幕的条目上有意义——
+    /// 没字幕时它和分段是同一个失败原因，没必要占用这一行的位置。
+    private var suggestButton: some View {
+        Button {
+            Task { await suggestBookmarks() }
+        } label: {
+            Group {
+                if suggesting {
+                    RingSpinner(size: 12, color: .cnBrand)
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+            }
+            .foregroundStyle(Color.cnBrand)
+            .frame(width: 30, height: 26)
+            .background(Color.cnBrandSoft, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(suggesting || player == nil)
+        .opacity(player == nil ? 0.4 : 1)
+        .accessibilityLabel("让模型挑三个值得回看的点")
     }
 
     /// 播放器下方那一行里的「标记」。
@@ -487,8 +522,47 @@ struct DetailScreen: View {
         .frame(height: 26)
     }
 
-    /// 跳到某个书签。没在播就先起播，已经在播就 seek。
-    private func jump(to bookmark: APIBookmark) async {
+    /// 让模型从字幕里挑三个值得回看的点，作为**建议**列出来。
+    ///
+    /// 复用已有的转写链路：`library.transcript` 有缓存，刚跑过分段的话
+    /// 这一步几乎不花时间。
+    private func suggestBookmarks() async {
+        guard !library.isOffline, !suggesting else { return }
+        let config = AIConfigStore.load()
+        guard config.isConfigured else {
+            aiState = .needsSetup
+            return
+        }
+
+        suggesting = true
+        defer { suggesting = false }
+
+        do {
+            let transcript = try await library.transcript(for: current.id)
+            guard transcript.source == "subtitle", !transcript.lines.isEmpty else {
+                notice = "这条没有字幕，模型没法挑点。"
+                return
+            }
+            let list = try await BookmarkSuggestor(config: config).suggest(
+                title: current.title,
+                lines: transcript.lines,
+                existing: current.bookmarks
+            )
+            logs.info("bookmarks.suggested", "给出书签建议", meta: [
+                "id": current.id, "count": String(list.count), "model": config.model,
+            ])
+            suggestions = list
+            showSuggest = true
+        } catch let failure as SummarizeFailure {
+            notice = failure.displayMessage
+            logs.error("bookmarks.suggest_failed", failure.displayMessage,
+                       meta: ["id": current.id])
+        } catch {
+            notice = "给建议失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// 跳到某个书签。没在播就先起播，已经在播就 seek。    private func jump(to bookmark: APIBookmark) async {
         await startPlayback(at: bookmark.t)
         // 把备注亮在播放器正下方：否则用户点完只看到画面变了，
         // 不知道自己当初为什么标这一下。
