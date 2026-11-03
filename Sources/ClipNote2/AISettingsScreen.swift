@@ -215,8 +215,23 @@ struct AISettingsScreen: View {
     }
 
     private func save() {
-        guard AIConfigStore.save(config) else {
+        let wanted = config.model
+        let ok = AIConfigStore.save(config)
+        // 写完立刻读回来核对。不这么做的话，「保存成功了但存的是旧值」
+        // 这种失败在界面上完全看不出来——用户只会发现下次进来模型变回去了。
+        let readBack = AIConfigStore.load()
+        logs.info("config.save", ok ? "配置已保存" : "配置保存失败", meta: [
+            "model": wanted,
+            "readback": readBack.model,
+            "ok": ok ? "1" : "0",
+        ])
+
+        guard ok else {
             status = .failed("保存失败：钥匙串拒绝了写入。")
+            return
+        }
+        guard readBack.model == wanted else {
+            status = .failed("保存后读回来的是「\(readBack.model)」，和写入的「\(wanted)」不一致。")
             return
         }
         // 存完就回去：从「我」进来是返回上一页，从详情页的弹层进来是收起弹层，

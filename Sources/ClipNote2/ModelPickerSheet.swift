@@ -168,6 +168,12 @@ struct ModelPickerSheet: View {
                 ForEach(visible) { model in
                     Button {
                         selected = model.id
+                        // 记「写进绑定之后读到的值」：如果这里就不是新 id，
+                        // 说明绑定没接上，跟保存逻辑无关
+                        logs.info("models.pick", "选中模型", meta: [
+                            "picked": model.id,
+                            "inBinding": selected,
+                        ])
                         dismiss()
                     } label: {
                         row(model)

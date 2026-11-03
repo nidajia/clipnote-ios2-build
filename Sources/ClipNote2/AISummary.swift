@@ -88,12 +88,25 @@ enum AIConfigStore {
     @discardableResult
     static func save(_ config: AIConfig) -> Bool {
         guard let data = try? JSONEncoder().encode(config) else { return false }
-        SecItemDelete(baseQuery as CFDictionary)
-        var query = baseQuery
-        query[kSecValueData as String] = data
+
+        // 先 update，不存在才 add。
+        //
+        // 原来是 delete + add：中间有一瞬间条目不存在，而这期间任何一次
+        // load() 都会拿到空配置。更要紧的是 add 依赖 delete 真的删掉了，
+        // 一旦 delete 因为任何原因没匹配上，add 会返回 errSecDuplicateItem，
+        // 于是「保存成功」其实什么都没改——真机上就是这个表现。
+        let query = baseQuery
+        let attributes: [String: Any] = [kSecValueData as String: data]
+
+        let updated = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updated == errSecSuccess { return true }
+        guard updated == errSecItemNotFound else { return false }
+
+        var insert = baseQuery
+        insert[kSecValueData as String] = data
         // 只在本机可用、解锁后可读：不参与 iCloud 钥匙串同步
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+        insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
     }
 
     static func clear() {
