@@ -178,6 +178,9 @@ struct SegmentsScreen: View {
                 return
             }
             let newPlayer = AVPlayer(url: url)
+            // 同样要先认领播放权：从这一页起播时，详情页那个播放器
+            // 可能还在响（用户没暂停就点了分段）
+            AudioFocus.shared.adopt(newPlayer)
             // 先定位再播：直接 play 会让用户先听到开头那两秒再跳，很难受。
             // 必须 await：新 SDK 里 `seek(to:)` 只暴露了异步版本，不 await 直接编译报错。
             _ = await newPlayer.seek(

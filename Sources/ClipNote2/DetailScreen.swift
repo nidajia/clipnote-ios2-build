@@ -49,6 +49,10 @@ struct DetailScreen: View {
     @State private var refreshing = false
     /// 正在编辑的书签。nil 表示编辑面板没开。
     @State private var editingBookmark: BookmarkDraft?
+    /// 周期性记录播放进度的观察者，换播放器时要先摘掉
+    @State private var timeObserver: Any?
+    /// 跳到书签后临时显示的那行（时间 + 备注），3 秒后自己消失
+    @State private var bookmarkHint: String?
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -98,11 +102,20 @@ struct DetailScreen: View {
             VStack(alignment: .leading, spacing: 0) {
                 playerSurface
 
-                // 书签轨道贴在播放器下面、分段导航上面：
-                // 它是「时间轴」语义（按比例定位），和下面那排「目录」不是一回事，
-                // 所以放在两者之间，用一条细线加旗子把它们区分开。
-                if !current.bookmarks.isEmpty {
-                    bookmarkRail
+                // 书签这一行：时间轴 + 标记按钮。
+                // 不再是「有书签才显示」——没有书签时也要有地方可以标。
+                if item.playbackAvailable {
+                    bookmarkBar
+                }
+
+                if let bookmarkHint {
+                    Text(bookmarkHint)
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                        .lineLimit(2)
+                        .padding(.horizontal, Metric.pagePad)
+                        .padding(.top, 4)
+                        .transition(.opacity)
                 }
 
                 // 分段条贴在播放器正下方，常驻可见。
@@ -196,6 +209,22 @@ struct DetailScreen: View {
         .sheet(isPresented: $showAISettings) {
             NavigationStack { AISettingsScreen() }
         }
+        .onDisappear {
+            // 离开这一页必须收声，并记住看到哪儿。
+            // onDisappear 不保证一定执行（手势被取消时可能不触发），
+            // 所以真正的兜底在 AudioFocus —— 下一次起播会先掐掉旧的。
+            if let player {
+                let seconds = player.currentTime().seconds
+                if seconds.isFinite, seconds > 0 {
+                    PlaybackMemory.shared.remember(seconds, for: item.id)
+                }
+            }
+            AudioFocus.shared.resign(player)
+            if let timeObserver, let player {
+                player.removeTimeObserver(timeObserver)
+            }
+            timeObserver = nil
+        }
         .sheet(item: $editingBookmark) { draft in
             BookmarkEditSheet(
                 draft: draft,
@@ -264,36 +293,44 @@ struct DetailScreen: View {
                     }
                 }
             }
-            .overlay(alignment: .topTrailing) {
-                // 打点按钮只在真的开始播之后出现：没播的时候「当前位置」没有意义
-                if player != nil {
-                    markButton
-                        .padding(Metric.space2)
-                }
-            }
             .clipped()
     }
 
-    /// 播放器右上角的旗子：把当前位置标成书签。
+    /// 书签这一行：左边是时间轴上的旗子，右边是「标记」。
     ///
-    /// 放在画面里而不是下面那排控件里，是因为它操作的是「这一刻」，
-    /// 离画面越近越直观；而它不能和系统控件抢位置，所以贴在角落。
+    /// 「标记」原来浮在画面右上角，**和系统的音量/AirPlay 控件叠在一起**，
+    /// 点十次有八次点到系统控件。系统控件的位置我们改不了，只能让开——
+    /// 挪到画面外面这一行，和书签本身待在一起，语义也更顺。
+    private var bookmarkBar: some View {
+        HStack(spacing: Metric.space2) {
+            bookmarkRail
+            markButton
+        }
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.top, Metric.space2)
+    }
+
+    /// 播放器下方那一行里的「标记」。
     private var markButton: some View {
         Button {
             Task { await addBookmarkAtCurrentTime() }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "flag.fill")
+                Image(systemName: "flag.badge.plus")
                     .font(.system(size: 10, weight: .semibold))
                 Text("标记")
                     .font(.cnCaption)
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.black.opacity(0.45), in: Capsule())
+            .foregroundStyle(player == nil ? Color.cnInk3 : Color.cnBrand)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                player == nil ? Color.cnCard3 : Color.cnBrandSoft,
+                in: Capsule()
+            )
         }
         .buttonStyle(.plain)
+        .disabled(player == nil)
         .accessibilityLabel("把当前位置标成书签")
     }
 
@@ -423,29 +460,44 @@ struct DetailScreen: View {
                     .frame(maxHeight: .infinity, alignment: .center)
 
                 ForEach(Array(current.bookmarks.enumerated()), id: \.offset) { _, bookmark in
-                    Button {
-                        editingBookmark = BookmarkDraft(
-                            t: bookmark.t, note: bookmark.note, by: bookmark.by
+                    Image(systemName: "flag.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.cnBrand)
+                        .padding(6)          // 触摸区比图形大一圈
+                        .contentShape(Rectangle())
+                        // 点击 = 跳过去。这一条是被真机反馈纠正的：
+                        // 原来的点击是「打开编辑面板」，而用户的预期是「和分段一样跳转」。
+                        // 编辑属于次级操作，放长按。
+                        .onTapGesture {
+                            Task { await jump(to: bookmark) }
+                        }
+                        .onLongPressGesture {
+                            editingBookmark = BookmarkDraft(
+                                t: bookmark.t, note: bookmark.note, by: bookmark.by
+                            )
+                        }
+                        .position(
+                            // 贴边的那几个要往内收，否则一半在屏幕外点不到
+                            x: min(max(10, CGFloat(Double(bookmark.t) / total) * width), width - 10),
+                            y: geo.size.height / 2
                         )
-                    } label: {
-                        Image(systemName: "flag.fill")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.cnBrand)
-                            .padding(5)          // 触摸区比图形大一圈
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .position(
-                        // 贴边的那几个要往内收，否则一半在屏幕外点不到
-                        x: min(max(10, CGFloat(Double(bookmark.t) / total) * width), width - 10),
-                        y: geo.size.height / 2
-                    )
                 }
             }
         }
-        .frame(height: 22)
-        .padding(.horizontal, Metric.pagePad)
-        .padding(.top, Metric.space2)
+        .frame(height: 26)
+    }
+
+    /// 跳到某个书签。没在播就先起播，已经在播就 seek。
+    private func jump(to bookmark: APIBookmark) async {
+        await startPlayback(at: bookmark.t)
+        // 把备注亮在播放器正下方：否则用户点完只看到画面变了，
+        // 不知道自己当初为什么标这一下。
+        bookmarkHint = bookmark.note.isEmpty
+            ? "已跳到 \(Self.mmss(bookmark.t))"
+            : "\(Self.mmss(bookmark.t))　\(bookmark.note)"
+        let shown = bookmarkHint
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        if bookmarkHint == shown { bookmarkHint = nil }
     }
 
     /// 把当前位置标成书签。
@@ -1012,6 +1064,7 @@ struct DetailScreen: View {
         }
 
         if let player {
+            AudioFocus.shared.adopt(player)
             if let seconds {
                 _ = await player.seek(
                     to: CMTime(seconds: Double(seconds), preferredTimescale: 600)
@@ -1030,19 +1083,41 @@ struct DetailScreen: View {
     private func play(_ url: URL, at seconds: Int? = nil) {
         let playerItem = AVPlayerItem(url: url)
         let newPlayer = AVPlayer(playerItem: playerItem)
+
+        // 先把上一次那个掐掉，再认领：否则「返回首页 → 打开另一条」
+        // 会出现两个音源同时响（用户报过这个）。
+        AudioFocus.shared.adopt(newPlayer)
+
         player = newPlayer
         playing = true
         notice = nil
-        // 先定位再播：直接 play 会先放出开头那两秒再跳
-        if let seconds {
+
+        // 起播位置：显式指定的（点分段/书签）优先，
+        // 否则接着上次看到的地方——没有这一条，每次点进来都从片头开始。
+        let resume = seconds.map(Double.init) ?? PlaybackMemory.shared.position(for: item.id)
+        if let resume, resume > 1 {
             Task { _ = await newPlayer.seek(
-                to: CMTime(seconds: Double(seconds), preferredTimescale: 600)
+                to: CMTime(seconds: resume, preferredTimescale: 600)
             ) }
+            if seconds == nil {
+                notice = "接着上次看到 \(Self.mmss(Int(resume)))。"
+            }
         }
+
+        // 每 3 秒记一次进度：进程被杀也能接上，代价只是一次 UserDefaults 写
+        if let token = timeObserver { newPlayer.removeTimeObserver(token) }
+        timeObserver = newPlayer.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 3, preferredTimescale: 600), queue: .main
+        ) { time in
+            let current = time.seconds
+            guard current.isFinite, current > 0 else { return }
+            PlaybackMemory.shared.remember(current, for: item.id)
+        }
+
         let isLocal = url.isFileURL
         logs.info("playback.started", isLocal ? "开始播放（本地文件）" : "开始播放（服务端代理）",
                   meta: ["host": isLocal ? "local" : (url.host ?? "-"),
-                         "from": seconds.map(String.init) ?? "0"])
+                         "from": seconds.map(String.init) ?? (resume.map { String(Int($0)) } ?? "0")])
 
         // 地址过期时 AVPlayer **不会**抛错，它只是一直转圈。
         // 不观察 status 的话，用户看到的就是「点了没反应」——最差的一种失败。
