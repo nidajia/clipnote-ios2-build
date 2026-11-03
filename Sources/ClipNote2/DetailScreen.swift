@@ -44,6 +44,9 @@ struct DetailScreen: View {
     /// 分段导航里高亮哪一段。只反映「上次点了哪块」，不跟播放进度走——
     /// 跟进度要挂定时器，那是另一件事（progress bar），先不混进来。
     @State private var activeSegment: Int?
+    /// 正在用当前模型重做这条的 AI 内容。和 `aiState` 分开：
+    /// 重做时旧摘要要继续显示，不能让卡片先变成「正在生成」再跳回来。
+    @State private var refreshing = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -291,6 +294,61 @@ struct DetailScreen: View {
         .padding(.bottom, Metric.space1)
     }
 
+    /// 摘要卡角上那个刷新键。
+    ///
+    /// 存在的理由很具体：换了模型之后，旧摘要还是旧模型写的，
+    /// 用户没有任何办法「拿新模型再写一遍」——只能删库重导。这不合理。
+    private var refreshButton: some View {
+        Button {
+            Task { await refreshAI() }
+        } label: {
+            HStack(spacing: 4) {
+                if refreshing {
+                    RingSpinner(size: 10, color: .cnBrand)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(refreshing ? "正在重写" : "重写")
+                    .font(.cnCaption)
+            }
+            .foregroundStyle(Color.cnBrand)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.cnBrandSoft, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(refreshing)
+        .accessibilityLabel("用当前模型重新生成摘要")
+    }
+
+    /// 用**当前配置的模型**把这条的 AI 内容重做一遍。
+    ///
+    /// 顺序有讲究：先摘要再分段。摘要是用户点这个按钮想看的，
+    /// 而分段要拉字幕、跑一次长输出，把它放前面会让用户等十几秒才看到摘要变了。
+    /// 分段失败不回滚摘要——两者各自独立，一个挂了不该连累另一个。
+    private func refreshAI() async {
+        guard !library.isOffline, !refreshing else { return }
+        let config = AIConfigStore.load()
+        guard config.isConfigured else {
+            aiState = .needsSetup
+            return
+        }
+
+        refreshing = true
+        activeSegment = nil
+        defer { refreshing = false }
+
+        logs.info("ai.refresh", "用当前模型重写", meta: [
+            "id": current.id, "model": config.model,
+            "hasSegments": current.segments.isEmpty ? "0" : "1",
+        ])
+        await generateSummary(force: true)
+        if !current.segments.isEmpty {
+            await generateSegments(force: true)
+        }
+    }
+
     private var playButton: some View {        Button {
             Task { await startPlayback() }
         } label: {
@@ -360,6 +418,7 @@ struct DetailScreen: View {
                 Text("AI 摘要")
                     .font(.cnCaption)
                 Spacer(minLength: 0)
+                refreshButton
             }
             .foregroundStyle(Color.cnBrand)
 
@@ -627,8 +686,9 @@ struct DetailScreen: View {
         await generateSummary()
     }
 
-    private func generateSummary() async {
-        guard !library.isOffline, current.aiSummary.isEmpty, aiState != .running else { return }
+    private func generateSummary(force: Bool = false) async {
+        guard !library.isOffline, aiState != .running else { return }
+        guard force || current.aiSummary.isEmpty else { return }
 
         let config = AIConfigStore.load()
         guard config.isConfigured else {
@@ -650,8 +710,12 @@ struct DetailScreen: View {
             aiState = saved ? .idle : .failed("生成成功，但没存上。检查网络后再试。")
         } catch let failure as SummarizeFailure {
             aiState = .failed(failure.displayMessage)
+            // 已有摘要时卡片不会切到失败态（旧内容留着更好），
+            // 所以失败必须另找地方说，否则用户以为「点了没反应」
+            notice = failure.displayMessage
         } catch {
             aiState = .failed("生成失败：\(error.localizedDescription)")
+            notice = "重写失败：\(error.localizedDescription)"
         }
     }
 
@@ -662,8 +726,9 @@ struct DetailScreen: View {
         await generateSegments()
     }
 
-    private func generateSegments() async {
-        guard !library.isOffline, current.segments.isEmpty, segmentState != .running else { return }
+    private func generateSegments(force: Bool = false) async {
+        guard !library.isOffline, segmentState != .running else { return }
+        guard force || current.segments.isEmpty else { return }
 
         let config = AIConfigStore.load()
         guard config.isConfigured else {
