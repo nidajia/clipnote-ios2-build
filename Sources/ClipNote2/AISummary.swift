@@ -586,7 +586,7 @@ struct BookmarkSuggestor {
             "messages": [
                 ["role": "system", "content": Self.instructions],
                 ["role": "user", "content": Self.userContent(
-                    title: title, blocks: blocks, existing: existing
+                    title, blocks: blocks, existing: existing
                 )],
             ],
         ]
