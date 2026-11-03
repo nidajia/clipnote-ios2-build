@@ -562,7 +562,8 @@ struct DetailScreen: View {
         }
     }
 
-    /// 跳到某个书签。没在播就先起播，已经在播就 seek。    private func jump(to bookmark: APIBookmark) async {
+    /// 跳到某个书签。没在播就先起播，已经在播就 seek。
+    private func jump(to bookmark: APIBookmark) async {
         await startPlayback(at: bookmark.t)
         // 把备注亮在播放器正下方：否则用户点完只看到画面变了，
         // 不知道自己当初为什么标这一下。
