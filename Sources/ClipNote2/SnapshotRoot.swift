@@ -113,6 +113,12 @@ struct SnapshotRoot: View {
             lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
         }
 
+        // 书签：分段和旗子同时给，验的是「两种东西能不能一眼分开」
+        if state == "detail-bookmarks", let id = detail?.id {
+            lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
+            lib.seedBookmarks(id: id, bookmarks: SnapshotRoot.sampleBookmarks)
+        }
+
         // 标签页截图：要一份像真跑过几轮的分布，不是「每个标签 1 条」
         if state == "tags" {
             for (index, labels) in SnapshotRoot.sampleTagPlan where index < lib.items.count {
@@ -270,6 +276,13 @@ struct SnapshotRoot: View {
         (5, ["效率"]),
         (6, ["产品", "心理"]),
         (7, ["效率", "健康"]),
+    ]
+
+    /// 书签样本：故意放得很稀（3 个），因为真实使用里人不会标 9 个点。
+    static let sampleBookmarks: [APIBookmark] = [
+        APIBookmark(t: 96, note: "这里给的三组对照数据，值得再看一遍", by: "user"),
+        APIBookmark(t: 402, note: "", by: "user"),
+        APIBookmark(t: 733, note: "作者承认上次也判断错了时间", by: "ai"),
     ]
 
     /// 模型列表样本。挑的都是真实存在的 id，备注按本地的名字规则推。

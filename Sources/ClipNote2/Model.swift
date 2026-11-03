@@ -33,6 +33,8 @@ struct Item: Identifiable, Hashable {
     var labels: [String] = []
     /// 分段总结。段数不固定，界面只能保证「至少 0 段」，不能假设 5 段。
     var segments: [APISegment] = []
+    /// 用户自己标的时间点。和分段来源相反，展示上也必须能一眼区分。
+    var bookmarks: [APIBookmark] = []
     var coverURL: URL?
     /// `false` 不是错误，是「这类内容没有视频流」（笔记、图集）
     var playbackAvailable: Bool
@@ -55,6 +57,7 @@ struct Item: Identifiable, Hashable {
         self.keyPoints = api.keyPoints
         self.labels = api.labels
         self.segments = api.segments
+        self.bookmarks = api.bookmarks
         self.playbackAvailable = api.playback.available
         self.publishedAt = api.publishedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
@@ -84,6 +87,7 @@ struct Item: Identifiable, Hashable {
         keyPoints: [String] = [],
         labels: [String] = [],
         segments: [APISegment] = [],
+        bookmarks: [APIBookmark] = [],
         coverURL: URL? = nil,
         playbackAvailable: Bool = true,
         publishedAt: Date? = nil
@@ -99,6 +103,7 @@ struct Item: Identifiable, Hashable {
         self.keyPoints = keyPoints
         self.labels = labels
         self.segments = segments
+        self.bookmarks = bookmarks
         self.coverURL = coverURL
         self.playbackAvailable = playbackAvailable
         self.publishedAt = publishedAt

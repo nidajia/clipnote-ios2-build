@@ -54,6 +54,31 @@ struct APISegment: Decodable, Equatable, Hashable, Identifiable {
     }
 }
 
+/// 一个书签。和 `APISegment` 长得像（都带秒），但语义相反：
+/// 分段是 AI 切出来的目录，书签是人在时间轴上插的旗子。
+/// 所以书签**允许没有备注**——只标记「这里值得回看」也是有效的信息。
+struct APIBookmark: Decodable, Equatable, Hashable {
+    var t: Int
+    var note: String
+    /// "user" 或 "ai"。AI 只是**提议**，进库的每一条都经过了用户确认。
+    var by: String
+
+    private enum CodingKeys: String, CodingKey { case t, note, by }
+
+    init(t: Int, note: String = "", by: String = "user") {
+        self.t = t
+        self.note = note
+        self.by = by
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        t = try c.decodeIfPresent(Int.self, forKey: .t) ?? 0
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        by = try c.decodeIfPresent(String.self, forKey: .by) ?? "user"
+    }
+}
+
 // MARK: - 转写
 //
 // 服务端只回三种 source，客户端只认这三种分支：
@@ -118,6 +143,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     /// 段数不固定（5±3），所以界面不能假设「一定有 5 段」。
     var segments: [APISegment] = []
     var segmentsAt: Int = 0
+    var bookmarks: [APIBookmark] = []
+    var bookmarksAt: Int = 0
     /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
     var deletedAt: Int?
 
@@ -125,6 +152,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case id, kind, title, metaLine, durationText, durationSeconds
         case summary, cover, playback, publishedAt, source, deletedAt
         case aiSummary, keyPoints, labels, segments, segmentsAt
+        case bookmarks, bookmarksAt
     }
 
     init(
@@ -179,6 +207,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         labels = try c.decodeIfPresent([String].self, forKey: .labels) ?? []
         segments = try c.decodeIfPresent([APISegment].self, forKey: .segments) ?? []
         segmentsAt = try c.decodeIfPresent(Int.self, forKey: .segmentsAt) ?? 0
+        bookmarks = try c.decodeIfPresent([APIBookmark].self, forKey: .bookmarks) ?? []
+        bookmarksAt = try c.decodeIfPresent(Int.self, forKey: .bookmarksAt) ?? 0
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
         playback = try c.decodeIfPresent(APIPlayback.self, forKey: .playback)
             ?? APIPlayback(available: kind == "video", reason: nil)
@@ -502,6 +532,17 @@ struct ClipNoteClient {
             body: [
                 "segments": segments.map { ["title": $0.title, "t": $0.t, "summary": $0.summary] },
                 "by": model,
+            ],
+            as: APILibraryItem.self
+        )
+    }
+
+    /// 写回书签。整体替换：书签少，整存整取不用为「删第几个」设计语义。
+    func saveBookmarks(id: String, bookmarks: [APIBookmark]) async throws -> APILibraryItem {
+        try await post(
+            "/api/v2/items/\(encode(id))/bookmarks",
+            body: [
+                "bookmarks": bookmarks.map { ["t": $0.t, "note": $0.note, "by": $0.by] },
             ],
             as: APILibraryItem.self
         )
@@ -988,6 +1029,29 @@ final class LibraryStore: ObservableObject {
     func seedLabels(id: String, labels: [String]) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].labels = labels
+    }
+
+    /// 截图/预览用：塞书签。
+    func seedBookmarks(id: String, bookmarks: [APIBookmark]) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].bookmarks = bookmarks
+    }
+
+    /// 保存书签。返回是否成功。
+    @discardableResult
+    func saveBookmarks(id: String, bookmarks: [APIBookmark]) async -> Bool {
+        guard let client else { return false }
+        do {
+            _ = try await client.saveBookmarks(id: id, bookmarks: bookmarks)
+            await reload()
+            log?.info("bookmarks.saved", "书签已保存", meta: [
+                "id": id, "count": String(bookmarks.count),
+            ])
+            return true
+        } catch {
+            log?.error("bookmarks.failed", "书签保存失败", meta: ["id": id])
+            return false
+        }
     }
 
     func loadTrash() async throws -> [APILibraryItem] {

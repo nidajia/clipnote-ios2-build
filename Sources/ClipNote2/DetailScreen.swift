@@ -47,6 +47,8 @@ struct DetailScreen: View {
     /// 正在用当前模型重做这条的 AI 内容。和 `aiState` 分开：
     /// 重做时旧摘要要继续显示，不能让卡片先变成「正在生成」再跳回来。
     @State private var refreshing = false
+    /// 正在编辑的书签。nil 表示编辑面板没开。
+    @State private var editingBookmark: BookmarkDraft?
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -95,6 +97,13 @@ struct DetailScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 playerSurface
+
+                // 书签轨道贴在播放器下面、分段导航上面：
+                // 它是「时间轴」语义（按比例定位），和下面那排「目录」不是一回事，
+                // 所以放在两者之间，用一条细线加旗子把它们区分开。
+                if !current.bookmarks.isEmpty {
+                    bookmarkRail
+                }
 
                 // 分段条贴在播放器正下方，常驻可见。
                 // 进独立页再点时间戳那条路绕得太远——用户想的是「跳到第 3 分钟」，
@@ -187,6 +196,22 @@ struct DetailScreen: View {
         .sheet(isPresented: $showAISettings) {
             NavigationStack { AISettingsScreen() }
         }
+        .sheet(item: $editingBookmark) { draft in
+            BookmarkEditSheet(
+                draft: draft,
+                onSave: { note in
+                    var list = current.bookmarks
+                    if let index = list.firstIndex(where: { $0.t == draft.t }) {
+                        list[index].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    Task { await persistBookmarks(list) }
+                },
+                onDelete: {
+                    let list = current.bookmarks.filter { $0.t != draft.t }
+                    Task { await persistBookmarks(list) }
+                }
+            )
+        }
         .onChange(of: showAISettings) { presented in
             // 从设置页回来：之前因为没配置而停下的，重新试一次
             guard !presented, aiState == .needsSetup else { return }
@@ -239,7 +264,37 @@ struct DetailScreen: View {
                     }
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                // 打点按钮只在真的开始播之后出现：没播的时候「当前位置」没有意义
+                if player != nil {
+                    markButton
+                        .padding(Metric.space2)
+                }
+            }
             .clipped()
+    }
+
+    /// 播放器右上角的旗子：把当前位置标成书签。
+    ///
+    /// 放在画面里而不是下面那排控件里，是因为它操作的是「这一刻」，
+    /// 离画面越近越直观；而它不能和系统控件抢位置，所以贴在角落。
+    private var markButton: some View {
+        Button {
+            Task { await addBookmarkAtCurrentTime() }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "flag.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("标记")
+                    .font(.cnCaption)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.black.opacity(0.45), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("把当前位置标成书签")
     }
 
     // MARK: - 分段导航
@@ -346,6 +401,77 @@ struct DetailScreen: View {
         await generateSummary(force: true)
         if !current.segments.isEmpty {
             await generateSegments(force: true)
+        }
+    }
+
+    // MARK: - 书签
+
+    /// 书签轨道：按时间比例把旗子摆在一条细线上。
+    ///
+    /// 和分段导航的区别必须做出来——分段是 AI 给的目录（等宽块 + 序号），
+    /// 书签是人插的旗（细线 + 旗子 + 按比例）。两种东西混成一样，
+    /// 用户就分不清哪个是自己标的了。
+    private var bookmarkRail: some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let total = Double(max(1, current.durationSeconds))
+
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color.cnHairline)
+                    .frame(height: 1)
+                    .frame(maxHeight: .infinity, alignment: .center)
+
+                ForEach(Array(current.bookmarks.enumerated()), id: \.offset) { _, bookmark in
+                    Button {
+                        editingBookmark = BookmarkDraft(
+                            t: bookmark.t, note: bookmark.note, by: bookmark.by
+                        )
+                    } label: {
+                        Image(systemName: "flag.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.cnBrand)
+                            .padding(5)          // 触摸区比图形大一圈
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .position(
+                        // 贴边的那几个要往内收，否则一半在屏幕外点不到
+                        x: min(max(10, CGFloat(Double(bookmark.t) / total) * width), width - 10),
+                        y: geo.size.height / 2
+                    )
+                }
+            }
+        }
+        .frame(height: 22)
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.top, Metric.space2)
+    }
+
+    /// 把当前位置标成书签。
+    private func addBookmarkAtCurrentTime() async {
+        guard let player else { return }
+        let seconds = player.currentTime().seconds
+        guard seconds.isFinite, seconds >= 0 else { return }
+        let t = Int(seconds)
+
+        // 3 秒内重复点不算新书签：点两下很常见，多出来一条只会让人困惑
+        if current.bookmarks.contains(where: { abs($0.t - t) < 3 }) {
+            notice = "\(Self.mmss(t)) 这一带已经标过了。"
+            return
+        }
+
+        var list = current.bookmarks
+        list.append(APIBookmark(t: t))
+        await persistBookmarks(list)
+        notice = "已标记 \(Self.mmss(t))。"
+    }
+
+    private func persistBookmarks(_ list: [APIBookmark]) async {
+        let sorted = list.sorted { $0.t < $1.t }
+        let ok = await library.saveBookmarks(id: current.id, bookmarks: sorted)
+        if !ok {
+            notice = "书签没存上，检查网络后再试。"
         }
     }
 
