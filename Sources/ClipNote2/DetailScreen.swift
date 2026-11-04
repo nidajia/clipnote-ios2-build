@@ -145,6 +145,11 @@ struct DetailScreen: View {
 
                     videoLinkRow
 
+                    // 笔记放在摘要**之前**：首屏能看见。
+                    // 原来放在「简介」后面，而那时屏幕已经被播放器、标题、
+                    // 作者、AI 摘要卡占满——真机上用户直接问「笔记在哪」。
+                    noteRow
+
                     aiSection
 
                     if showsSummary {
@@ -171,9 +176,6 @@ struct DetailScreen: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    noteRow
-                        .padding(.top, Metric.space1)
-
                     downloadSection
                         .padding(.top, Metric.space2)
                 }
@@ -187,6 +189,18 @@ struct DetailScreen: View {
         // 那块正是系统控制条的地盘，放上去要么互相遮挡，要么得写一套
         // 「控制条出现时隐藏我」的观察逻辑，而 VideoPlayer 不暴露这个状态。
         .toolbar {
+            // 常驻入口：不管滚到哪儿都能进笔记。
+            // 页面里的卡片会随滚动消失，而「我的笔记」是用户随时可能想写的地方。
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showNote = true
+                } label: {
+                    Image(systemName: current.note.isEmpty ? "square.and.pencil" : "pencil.line")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(current.note.isEmpty ? Color.cnInk2 : Color.cnBrand)
+                }
+                .accessibilityLabel(current.note.isEmpty ? "写笔记" : "编辑笔记")
+            }
             if playing {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
