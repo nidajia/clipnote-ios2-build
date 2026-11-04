@@ -28,6 +28,10 @@ enum PlatformLink {
     // MARK: - 具体平台
 
     /// 原视频。优先 App 内打开，退到网页。
+    ///
+    /// 第三种降级是给**存量数据**的：Web 端导入的条目快照里没有 bvid，也没有原链接，
+    /// 只有一个标题。这种情况下不留空白、也不藏入口——用标题搜一次，
+    /// 用户能在结果里看到那条视频。空着会让人以为功能坏了。
     static func openVideo(_ item: Item) {
         if item.platform == "bilibili", !item.videoId.isEmpty {
             let id = item.videoId
@@ -35,7 +39,18 @@ enum PlatformLink {
                  web: "https://www.bilibili.com/video/\(id)")
             return
         }
-        // 抖音/小红书没有存内容 id，只能回原链接
+        if !item.sourceURL.isEmpty {
+            open(scheme: nil, web: item.sourceURL)
+            return
+        }
+        if item.platform == "bilibili", !item.title.isEmpty {
+            let keyword = item.title.addingPercentEncoding(
+                withAllowedCharacters: .urlQueryAllowed
+            ) ?? ""
+            open(scheme: "bilibili://search?keyword=\(keyword)",
+                 web: "https://search.bilibili.com/all?keyword=\(keyword)")
+            return
+        }
         open(scheme: nil, web: item.sourceURL.isEmpty ? nil : item.sourceURL)
     }
 
@@ -44,6 +59,7 @@ enum PlatformLink {
     /// 三级降级：有 mid 就进主页；只有名字就进搜索；连名字都没有就回原链接。
     /// 藏掉入口是最差的选择——用户点了没反应会以为坏了。
     static func openAuthor(_ item: Item) {
+        let name = item.displayAuthor
         if item.platform == "bilibili" {
             if !item.authorId.isEmpty {
                 let mid = item.authorId
@@ -51,8 +67,8 @@ enum PlatformLink {
                      web: "https://space.bilibili.com/\(mid)")
                 return
             }
-            if !item.author.isEmpty {
-                let keyword = item.author.addingPercentEncoding(
+            if !name.isEmpty {
+                let keyword = name.addingPercentEncoding(
                     withAllowedCharacters: .urlQueryAllowed
                 ) ?? ""
                 open(scheme: "bilibili://search?keyword=\(keyword)",
@@ -61,6 +77,23 @@ enum PlatformLink {
             }
         }
         open(scheme: nil, web: item.sourceURL.isEmpty ? nil : item.sourceURL)
+    }
+}
+
+extension Item {
+    /// 作者名。
+    ///
+    /// 新导入的条目有 `author` 字段；**存量条目没有**——它们是 Web 端导进来的，
+    /// 快照里只有 `metaLine`，格式是「平台 · 作者」。不给这条兜底，
+    /// 那四条就会整块消失，用户以为功能没做。
+    var displayAuthor: String {
+        if !author.isEmpty { return author }
+        let parts = metaLine
+            .split(separator: "·")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard parts.count >= 2 else { return "" }
+        return parts.last ?? ""
     }
 }
 

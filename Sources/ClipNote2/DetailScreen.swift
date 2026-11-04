@@ -288,7 +288,7 @@ struct DetailScreen: View {
     /// 用户永远不会发现备注可以改。
     @ViewBuilder
     private var authorRow: some View {
-        if !current.author.isEmpty {
+        if !current.displayAuthor.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
                     PlatformLink.openAuthor(current)
@@ -298,11 +298,11 @@ struct DetailScreen: View {
                             Circle()
                                 .fill(Color.cnBrandSoft)
                                 .frame(width: 30, height: 30)
-                            Text(String(current.author.prefix(1)))
+                            Text(String(current.displayAuthor.prefix(1)))
                                 .font(.cnChip)
                                 .foregroundStyle(Color.cnBrand)
                         }
-                        Text(current.author)
+                        Text(current.displayAuthor)
                             .font(.cnChip)
                             .foregroundStyle(Color.cnInk)
                             .lineLimit(1)
@@ -336,7 +336,7 @@ struct DetailScreen: View {
 
     @ViewBuilder
     private var videoLinkRow: some View {
-        if !current.videoId.isEmpty || !current.sourceURL.isEmpty {
+        if current.platform == "bilibili" || !current.sourceURL.isEmpty {
             Button {
                 PlatformLink.openVideo(current)
             } label: {
@@ -365,7 +365,7 @@ struct DetailScreen: View {
         let parts = item.metaLine
             .split(separator: "·")
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && $0 != current.author }
+            .filter { !$0.isEmpty && $0 != current.displayAuthor }
         var text = parts.joined(separator: " · ")
         if !item.durationText.isEmpty {
             text = text.isEmpty ? item.durationText : "\(text) · \(item.durationText)"

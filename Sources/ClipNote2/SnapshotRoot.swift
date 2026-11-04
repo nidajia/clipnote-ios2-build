@@ -115,8 +115,9 @@ struct SnapshotRoot: View {
 
         // 作者行：详情页截图要能看到头像、名字、备注入口
         if state.hasPrefix("detail"), let id = detail?.id {
-            lib.seedAuthor(id: id, author: "SpicyTater-", authorId: "3546",
-                           videoId: "BV1Saxb6PEhv",
+            // 故意把 author/videoId 留空，模拟线上那 4 条存量数据：
+            // 只有 metaLine 里的作者名、没有 bvid。截图要验的正是这条兜底路径。
+            lib.seedAuthor(id: id, author: "", authorId: "", videoId: "",
                            note: "讲存储很扎实，适合看架构")
         }
 
