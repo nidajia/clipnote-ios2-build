@@ -1354,9 +1354,8 @@ struct DetailScreen: View {
         newPlayer.play()
     }
 
-    // MARK: - 下载区
+    // MARK: - 笔记
 
-    @ViewBuilder
     /// 笔记入口。有内容就露三行预览，没有就一行淡入口。
     ///
     /// 预览刻意只放三行：详情页已经有简介和摘要，笔记再展开就把下载按钮推下去了。
@@ -1403,6 +1402,9 @@ struct DetailScreen: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - 下载区
+
+    @ViewBuilder
     private var downloadSection: some View {
         VStack(alignment: .leading, spacing: Metric.space3) {
             if !item.playbackAvailable {
