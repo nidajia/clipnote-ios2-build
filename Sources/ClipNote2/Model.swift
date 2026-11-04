@@ -43,6 +43,8 @@ struct Item: Identifiable, Hashable {
     var authorNote: String = ""
     /// 作者头像地址。可能为空（老数据），此时界面画首字母。
     var authorAvatar: String = ""
+    /// 我的笔记。
+    var note: String = ""
     /// "bilibili" / "douyin" / ...。没有它就跳不了 App，只能开网页。
     var platform: String = ""
     var coverURL: URL?
@@ -74,6 +76,7 @@ struct Item: Identifiable, Hashable {
         self.sourceURL = api.sourceURL
         self.authorNote = api.authorNote
         self.authorAvatar = api.authorAvatar
+        self.note = api.note
         self.platform = api.platform
         self.playbackAvailable = api.playback.available
         self.publishedAt = api.publishedAt > 0
@@ -111,6 +114,7 @@ struct Item: Identifiable, Hashable {
         sourceURL: String = "",
         authorNote: String = "",
         authorAvatar: String = "",
+        note: String = "",
         platform: String = "",
         coverURL: URL? = nil,
         playbackAvailable: Bool = true,
@@ -134,6 +138,7 @@ struct Item: Identifiable, Hashable {
         self.sourceURL = sourceURL
         self.authorNote = authorNote
         self.authorAvatar = authorAvatar
+        self.note = note
         self.platform = platform
         self.coverURL = coverURL
         self.playbackAvailable = playbackAvailable

@@ -153,6 +153,9 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var authorNote: String = ""
     var authorNoteAt: Int = 0
     var authorAvatar: String = ""
+    /// 我的笔记。详情页只露预览，编辑在独立页。
+    var note: String = ""
+    var noteAt: Int = 0
     /// "bilibili" / "douyin" / ...。跳 App 要用它选 scheme。
     var platform: String = ""
     /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
@@ -164,7 +167,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case aiSummary, keyPoints, labels, segments, segmentsAt
         case bookmarks, bookmarksAt
         case author, authorId, videoId, sourceURL, authorNote, authorNoteAt
-        case authorAvatar
+        case authorAvatar, note, noteAt
     }
 
     init(
@@ -227,6 +230,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         sourceURL = try c.decodeIfPresent(String.self, forKey: .sourceURL) ?? ""
         authorNote = try c.decodeIfPresent(String.self, forKey: .authorNote) ?? ""
         authorAvatar = try c.decodeIfPresent(String.self, forKey: .authorAvatar) ?? ""
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        noteAt = try c.decodeIfPresent(Int.self, forKey: .noteAt) ?? 0
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
@@ -576,6 +581,12 @@ struct ClipNoteClient {
             body: ["note": note],
             as: APILibraryItem.self
         )
+    }
+
+    /// 保存我的笔记。
+    func saveNote(id: String, note: String) async throws -> APILibraryItem {
+        try await post("/api/v2/items/\(encode(id))/note",
+                       body: ["note": note], as: APILibraryItem.self)
     }
 
     /// 回收站列表
@@ -1061,6 +1072,12 @@ final class LibraryStore: ObservableObject {
         items[index].labels = labels
     }
 
+    /// 截图/预览用：塞笔记。
+    func seedNote(id: String, note: String) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].note = note
+    }
+
     /// 截图/预览用：塞书签。
     func seedBookmarks(id: String, bookmarks: [APIBookmark]) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
@@ -1111,6 +1128,23 @@ final class LibraryStore: ObservableObject {
             ? "" : "https://www.bilibili.com/video/\(videoId)"
         items[index].authorNote = note
         items[index].authorAvatar = avatar
+    }
+
+    /// 保存笔记。返回是否成功。
+    @discardableResult
+    func saveNote(id: String, note: String) async -> Bool {
+        guard let client else { return false }
+        do {
+            _ = try await client.saveNote(id: id, note: note)
+            await reload()
+            log?.info("note.saved", "笔记已保存", meta: [
+                "id": id, "chars": String(note.count),
+            ])
+            return true
+        } catch {
+            log?.error("note.failed", "笔记保存失败", meta: ["id": id])
+            return false
+        }
     }
 
     func loadTrash() async throws -> [APILibraryItem] {

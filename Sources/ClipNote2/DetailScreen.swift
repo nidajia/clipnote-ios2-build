@@ -57,6 +57,7 @@ struct DetailScreen: View {
     @State private var suggestions: [APIBookmark] = []
     @State private var showSuggest = false
     @State private var editingAuthorNote = false
+    @State private var showNote = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -170,6 +171,9 @@ struct DetailScreen: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
+                    noteRow
+                        .padding(.top, Metric.space1)
+
                     downloadSection
                         .padding(.top, Metric.space2)
                 }
@@ -210,6 +214,9 @@ struct DetailScreen: View {
             await prefetch()
             await maybeSummarize()
             await maybeLoadSegments()
+        }
+        .navigationDestination(isPresented: $showNote) {
+            NoteScreen(item: current)
         }
         .navigationDestination(isPresented: $showSegments) {
             SegmentsScreen(item: current)
@@ -1350,6 +1357,52 @@ struct DetailScreen: View {
     // MARK: - 下载区
 
     @ViewBuilder
+    /// 笔记入口。有内容就露三行预览，没有就一行淡入口。
+    ///
+    /// 预览刻意只放三行：详情页已经有简介和摘要，笔记再展开就把下载按钮推下去了。
+    @ViewBuilder
+    private var noteRow: some View {
+        Button {
+            showNote = true
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("我的笔记")
+                        .font(.cnCaption)
+                    Spacer(minLength: 0)
+                    Text(current.note.isEmpty ? "写" : "编辑")
+                        .font(.cnCaption)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Color.cnInk3)
+
+                if !current.note.isEmpty {
+                    Text(current.note)
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk2)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Metric.space3)
+            .background(
+                Color.cnCard,
+                in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+                    .strokeBorder(Color.cnHairlineSoft, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var downloadSection: some View {
         VStack(alignment: .leading, spacing: Metric.space3) {
             if !item.playbackAvailable {

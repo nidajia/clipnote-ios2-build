@@ -119,6 +119,7 @@ struct SnapshotRoot: View {
             // 只有 metaLine 里的作者名、没有 bvid。截图要验的正是这条兜底路径。
             lib.seedAuthor(id: id, author: "", authorId: "", videoId: "",
                            note: "讲存储很扎实，适合看架构")
+            lib.seedNote(id: id, note: "他的三组对照实验部分可以直接套到我们下季度的容量评估里。\n另外开头的那个提问方式值得学。")
         }
 
         // 书签：分段和旗子同时给，验的是「两种东西能不能一眼分开」
