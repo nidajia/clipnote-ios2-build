@@ -357,8 +357,20 @@ struct DetailScreen: View {
     }
 
     /// 服务端已经给好 `metaLine` 和 `durationText`，这里只负责摆位置。
+    ///
+    /// 但要把作者名摘掉：`metaLine` 的格式是「平台 · 作者」，
+    /// 而作者现在单独占一行（可点、带备注）。两处都显示名字会显得啰嗦，
+    /// 也让「点哪个进主页」变得不明确。
     private var metaLine: String {
-        item.durationText.isEmpty ? item.metaLine : "\(item.metaLine) · \(item.durationText)"
+        let parts = item.metaLine
+            .split(separator: "·")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && $0 != current.author }
+        var text = parts.joined(separator: " · ")
+        if !item.durationText.isEmpty {
+            text = text.isEmpty ? item.durationText : "\(text) · \(item.durationText)"
+        }
+        return text
     }
 
     // MARK: - 播放器
