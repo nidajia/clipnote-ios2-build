@@ -56,6 +56,7 @@ struct DetailScreen: View {
     @State private var suggesting = false
     @State private var suggestions: [APIBookmark] = []
     @State private var showSuggest = false
+    @State private var editingAuthorNote = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -135,9 +136,13 @@ struct DetailScreen: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    authorRow
+
                     Text(metaLine)
                         .font(.cnMeta)
                         .foregroundStyle(Color.cnInk3)
+
+                    videoLinkRow
 
                     aiSection
 
@@ -228,6 +233,18 @@ struct DetailScreen: View {
             }
             timeObserver = nil
         }
+        .sheet(isPresented: $editingAuthorNote) {
+            AuthorNoteSheet(
+                author: current.author,
+                original: current.authorNote,
+                draftSource: AuthorNoteDraft.make(from: current)
+            ) { note in
+                Task {
+                    let ok = await library.saveAuthorNote(id: current.id, note: note)
+                    if !ok { notice = "作者备注没存上，检查网络。" }
+                }
+            }
+        }
         .sheet(isPresented: $showSuggest) {
             BookmarkSuggestSheet(suggestions: suggestions) { chosen in
                 var list = current.bookmarks
@@ -261,6 +278,81 @@ struct DetailScreen: View {
         .onChange(of: downloads.lastFailure) { failure in
             guard let failure, failure.id == item.id else { return }
             notice = failure.message
+        }
+    }
+
+    /// 作者那一条。
+    ///
+    /// 分两个点按区：上面一行进作者主页，下面一行编辑备注。
+    /// 不做成「整行一个按钮再长按编辑」——长按在这里没有可见提示，
+    /// 用户永远不会发现备注可以改。
+    @ViewBuilder
+    private var authorRow: some View {
+        if !current.author.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    PlatformLink.openAuthor(current)
+                } label: {
+                    HStack(spacing: Metric.space2) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.cnBrandSoft)
+                                .frame(width: 30, height: 30)
+                            Text(String(current.author.prefix(1)))
+                                .font(.cnChip)
+                                .foregroundStyle(Color.cnBrand)
+                        }
+                        Text(current.author)
+                            .font(.cnChip)
+                            .foregroundStyle(Color.cnInk)
+                            .lineLimit(1)
+                        Text("主页")
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnInk3)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.cnInk3)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    editingAuthorNote = true
+                } label: {
+                    Text(current.authorNote.isEmpty ? "＋ 写一句作者备注" : current.authorNote)
+                        .font(.cnCaption)
+                        .foregroundStyle(current.authorNote.isEmpty ? Color.cnBrand : Color.cnInk2)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 38)   // 和上面的名字对齐，跳过头像
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var videoLinkRow: some View {
+        if !current.videoId.isEmpty || !current.sourceURL.isEmpty {
+            Button {
+                PlatformLink.openVideo(current)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("原视频")
+                        .font(.cnCaption)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Color.cnInk3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 

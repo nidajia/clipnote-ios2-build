@@ -145,6 +145,15 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var segmentsAt: Int = 0
     var bookmarks: [APIBookmark] = []
     var bookmarksAt: Int = 0
+    /// 作者。`authorId` 可能为空（老数据没有 mid），跳主页要降级成搜索。
+    var author: String = ""
+    var authorId: String = ""
+    var videoId: String = ""
+    var sourceURL: String = ""
+    var authorNote: String = ""
+    var authorNoteAt: Int = 0
+    /// "bilibili" / "douyin" / ...。跳 App 要用它选 scheme。
+    var platform: String = ""
     /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
     var deletedAt: Int?
 
@@ -153,6 +162,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case summary, cover, playback, publishedAt, source, deletedAt
         case aiSummary, keyPoints, labels, segments, segmentsAt
         case bookmarks, bookmarksAt
+        case author, authorId, videoId, sourceURL, authorNote, authorNoteAt, source
     }
 
     init(
@@ -209,6 +219,13 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         segmentsAt = try c.decodeIfPresent(Int.self, forKey: .segmentsAt) ?? 0
         bookmarks = try c.decodeIfPresent([APIBookmark].self, forKey: .bookmarks) ?? []
         bookmarksAt = try c.decodeIfPresent(Int.self, forKey: .bookmarksAt) ?? 0
+        author = try c.decodeIfPresent(String.self, forKey: .author) ?? ""
+        authorId = try c.decodeIfPresent(String.self, forKey: .authorId) ?? ""
+        videoId = try c.decodeIfPresent(String.self, forKey: .videoId) ?? ""
+        sourceURL = try c.decodeIfPresent(String.self, forKey: .sourceURL) ?? ""
+        authorNote = try c.decodeIfPresent(String.self, forKey: .authorNote) ?? ""
+        authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
+        platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
         playback = try c.decodeIfPresent(APIPlayback.self, forKey: .playback)
             ?? APIPlayback(available: kind == "video", reason: nil)
@@ -544,6 +561,16 @@ struct ClipNoteClient {
             body: [
                 "bookmarks": bookmarks.map { ["t": $0.t, "note": $0.note, "by": $0.by] },
             ],
+            as: APILibraryItem.self
+        )
+    }
+
+    /// 作者备注。空字符串是合法的（等于清空），服务端会用 `authorNoteAt` 区分
+    /// 「从没写过」和「写过又删了」。
+    func saveAuthorNote(id: String, note: String) async throws -> APILibraryItem {
+        try await post(
+            "/api/v2/items/\(encode(id))/author-note",
+            body: ["note": note],
             as: APILibraryItem.self
         )
     }
@@ -1052,6 +1079,34 @@ final class LibraryStore: ObservableObject {
             log?.error("bookmarks.failed", "书签保存失败", meta: ["id": id])
             return false
         }
+    }
+
+    /// 保存作者备注。返回是否成功。
+    @discardableResult
+    func saveAuthorNote(id: String, note: String) async -> Bool {
+        guard let client else { return false }
+        do {
+            _ = try await client.saveAuthorNote(id: id, note: note)
+            await reload()
+            log?.info("author.note_saved", "作者备注已保存", meta: ["id": id])
+            return true
+        } catch {
+            log?.error("author.note_failed", "作者备注保存失败", meta: ["id": id])
+            return false
+        }
+    }
+
+    /// 截图/预览用：塞作者与原文链接。
+    func seedAuthor(id: String, author: String, authorId: String,
+                    videoId: String, note: String = "") {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].author = author
+        items[index].authorId = authorId
+        items[index].videoId = videoId
+        items[index].platform = "bilibili"
+        items[index].sourceURL = videoId.isEmpty
+            ? "" : "https://www.bilibili.com/video/\(videoId)"
+        items[index].authorNote = note
     }
 
     func loadTrash() async throws -> [APILibraryItem] {

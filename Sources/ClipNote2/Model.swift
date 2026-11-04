@@ -35,6 +35,14 @@ struct Item: Identifiable, Hashable {
     var segments: [APISegment] = []
     /// 用户自己标的时间点。和分段来源相反，展示上也必须能一眼区分。
     var bookmarks: [APIBookmark] = []
+    /// 作者与原文地址。`authorId` 可能为空，跳主页要降级成搜索。
+    var author: String = ""
+    var authorId: String = ""
+    var videoId: String = ""
+    var sourceURL: String = ""
+    var authorNote: String = ""
+    /// "bilibili" / "douyin" / ...。没有它就跳不了 App，只能开网页。
+    var platform: String = ""
     var coverURL: URL?
     /// `false` 不是错误，是「这类内容没有视频流」（笔记、图集）
     var playbackAvailable: Bool
@@ -58,6 +66,12 @@ struct Item: Identifiable, Hashable {
         self.labels = api.labels
         self.segments = api.segments
         self.bookmarks = api.bookmarks
+        self.author = api.author
+        self.authorId = api.authorId
+        self.videoId = api.videoId
+        self.sourceURL = api.sourceURL
+        self.authorNote = api.authorNote
+        self.platform = api.platform
         self.playbackAvailable = api.playback.available
         self.publishedAt = api.publishedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
@@ -88,6 +102,12 @@ struct Item: Identifiable, Hashable {
         labels: [String] = [],
         segments: [APISegment] = [],
         bookmarks: [APIBookmark] = [],
+        author: String = "",
+        authorId: String = "",
+        videoId: String = "",
+        sourceURL: String = "",
+        authorNote: String = "",
+        platform: String = "",
         coverURL: URL? = nil,
         playbackAvailable: Bool = true,
         publishedAt: Date? = nil
@@ -104,6 +124,12 @@ struct Item: Identifiable, Hashable {
         self.labels = labels
         self.segments = segments
         self.bookmarks = bookmarks
+        self.author = author
+        self.authorId = authorId
+        self.videoId = videoId
+        self.sourceURL = sourceURL
+        self.authorNote = authorNote
+        self.platform = platform
         self.coverURL = coverURL
         self.playbackAvailable = playbackAvailable
         self.publishedAt = publishedAt

@@ -113,6 +113,13 @@ struct SnapshotRoot: View {
             lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
         }
 
+        // 作者行：详情页截图要能看到头像、名字、备注入口
+        if state.hasPrefix("detail"), let id = detail?.id {
+            lib.seedAuthor(id: id, author: "SpicyTater-", authorId: "3546",
+                           videoId: "BV1Saxb6PEhv",
+                           note: "讲存储很扎实，适合看架构")
+        }
+
         // 书签：分段和旗子同时给，验的是「两种东西能不能一眼分开」
         if state == "detail-bookmarks", let id = detail?.id {
             lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
