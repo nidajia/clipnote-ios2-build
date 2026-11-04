@@ -29,54 +29,38 @@ enum PlatformLink {
 
     /// 原视频。优先 App 内打开，退到网页。
     ///
-    /// 第三种降级是给**存量数据**的：Web 端导入的条目快照里没有 bvid，也没有原链接，
-    /// 只有一个标题。这种情况下不留空白、也不藏入口——用标题搜一次，
-    /// 用户能在结果里看到那条视频。空着会让人以为功能坏了。
-    static func openVideo(_ item: Item) {
+    /// 返回 false 表示「这条没有任何直达地址」。**不再降级成搜索**：
+    /// 之前用标题去搜，标题被改过就跳到一条不相干的视频，比不跳更糟。
+    /// 拿不到就老实说拿不到，由界面去解释原因。
+    @discardableResult
+    static func openVideo(_ item: Item) -> Bool {
         if item.platform == "bilibili", !item.videoId.isEmpty {
             let id = item.videoId
             open(scheme: "bilibili://video/\(id)",
                  web: "https://www.bilibili.com/video/\(id)")
-            return
+            return true
         }
         if !item.sourceURL.isEmpty {
             open(scheme: nil, web: item.sourceURL)
-            return
+            return true
         }
-        if item.platform == "bilibili", !item.title.isEmpty {
-            let keyword = item.title.addingPercentEncoding(
-                withAllowedCharacters: .urlQueryAllowed
-            ) ?? ""
-            open(scheme: "bilibili://search?keyword=\(keyword)",
-                 web: "https://search.bilibili.com/all?keyword=\(keyword)")
-            return
-        }
-        open(scheme: nil, web: item.sourceURL.isEmpty ? nil : item.sourceURL)
+        return false
     }
 
     /// 作者主页。
     ///
-    /// 三级降级：有 mid 就进主页；只有名字就进搜索；连名字都没有就回原链接。
-    /// 藏掉入口是最差的选择——用户点了没反应会以为坏了。
-    static func openAuthor(_ item: Item) {
-        let name = item.displayAuthor
-        if item.platform == "bilibili" {
-            if !item.authorId.isEmpty {
-                let mid = item.authorId
-                open(scheme: "bilibili://space/\(mid)",
-                     web: "https://space.bilibili.com/\(mid)")
-                return
-            }
-            if !name.isEmpty {
-                let keyword = name.addingPercentEncoding(
-                    withAllowedCharacters: .urlQueryAllowed
-                ) ?? ""
-                open(scheme: "bilibili://search?keyword=\(keyword)",
-                     web: "https://search.bilibili.com/all?keyword=\(keyword)")
-                return
-            }
+    /// 只有拿到 `mid` 才跳——`bilibili://space/{mid}` 是**唯一不受改名影响**的地址。
+    /// 曾经拿不到 mid 时退到「按名字搜索」，用户反馈是对的：UP 主一改名就找不到，
+    /// 而且搜索页里第一个还不一定是同一个人。所以这条路删掉了。
+    @discardableResult
+    static func openAuthor(_ item: Item) -> Bool {
+        if item.platform == "bilibili", !item.authorId.isEmpty {
+            let mid = item.authorId
+            open(scheme: "bilibili://space/\(mid)",
+                 web: "https://space.bilibili.com/\(mid)")
+            return true
         }
-        open(scheme: nil, web: item.sourceURL.isEmpty ? nil : item.sourceURL)
+        return false
     }
 }
 

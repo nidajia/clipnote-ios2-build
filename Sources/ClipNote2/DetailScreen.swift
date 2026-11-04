@@ -291,27 +291,26 @@ struct DetailScreen: View {
         if !current.displayAuthor.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
-                    PlatformLink.openAuthor(current)
+                    // 只有拿到 mid 才跳。没有就明说原因——
+                    // 退到「按名字搜」看似友好，实际会在 UP 主改名后把人带错地方。
+                    if !PlatformLink.openAuthor(current) {
+                        notice = "这条没有作者主页链接：它是早先导入的，缺 UP 主 ID。重新导入一次这条视频就能直达。"
+                    }
                 } label: {
                     HStack(spacing: Metric.space2) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.cnBrandSoft)
-                                .frame(width: 30, height: 30)
-                            Text(String(current.displayAuthor.prefix(1)))
-                                .font(.cnChip)
-                                .foregroundStyle(Color.cnBrand)
-                        }
+                        avatarView
                         Text(current.displayAuthor)
                             .font(.cnChip)
                             .foregroundStyle(Color.cnInk)
                             .lineLimit(1)
-                        Text("主页")
-                            .font(.cnCaption)
-                            .foregroundStyle(Color.cnInk3)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.cnInk3)
+                        if !current.authorId.isEmpty {
+                            Text("主页")
+                                .font(.cnCaption)
+                                .foregroundStyle(Color.cnInk3)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.cnInk3)
+                        }
                         Spacer(minLength: 0)
                     }
                     .contentShape(Rectangle())
@@ -334,11 +333,41 @@ struct DetailScreen: View {
         }
     }
 
+    /// 头像。有地址就加载真图，没有就画首字母——
+    /// 老数据一律没有地址，空白圆圈比首字母更像「坏了」。
+    private var avatarView: some View {
+        ZStack {
+            Circle().fill(Color.cnBrandSoft)
+            if let url = URL(string: current.authorAvatar), !current.authorAvatar.isEmpty {
+                AsyncImage(url: url, transaction: Transaction(animation: nil)) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        fallbackInitial
+                    }
+                }
+                .clipShape(Circle())
+            } else {
+                fallbackInitial
+            }
+        }
+        .frame(width: 30, height: 30)
+        .clipShape(Circle())
+    }
+
+    private var fallbackInitial: some View {
+        Text(String(current.displayAuthor.prefix(1)))
+            .font(.cnChip)
+            .foregroundStyle(Color.cnBrand)
+    }
+
     @ViewBuilder
     private var videoLinkRow: some View {
         if current.platform == "bilibili" || !current.sourceURL.isEmpty {
             Button {
-                PlatformLink.openVideo(current)
+                if !PlatformLink.openVideo(current) {
+                    notice = "这条没有原始链接：它是早先导入的，缺视频 ID。重新导入一次就能直达。"
+                }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.up.right.square")

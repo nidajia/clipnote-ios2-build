@@ -41,6 +41,8 @@ struct Item: Identifiable, Hashable {
     var videoId: String = ""
     var sourceURL: String = ""
     var authorNote: String = ""
+    /// 作者头像地址。可能为空（老数据），此时界面画首字母。
+    var authorAvatar: String = ""
     /// "bilibili" / "douyin" / ...。没有它就跳不了 App，只能开网页。
     var platform: String = ""
     var coverURL: URL?
@@ -71,6 +73,7 @@ struct Item: Identifiable, Hashable {
         self.videoId = api.videoId
         self.sourceURL = api.sourceURL
         self.authorNote = api.authorNote
+        self.authorAvatar = api.authorAvatar
         self.platform = api.platform
         self.playbackAvailable = api.playback.available
         self.publishedAt = api.publishedAt > 0
@@ -107,6 +110,7 @@ struct Item: Identifiable, Hashable {
         videoId: String = "",
         sourceURL: String = "",
         authorNote: String = "",
+        authorAvatar: String = "",
         platform: String = "",
         coverURL: URL? = nil,
         playbackAvailable: Bool = true,
@@ -129,6 +133,7 @@ struct Item: Identifiable, Hashable {
         self.videoId = videoId
         self.sourceURL = sourceURL
         self.authorNote = authorNote
+        self.authorAvatar = authorAvatar
         self.platform = platform
         self.coverURL = coverURL
         self.playbackAvailable = playbackAvailable

@@ -152,6 +152,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var sourceURL: String = ""
     var authorNote: String = ""
     var authorNoteAt: Int = 0
+    var authorAvatar: String = ""
     /// "bilibili" / "douyin" / ...。跳 App 要用它选 scheme。
     var platform: String = ""
     /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
@@ -163,6 +164,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case aiSummary, keyPoints, labels, segments, segmentsAt
         case bookmarks, bookmarksAt
         case author, authorId, videoId, sourceURL, authorNote, authorNoteAt
+        case authorAvatar
     }
 
     init(
@@ -224,6 +226,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         videoId = try c.decodeIfPresent(String.self, forKey: .videoId) ?? ""
         sourceURL = try c.decodeIfPresent(String.self, forKey: .sourceURL) ?? ""
         authorNote = try c.decodeIfPresent(String.self, forKey: .authorNote) ?? ""
+        authorAvatar = try c.decodeIfPresent(String.self, forKey: .authorAvatar) ?? ""
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
@@ -1098,7 +1101,7 @@ final class LibraryStore: ObservableObject {
 
     /// 截图/预览用：塞作者与原文链接。
     func seedAuthor(id: String, author: String, authorId: String,
-                    videoId: String, note: String = "") {
+                    videoId: String, note: String = "", avatar: String = "") {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].author = author
         items[index].authorId = authorId
@@ -1107,6 +1110,7 @@ final class LibraryStore: ObservableObject {
         items[index].sourceURL = videoId.isEmpty
             ? "" : "https://www.bilibili.com/video/\(videoId)"
         items[index].authorNote = note
+        items[index].authorAvatar = avatar
     }
 
     func loadTrash() async throws -> [APILibraryItem] {
