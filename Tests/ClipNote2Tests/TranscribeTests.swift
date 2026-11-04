@@ -18,7 +18,7 @@ final class TranscribeTests: XCTestCase {
             SpeechChunk(t: 0.8, duration: 0.4, text: "聊聊"),
         ])
         XCTAssertEqual(lines.count, 1)
-        XCTAssertEqual(lines.first?.text, "我们今天聊聊")
+        XCTAssertEqual(lines.first?.text, "今天我们聊聊")
         XCTAssertEqual(lines.first?.t, 0)
     }
 
