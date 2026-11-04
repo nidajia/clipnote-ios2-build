@@ -60,6 +60,7 @@ struct DetailScreen: View {
     @State private var showNote = false
     @State private var showOutline = false
     @State private var showInfographic = false
+    @State private var showTranscribe = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -248,6 +249,16 @@ struct DetailScreen: View {
         // 长图的入口在摘要卡里（见 `infographicButton`），这里只负责呈现。
         .sheet(isPresented: $showInfographic) {
             InfographicSheet(item: current)
+        }
+        // 本机转写：入口在「没有字幕」那一态（见 `segmentEntry`）。
+        // 转写完立刻拿文字去切分段——用户点这一步的意图本来就是「想按段落读」，
+        // 再让他回去点第二次没有必要。
+        .sheet(isPresented: $showTranscribe) {
+            TranscribeSheet(item: current) { _ in
+                segmentState = .idle
+                Task { await generateSegments(force: true) }
+            }
+            .presentationDetents([.medium, .large])
         }
         .onDisappear {
             // 离开这一页必须收声，并记住看到哪儿。
@@ -1081,13 +1092,26 @@ struct DetailScreen: View {
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("重试") {
-                    segmentState = .idle
-                    Task { await generateSegments() }
+
+                // 「没有字幕」不是死路：音轨还在，系统听写能出文字。
+                // 所以这里给两条路——重试（等平台补字幕）和本机转写（自己动手）。
+                HStack(spacing: Metric.space4) {
+                    Button("重试") {
+                        segmentState = .idle
+                        Task { await generateSegments() }
+                    }
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnBrand)
+                    .buttonStyle(.plain)
+
+                    Button("本机转写") {
+                        showTranscribe = true
+                    }
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnBrand)
+                    .buttonStyle(.plain)
                 }
-                .font(.cnCaption)
-                .foregroundStyle(Color.cnBrand)
-                .buttonStyle(.plain)
+                .padding(.top, 2)
             }
 
         case .failed(let message):
@@ -1106,21 +1130,32 @@ struct DetailScreen: View {
             }
 
         case .idle:
-            Button {
-                Task { await generateSegments() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "list.number")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("按段落读")
-                        .font(.cnChip)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    Task { await generateSegments() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "list.number")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("按段落读")
+                            .font(.cnChip)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.cnBrand)
                 }
-                .foregroundStyle(Color.cnBrand)
+                .buttonStyle(.plain)
+
+                // 抖音/小红书本来就可能没字幕。等失败一次再给入口等于让用户先撞墙，
+                // 所以第一次进来就把这条路摆出来，用弱化的样式，不抢主按钮。
+                Button("没有字幕？用本机转写") {
+                    showTranscribe = true
+                }
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnInk3)
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
     }
 
@@ -1183,26 +1218,46 @@ struct DetailScreen: View {
         segmentState = .running
         do {
             let transcript = try await library.transcript(for: current.id)
-            guard transcript.source == "subtitle", !transcript.lines.isEmpty else {
+
+            // 字幕优先：服务端解析好的那份秒级可得。
+            // 没有就退到**本机转写**那份——抖音/小红书本来就没字幕，
+            // 而它们的音轨就躺在视频里，系统听写能出文字。
+            // 本机这份存在 Documents 下，服务端同步覆盖不到，所以能一直复用。
+            var lines: [APITranscriptLine]
+            var duration: Int
+            var subtitleOnlyNotice: String?
+
+            if transcript.source == "subtitle", !transcript.lines.isEmpty {
+                lines = transcript.lines
+                duration = transcript.durationSeconds
+                // 字幕只覆盖前半段时，模型没见过结尾，只能按见到的东西收尾。
+                // 与其让它假装讲完了，不如把这件事写在卡片上。
+                if transcript.partial {
+                    let minutes = max(1, transcript.lines.last.map { $0.t } ?? 0) / 60
+                    subtitleOnlyNotice = "字幕只覆盖到第 \(minutes) 分钟，后面的内容没有算进去。"
+                }
+            } else if let local = LocalTranscriptStore.shared.load(id: current.id),
+                      !local.lines.isEmpty {
+                lines = local.apiLines
+                duration = local.durationSeconds
+                if local.coverage > 0, local.coverage < 0.8 {
+                    subtitleOnlyNotice = "本机转写只覆盖到 \(Self.mmss(local.lastT))，后面没有算进去。"
+                }
+            } else {
                 // 服务端已经解释了为什么拿不到，照抄比另编一句准
                 segmentState = .blocked(
                     transcript.reason.isEmpty ? "这条没有可用字幕。" : transcript.reason
                 )
                 return
             }
+
             let outcome = try await Segmenter(config: config).segments(
                 title: current.title,
-                lines: transcript.lines,
-                durationSeconds: transcript.durationSeconds
+                lines: lines,
+                durationSeconds: duration
             )
-            logSegmentQuality(outcome, id: current.id,
-                              duration: transcript.durationSeconds)
-            // 字幕只覆盖前半段时，模型没见过结尾，只能按见到的东西收尾。
-            // 与其让它假装讲完了，不如把这件事写在卡片上。
-            if transcript.partial {
-                let minutes = max(1, transcript.lines.last.map { $0.t } ?? 0) / 60
-                notice = "字幕只覆盖到第 \(minutes) 分钟，后面的内容没有算进去。"
-            }
+            logSegmentQuality(outcome, id: current.id, duration: duration)
+            if let subtitleOnlyNotice { notice = subtitleOnlyNotice }
             let saved = await library.saveSegments(
                 id: current.id, segments: outcome.segments, by: config.model
             )

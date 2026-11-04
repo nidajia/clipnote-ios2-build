@@ -211,6 +211,16 @@ struct SnapshotRoot: View {
                 } else {
                     Color.cnBg
                 }
+            } else if state.hasPrefix("transcribe") {
+                // 本机转写面板同理：它是 sheet，只能作为根呈现。
+                // 两态各一张——「转写中」验进度区，「完成」验行列表和覆盖率提示。
+                // 注意这两种都是**预览态**：模拟器上 supportsOnDeviceRecognition
+                // 一定是 false，真跑只会停在「这台设备暂时不行」，拍不到这两种。
+                if let item = library.items.first {
+                    TranscribeSheet(item: item, preview: transcribePreview(item))
+                } else {
+                    Color.cnBg
+                }
             } else if state == "tags" {
                 NavigationStack { TagsScreen() }
             } else if state.hasPrefix("onboarding") {
@@ -296,6 +306,40 @@ struct SnapshotRoot: View {
             expiresAt: 0
         ))
     }
+
+    /// 转写面板要停在哪一态。文案照真跑出来的样子写：有停顿、有口语。
+    private func transcribePreview(_ item: Item) -> TranscribeSheet.Stage {
+        if state == "transcribe-running" {
+            return .transcribing(
+                tail: "…所以你看这个缺口，它不是一年形成的，是一轮一轮融资把它推上去的",
+                chars: 218
+            )
+        }
+        return .done(LocalTranscript(
+            itemId: item.id,
+            lines: SnapshotRoot.sampleTranscriptLines,
+            // 360 秒：样本最后一行在 336，覆盖率 0.93，
+            // 于是「只覆盖到…」那句不会出现——这才是正常跑完的样子。
+            // 覆盖率偏低的提示由单测覆盖，不在截图上占一张。
+            durationSeconds: 360,
+            createdAt: Date(timeIntervalSince1970: 1_793_400_000),
+            locale: "zh-CN"
+        ))
+    }
+
+    /// 本机转写的样本。刻意保留口语和停顿（「对」「就是」），
+    /// 因为截图要验的是「一行念完是一句话」，不是漂亮的书面语。
+    static let sampleTranscriptLines: [TranscriptLine] = [
+        TranscriptLine(t: 0, text: "这条片子我想聊的不是涨跌，而是一个更基础的问题。"),
+        TranscriptLine(t: 14, text: "就是现在这些公司的估值，和它们真正收到的钱之间，差了多少。"),
+        TranscriptLine(t: 41, text: "我把两条线摆在一起看，缺口是一眼可见的，而且它已经连续扩大了六个季度。"),
+        TranscriptLine(t: 78, text: "有人说这和两千年那次一模一样。我觉得像的地方确实很多，比如说叙事驱动定价。"),
+        TranscriptLine(t: 132, text: "但不一样的地方也很硬：这次的基础设施是真的在被消耗掉的。"),
+        TranscriptLine(t: 178, text: "算力和电费都是有账可查的支出，这部分收入对得上，不是纯粹的想象。"),
+        TranscriptLine(t: 245, text: "真正容易忽略的是折旧。芯片按三年折，收入回收要七年，这个错配藏在现金流里。"),
+        TranscriptLine(t: 336, text: "所以崩不崩不是重点。重点是估值回落的时候，谁能活下来。"),
+    ]
+
 
     /// 分段样本。9 段是实测出来的段数（10 分钟的视频），
     /// 用它做截图才知道「真到 9 段时会不会挤」。

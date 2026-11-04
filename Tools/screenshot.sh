@@ -99,6 +99,10 @@ shot detail-bookmarks   detail-bookmarks   light
 shot outline            outline            light
 shot segments           segments           light
 shot infographic        infographic        light
+# 本机转写面板（sheet，只能作为根呈现）。两态：转写中 / 完成。
+# 模拟器上真跑只会停在「这台设备暂时不行」，所以这两张走 preview 注入。
+shot transcribe         transcribe         light
+shot transcribe-running transcribe-running light
 
 # 画布 06。第 4 个参数让脚本把它转正（见 upright_if_sideways）
 shot player-landscape player-landscape light landscape

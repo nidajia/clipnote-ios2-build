@@ -46,6 +46,9 @@ targets:
         # 没有这一行，装到手机上就是个空白方块
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # 没有这一句，第一次调 SFSpeechRecognizer 会**直接崩**（不是报错，是闪退），
+        # 而且只在那台真机上复现——模拟器上根本走不到这一步。
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "用系统的本机听写把视频音轨转成文字，以便生成分段。音频不会离开这台设备。"
         # 这里放开横屏是**必要但不充分**的：真正决定「现在能不能转」的是
         # AppDelegate.supportedInterfaceOrientationsFor，它平时只返回竖屏，
         # 只有全屏播放页在屏幕上时才放开。Info.plist 里不写横屏，
