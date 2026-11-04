@@ -98,6 +98,7 @@ shot detail-segments    detail-segments    light
 shot detail-bookmarks   detail-bookmarks   light
 shot outline            outline            light
 shot segments           segments           light
+shot infographic        infographic        light
 
 # 画布 06。第 4 个参数让脚本把它转正（见 upright_if_sideways）
 shot player-landscape player-landscape light landscape

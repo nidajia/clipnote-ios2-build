@@ -113,6 +113,25 @@ struct SnapshotRoot: View {
             lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
         }
 
+        // 信息图：摘要 + 9 段一起给。9 段是实测的段数上限一带，
+        // 用它才知道长图会到多高、分段区会不会挤成一团。
+        if state == "infographic", let id = lib.items.first?.id {
+            lib.seedSummary(
+                id: id,
+                summary: "这条片子讨论的是：现在的 AI 热潮与 2000 年互联网泡沫，究竟哪里像、哪里不一样。"
+                    + "结论不是「一定会崩」，而是估值与收入之间的缺口比当年更难解释。",
+                keyPoints: [
+                    "估值跑在收入前面，且集中在少数几家公司",
+                    "与 2000 年不同：这次的基础设施是真实在用的",
+                    "资本开支的回收周期比市场预期更长",
+                ],
+                labels: ["AI", "投资", "互联网史"]
+            )
+            lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
+            lib.seedAuthor(id: id, author: "幽州-节度使", authorId: "", videoId: "",
+                           note: "")
+        }
+
         // 作者行：详情页截图要能看到头像、名字、备注入口
         if state.hasPrefix("detail"), let id = detail?.id {
             // 故意把 author/videoId 留空，模拟线上那 4 条存量数据：
@@ -180,6 +199,15 @@ struct SnapshotRoot: View {
             } else if state == "segments" {
                 if let item = library.items.first {
                     NavigationStack { SegmentsScreen(item: item) }
+                } else {
+                    Color.cnBg
+                }
+            } else if state == "infographic" {
+                // 长图页是模态呈现的，截图没法点开，直接作为根呈现。
+                // 它验的是两件事：首屏那截排版对不对，以及渲染有没有真的产出图像
+                // （`.task` 里跑的就是线上那条渲染路径）。
+                if let item = library.items.first {
+                    InfographicSheet(item: item)
                 } else {
                     Color.cnBg
                 }

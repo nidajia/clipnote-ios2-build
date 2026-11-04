@@ -59,6 +59,7 @@ struct DetailScreen: View {
     @State private var editingAuthorNote = false
     @State private var showNote = false
     @State private var showOutline = false
+    @State private var showInfographic = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -243,6 +244,10 @@ struct DetailScreen: View {
         }
         .sheet(isPresented: $showAISettings) {
             NavigationStack { AISettingsScreen() }
+        }
+        // 长图的入口在摘要卡里（见 `infographicButton`），这里只负责呈现。
+        .sheet(isPresented: $showInfographic) {
+            InfographicSheet(item: current)
         }
         .onDisappear {
             // 离开这一页必须收声，并记住看到哪儿。
@@ -609,6 +614,31 @@ struct DetailScreen: View {
         .accessibilityLabel("用当前模型重新生成摘要")
     }
 
+    /// 摘要卡角上那个「长图」。
+    ///
+    /// 为什么和「重写」并排：两者是同一层的操作——都是对**这份摘要**做的事。
+    /// 放进导航栏会和「笔记」抢位置（那里已经有一个常驻入口）；
+    /// 放到卡片底部则会被推到折叠线以下——详情页首屏到摘要卡标题行就到头了，
+    /// 这条是踩过的坑：「排在简介之后等于用户看不见」。
+    private var infographicButton: some View {
+        Button {
+            showInfographic = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.text.image")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("长图")
+                    .font(.cnCaption)
+            }
+            .foregroundStyle(Color.cnBrand)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.cnBrandSoft, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("把摘要和分段排成一页长图")
+    }
+
     /// 用**当前配置的模型**把这条的 AI 内容重做一遍。
     ///
     /// 顺序有讲究：先摘要再分段。摘要是用户点这个按钮想看的，
@@ -831,6 +861,7 @@ struct DetailScreen: View {
                 Text("AI 摘要")
                     .font(.cnCaption)
                 Spacer(minLength: 0)
+                infographicButton
                 refreshButton
             }
             .foregroundStyle(Color.cnBrand)
