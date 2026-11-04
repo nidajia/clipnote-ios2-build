@@ -1091,6 +1091,12 @@ final class LibraryStore: ObservableObject {
         items[index].labels = labels
     }
 
+    /// 截图/预览用：塞脑图。
+    func seedOutline(id: String, outline: [OutlineNode]) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].outline = outline
+    }
+
     /// 截图/预览用：塞笔记。
     func seedNote(id: String, note: String) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }

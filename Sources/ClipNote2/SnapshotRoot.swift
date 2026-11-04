@@ -122,6 +122,18 @@ struct SnapshotRoot: View {
             lib.seedNote(id: id, note: "他的三组对照实验部分可以直接套到我们下季度的容量评估里。\n另外开头的那个提问方式值得学。")
         }
 
+        // 脑图：塞一棵三层树。注意分支名刻意都不带时间词——
+        // 截图同时也在验提示词的目标形态（按概念归类，不是按时间顺序）。
+        if state == "outline", let id = lib.items.first?.id {
+            lib.seedSummary(
+                id: id,
+                summary: "这条片子讨论的是：现在的 AI 热潮与 2000 年互联网泡沫，究竟哪里像、哪里不一样。",
+                keyPoints: ["估值跑在收入前面"],
+                labels: ["AI", "投资"]
+            )
+            lib.seedOutline(id: id, outline: SnapshotRoot.sampleOutline)
+        }
+
         // 书签：分段和旗子同时给，验的是「两种东西能不能一眼分开」
         if state == "detail-bookmarks", let id = detail?.id {
             lib.seedSegments(id: id, segments: SnapshotRoot.sampleSegments)
@@ -158,6 +170,12 @@ struct SnapshotRoot: View {
                         selected: .constant("Qwen/Qwen2.5-7B-Instruct"),
                         initialModels: SnapshotRoot.sampleModels
                     )
+                }
+            } else if state == "outline" {
+                if let item = library.items.first {
+                    NavigationStack { OutlineScreen(item: item) }
+                } else {
+                    Color.cnBg
                 }
             } else if state == "segments" {
                 if let item = library.items.first {
@@ -285,6 +303,23 @@ struct SnapshotRoot: View {
         (5, ["效率"]),
         (6, ["产品", "心理"]),
         (7, ["效率", "健康"]),
+    ]
+
+    /// 脑图样本：三个分支，每个 2–3 个叶子。分支名都是概念短语，不含时间词。
+    static let sampleOutline: [OutlineNode] = [
+        OutlineNode(title: "泡沫形成的条件", note: "", children: [
+            OutlineNode(title: "廉价资本", note: "长期低利率把资金推进高风险资产"),
+            OutlineNode(title: "叙事替代盈利", note: "估值锚点从利润转向想象空间"),
+            OutlineNode(title: "退出通道顺畅", note: "并购与上市让早期资金顺利退出"),
+        ]),
+        OutlineNode(title: "这次不一样的地方", note: "", children: [
+            OutlineNode(title: "基础设施真在用", note: "算力与云是实际支出现金流的"),
+            OutlineNode(title: "头部集中度更高", note: "缺口集中在少数几家公司"),
+        ]),
+        OutlineNode(title: "被忽略的风险", note: "", children: [
+            OutlineNode(title: "折旧周期错配", note: "芯片折旧 3 年，收入回收 7 年"),
+            OutlineNode(title: "定价权不在应用层", note: ""),
+        ]),
     ]
 
     /// 书签样本：故意放得很稀（3 个），因为真实使用里人不会标 9 个点。
