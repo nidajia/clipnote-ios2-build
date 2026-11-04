@@ -162,7 +162,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case summary, cover, playback, publishedAt, source, deletedAt
         case aiSummary, keyPoints, labels, segments, segmentsAt
         case bookmarks, bookmarksAt
-        case author, authorId, videoId, sourceURL, authorNote, authorNoteAt, source
+        case author, authorId, videoId, sourceURL, authorNote, authorNoteAt
     }
 
     init(
