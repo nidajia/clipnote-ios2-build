@@ -75,7 +75,6 @@ struct APIBookmark: Decodable, Equatable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         t = try c.decodeIfPresent(Int.self, forKey: .t) ?? 0
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
-        outline = try c.decodeIfPresent([OutlineNode].self, forKey: .outline) ?? []
         by = try c.decodeIfPresent(String.self, forKey: .by) ?? "user"
     }
 }
