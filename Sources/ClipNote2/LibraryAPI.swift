@@ -75,6 +75,7 @@ struct APIBookmark: Decodable, Equatable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         t = try c.decodeIfPresent(Int.self, forKey: .t) ?? 0
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        outline = try c.decodeIfPresent([OutlineNode].self, forKey: .outline) ?? []
         by = try c.decodeIfPresent(String.self, forKey: .by) ?? "user"
     }
 }
@@ -156,6 +157,9 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     /// 我的笔记。详情页只露预览，编辑在独立页。
     var note: String = ""
     var noteAt: Int = 0
+    /// AI 脑图。树形，服务端限 3 层 / 40 节点。
+    var outline: [OutlineNode] = []
+    var outlineAt: Int = 0
     /// "bilibili" / "douyin" / ...。跳 App 要用它选 scheme。
     var platform: String = ""
     /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
@@ -167,7 +171,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case aiSummary, keyPoints, labels, segments, segmentsAt
         case bookmarks, bookmarksAt
         case author, authorId, videoId, sourceURL, authorNote, authorNoteAt
-        case authorAvatar, note, noteAt
+        case authorAvatar, note, noteAt, outline, outlineAt
     }
 
     init(
@@ -231,6 +235,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         authorNote = try c.decodeIfPresent(String.self, forKey: .authorNote) ?? ""
         authorAvatar = try c.decodeIfPresent(String.self, forKey: .authorAvatar) ?? ""
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        outline = try c.decodeIfPresent([OutlineNode].self, forKey: .outline) ?? []
         noteAt = try c.decodeIfPresent(Int.self, forKey: .noteAt) ?? 0
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
@@ -587,6 +592,21 @@ struct ClipNoteClient {
     func saveNote(id: String, note: String) async throws -> APILibraryItem {
         try await post("/api/v2/items/\(encode(id))/note",
                        body: ["note": note], as: APILibraryItem.self)
+    }
+
+    /// 保存脑图。
+    func saveOutline(id: String, outline: [OutlineNode]) async throws -> APILibraryItem {
+        // 手写编码：OutlineNode 是 Decodable-only（只需要读服务端的），
+        // 为了一个写接口给它加 Encodable 会连带影响所有解码路径。
+        let encoded = outline.map(Self.encodeNode)
+        return try await post("/api/v2/items/\(encode(id))/outline",
+                              body: ["outline": encoded], as: APILibraryItem.self)
+    }
+
+    static func encodeNode(_ node: OutlineNode) -> [String: Any] {
+        ["title": node.title,
+         "note": node.note,
+         "children": node.children.map(encodeNode)]
     }
 
     /// 回收站列表
@@ -1143,6 +1163,21 @@ final class LibraryStore: ObservableObject {
             return true
         } catch {
             log?.error("note.failed", "笔记保存失败", meta: ["id": id])
+            return false
+        }
+    }
+
+    /// 保存脑图。返回是否成功。
+    @discardableResult
+    func saveOutline(id: String, outline: [OutlineNode]) async -> Bool {
+        guard let client else { return false }
+        do {
+            _ = try await client.saveOutline(id: id, outline: outline)
+            await reload()
+            log?.info("outline.saved", "脑图已保存", meta: ["id": id])
+            return true
+        } catch {
+            log?.error("outline.failed", "脑图保存失败", meta: ["id": id])
             return false
         }
     }

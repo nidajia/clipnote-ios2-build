@@ -80,6 +80,40 @@ final class TagsTests: XCTestCase {
         XCTAssertThrowsError(try BookmarkSuggestor.parse(#"{"bookmarks":[]}"#, transcript: [line(0)]))
     }
 
+    // MARK: - 脑图
+
+    func testOutlineParsesNested() throws {
+        let raw = #"{"outline":[{"title":"成因","note":"","children":[{"title":"资本","note":"低利率"}]}]}"#
+        let nodes = try Outliner.parse(raw)
+        XCTAssertEqual(nodes.count, 1)
+        XCTAssertEqual(nodes[0].title, "成因")
+        XCTAssertEqual(nodes[0].children.first?.title, "资本")
+        XCTAssertEqual(nodes[0].children.first?.note, "低利率")
+    }
+
+    func testOutlineCapsWidth() throws {
+        let items = (0..<12).map { #"{"title":"b\#($0)"}"# }.joined(separator: ",")
+        let nodes = try Outliner.parse(#"{"outline":[\#(items)]}"#)
+        XCTAssertLessThanOrEqual(nodes.count, 6)
+    }
+
+    func testOutlineDropsEmptyTitle() throws {
+        let raw = #"{"outline":[{"title":"  "},{"title":"有效"}]}"#
+        let nodes = try Outliner.parse(raw)
+        XCTAssertEqual(nodes.map(\.title), ["有效"])
+    }
+
+    func testOutlineRejectsGarbage() {
+        XCTAssertThrowsError(try Outliner.parse("我不想画图"))
+        XCTAssertThrowsError(try Outliner.parse(#"{"outline":[]}"#))
+    }
+
+    func testOutlineMarkdown() {
+        let nodes = [OutlineNode(title: "主题", children: [OutlineNode(title: "子", note: "说明")])]
+        let md = nodes.map { $0.markdown() }.joined()
+        XCTAssertEqual(md, "- 主题\n  - 子：说明\n")
+    }
+
     // MARK: - 词表
 
     func testVocabularyIsClosedAndUnique() {

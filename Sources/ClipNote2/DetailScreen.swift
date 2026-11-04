@@ -58,6 +58,7 @@ struct DetailScreen: View {
     @State private var showSuggest = false
     @State private var editingAuthorNote = false
     @State private var showNote = false
+    @State private var showOutline = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -152,6 +153,8 @@ struct DetailScreen: View {
 
                     aiSection
 
+                    outlineRow
+
                     if showsSummary {
                         Rectangle()
                             .fill(Color.cnHairline)
@@ -228,6 +231,9 @@ struct DetailScreen: View {
             await prefetch()
             await maybeSummarize()
             await maybeLoadSegments()
+        }
+        .navigationDestination(isPresented: $showOutline) {
+            OutlineScreen(item: current)
         }
         .navigationDestination(isPresented: $showNote) {
             NoteScreen(item: current)
@@ -1369,6 +1375,32 @@ struct DetailScreen: View {
     }
 
     // MARK: - 笔记
+
+    /// 脑图入口。放在摘要卡下面：它是「对摘要的结构化」，
+    /// 和摘要属于同一层东西，不该跑到底部去。
+    @ViewBuilder
+    private var outlineRow: some View {
+        if !current.aiSummary.isEmpty || !current.segments.isEmpty {
+            Button {
+                showOutline = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("AI 脑图")
+                        .font(.cnCaption)
+                    Spacer(minLength: 0)
+                    Text(current.outline.isEmpty ? "生成" : "\(current.outline.count) 个分支")
+                        .font(.cnCaption)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Color.cnInk3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
 
     /// 笔记入口。有内容就露三行预览，没有就一行淡入口。
     ///
