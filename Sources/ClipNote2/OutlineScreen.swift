@@ -30,6 +30,8 @@ struct OutlineScreen: View {
         let depth: Int
         let hasChildren: Bool
         let expanded: Bool
+        /// 是否为同级最后一个。连接线据此在末项处收口，避免竖线一路悬空到页脚。
+        let isLast: Bool
     }
 
     private var rows: [Row] {
@@ -44,7 +46,8 @@ struct OutlineScreen: View {
             let path = parent.isEmpty ? "\(index)" : "\(parent).\(index)"
             out.append(Row(id: path, node: node, depth: depth,
                            hasChildren: !node.children.isEmpty,
-                           expanded: !collapsed.contains(path)))
+                           expanded: !collapsed.contains(path),
+                           isLast: index == nodes.count - 1))
             if !collapsed.contains(path) {
                 out += flatten(node.children, parent: path, depth: depth + 1,
                                collapsed: collapsed)
@@ -117,12 +120,15 @@ struct OutlineScreen: View {
         }
     }
 
+    /// 每层缩进。16pt 时父子只靠字号区分，"从属"不是视觉事实而要靠读；
+    /// 22pt 才让缩进本身成立。
+    private let indentStep: CGFloat = 22
+    /// 折叠箭头宽 14pt，连接线落在它的中心列上，于是竖线能从父项直贯子项。
+    private let markerWidth: CGFloat = 14
+
     @ViewBuilder
     private func rowView(_ row: Row) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            // 缩进用固定宽度，不用 Spacer：这样每一层的竖线能对齐
-            Color.clear.frame(width: CGFloat(row.depth) * 16, height: 1)
-
             if row.hasChildren {
                 Button {
                     if collapsed.contains(row.id) {
@@ -134,14 +140,14 @@ struct OutlineScreen: View {
                     Image(systemName: row.expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Color.cnBrand)
-                        .frame(width: 14, height: 18)
+                        .frame(width: markerWidth, height: 18)
                 }
                 .buttonStyle(.plain)
             } else {
                 Circle()
                     .fill(Color.cnHairline)
                     .frame(width: 4, height: 4)
-                    .frame(width: 14, height: 18)
+                    .frame(width: markerWidth, height: 18)
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -159,7 +165,21 @@ struct OutlineScreen: View {
             }
             Spacer(minLength: 0)
         }
+        .padding(.leading, CGFloat(row.depth) * indentStep)
         .padding(.vertical, row.depth == 0 ? 8 : 5)
+        // 连接线画在背景层：它拿到的正是整行高度（含上下内边距），
+        // 相邻兄弟行首尾相接就成了一条连续的竖脊，不会断成虚线。
+        .background(alignment: .topLeading) {
+            if row.depth > 0 {
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(Color.cnInk3.opacity(0.30))
+                        .frame(width: 1,
+                               height: row.isLast ? geo.size.height * 0.52 : geo.size.height)
+                        .offset(x: CGFloat(row.depth - 1) * indentStep + markerWidth / 2)
+                }
+            }
+        }
     }
 
     private func copyMarkdown() {
