@@ -12,7 +12,7 @@ struct TranscriptLine: Codable, Equatable {
 }
 
 /// 本机转写的结果。落盘在 Documents/local-transcripts，按条目 id 归位。
-struct LocalTranscript: Equatable {
+struct LocalTranscript: Codable, Equatable {
     var itemId: String
     var lines: [TranscriptLine]
     var durationSeconds: Int
