@@ -115,28 +115,6 @@ final class TagsTests: XCTestCase {
         XCTAssertEqual(md, "- 主题\n  - 子：说明\n")
     }
 
-    // MARK: - 信息图缩放
-
-    func testInfographicScaleShortContentIsCrisp() {
-        // 短内容（约 800pt 高）用满 3x
-        XCTAssertEqual(InfographicRenderer.scale(forHeight: 800), 3, accuracy: 0.001)
-    }
-
-    func testInfographicScaleDropsForLongContent() {
-        // 30 段的长图约 3000pt，3x 会超预算，必须降下来
-        let scale = InfographicRenderer.scale(forHeight: 3000)
-        XCTAssertLessThan(scale, 3)
-        XCTAssertGreaterThanOrEqual(scale, 1.5)
-        // 降下来的目的：总像素要在预算内
-        let pixels = InfographicCard.width * 3000 * scale * scale
-        XCTAssertLessThanOrEqual(pixels, InfographicRenderer.pixelBudget * 1.01)
-    }
-
-    func testInfographicScaleNeverBlursBelowFloor() {
-        // 极端超长也不低于 1.5，宁可截内容也不要交付糊图
-        XCTAssertEqual(InfographicRenderer.scale(forHeight: 100_000), 1.5, accuracy: 0.001)
-    }
-
     // MARK: - 词表
 
     func testVocabularyIsClosedAndUnique() {

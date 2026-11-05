@@ -42,6 +42,25 @@ final class InfographicTests: XCTestCase {
                height: image.size.height * image.scale)
     }
 
+    // MARK: - 缩放策略
+
+    func testScaleShortContentIsCrisp() {
+        XCTAssertEqual(InfographicRenderer.scale(forHeight: 800), 3, accuracy: 0.001)
+    }
+
+    func testScaleDropsForLongContent() {
+        // 30 段约 3000pt 高，3x 会超像素预算，必须降下来
+        let scale = InfographicRenderer.scale(forHeight: 3000)
+        XCTAssertLessThan(scale, 3)
+        XCTAssertGreaterThanOrEqual(scale, 1.5)
+        let pixels = InfographicCard.width * 3000 * scale * scale
+        XCTAssertLessThanOrEqual(pixels, InfographicRenderer.pixelBudget * 1.01)
+    }
+
+    func testScaleNeverBlursBelowFloor() {
+        XCTAssertEqual(InfographicRenderer.scale(forHeight: 100_000), 1.5, accuracy: 0.001)
+    }
+
     // MARK: - 生产线
 
     func testRendererProducesLongImage() throws {
@@ -52,8 +71,10 @@ final class InfographicTests: XCTestCase {
         )
 
         let size = pixels(image)
-        XCTAssertEqual(size.width, InfographicCard.width * InfographicRenderer.scale,
-                       accuracy: 1, "宽度必须锁在 390pt×3x，否则分享出去的图会被缩放得糊")
+        // scale 现在随内容高度变化，宽度断言应跟实际选中的 scale 走；
+        // 要验的是「宽度锁在版心、没有横向留白」，不是某个固定倍数。
+        XCTAssertEqual(size.width, InfographicCard.width * image.scale,
+                       accuracy: 1, "宽度必须锁在版心宽度，否则分享出去的图会被缩放得糊")
         XCTAssertGreaterThan(size.height, size.width * 1.2,
                              "9 段内容排下来还不到 1.2 倍宽，说明高度塌了或分段没渲染")
 
