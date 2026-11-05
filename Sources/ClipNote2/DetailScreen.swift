@@ -59,6 +59,7 @@ struct DetailScreen: View {
     @State private var editingAuthorNote = false
     @State private var showNote = false
     @State private var showOutline = false
+    @State private var showRelink = false
     @State private var showInfographic = false
     @State private var showTranscribe = false
     @State private var notice: String?
@@ -276,6 +277,11 @@ struct DetailScreen: View {
             }
             timeObserver = nil
         }
+        .sheet(isPresented: $showRelink) {
+            RelinkSheet(item: current) {
+                notice = "链接补上了，作者主页和原视频现在能直达。"
+            }
+        }
         .sheet(isPresented: $editingAuthorNote) {
             AuthorNoteSheet(
                 author: current.author,
@@ -407,21 +413,28 @@ struct DetailScreen: View {
     @ViewBuilder
     private var videoLinkRow: some View {
         if current.platform == "bilibili" || !current.sourceURL.isEmpty {
+            // 有地址就「打开」，没地址就「补上」——同一个位置，两种语义。
+            // 之前没地址时只弹一句「重新导入一次」，等于把活推回给用户。
+            let hasLink = !current.videoId.isEmpty || !current.sourceURL.isEmpty
             Button {
-                if !PlatformLink.openVideo(current) {
-                    notice = "这条没有原始链接：它是早先导入的，缺视频 ID。重新导入一次就能直达。"
+                if hasLink {
+                    if !PlatformLink.openVideo(current) {
+                        showRelink = true
+                    }
+                } else {
+                    showRelink = true
                 }
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "arrow.up.right.square")
+                    Image(systemName: hasLink ? "arrow.up.right.square" : "link.badge.plus")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("原视频")
+                    Text(hasLink ? "原视频" : "补原始链接")
                         .font(.cnCaption)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                 }
-                .foregroundStyle(Color.cnInk3)
+                .foregroundStyle(hasLink ? Color.cnInk3 : Color.cnBrand)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

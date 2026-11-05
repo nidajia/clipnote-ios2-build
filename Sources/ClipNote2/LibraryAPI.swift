@@ -608,6 +608,15 @@ struct ClipNoteClient {
          "children": node.children.map(encodeNode)]
     }
 
+    /// 给老条目补原始链接：解析 URL、核对标题后回填 bvid 与作者 id。
+    ///
+    /// 服务端会在标题不匹配时返回 409，`displayMessage` 会把那句话原样带上来——
+    /// 用户需要看到「链接里是 X，和这条不是同一个视频」，而不是一句「失败」。
+    func relink(id: String, url: String) async throws -> APILibraryItem {
+        try await post("/api/v2/items/\(encode(id))/relink",
+                       body: ["url": url], as: APILibraryItem.self)
+    }
+
     /// 回收站列表
     func trash() async throws -> APITrash {
         try await get("/api/v2/trash", as: APITrash.self)
@@ -1184,6 +1193,22 @@ final class LibraryStore: ObservableObject {
         } catch {
             log?.error("outline.failed", "脑图保存失败", meta: ["id": id])
             return false
+        }
+    }
+
+    /// 补链接。成功返回 nil，失败返回给人看的一句话。
+    func relink(id: String, url: String) async -> String? {
+        guard let client else { return "还没有连上服务端。" }
+        do {
+            _ = try await client.relink(id: id, url: url)
+            await reload()
+            log?.info("link.relinked", "补上原始链接", meta: ["id": id])
+            return nil
+        } catch let failure as ClipNoteClient.Failure {
+            log?.error("link.relink_failed", failure.displayMessage, meta: ["id": id])
+            return failure.displayMessage
+        } catch {
+            return error.localizedDescription
         }
     }
 
