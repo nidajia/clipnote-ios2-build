@@ -6,6 +6,7 @@ import XCTest
 /// 这份规则和服务端 `v2_tags_payload` 必须一致（排除回收站、同条内去重、
 /// 次数倒序、同次数按名字），否则「标签页写 5 条、点进去 4 条」。
 /// 两边各钉一份测试，是为了改一边时另一边会红。
+@MainActor
 final class TagsTests: XCTestCase {
 
     private func item(_ id: String, _ labels: [String]) -> Item {
@@ -112,6 +113,28 @@ final class TagsTests: XCTestCase {
         let nodes = [OutlineNode(title: "主题", children: [OutlineNode(title: "子", note: "说明")])]
         let md = nodes.map { $0.markdown() }.joined()
         XCTAssertEqual(md, "- 主题\n  - 子：说明\n")
+    }
+
+    // MARK: - 信息图缩放
+
+    func testInfographicScaleShortContentIsCrisp() {
+        // 短内容（约 800pt 高）用满 3x
+        XCTAssertEqual(InfographicRenderer.scale(forHeight: 800), 3, accuracy: 0.001)
+    }
+
+    func testInfographicScaleDropsForLongContent() {
+        // 30 段的长图约 3000pt，3x 会超预算，必须降下来
+        let scale = InfographicRenderer.scale(forHeight: 3000)
+        XCTAssertLessThan(scale, 3)
+        XCTAssertGreaterThanOrEqual(scale, 1.5)
+        // 降下来的目的：总像素要在预算内
+        let pixels = InfographicCard.width * 3000 * scale * scale
+        XCTAssertLessThanOrEqual(pixels, InfographicRenderer.pixelBudget * 1.01)
+    }
+
+    func testInfographicScaleNeverBlursBelowFloor() {
+        // 极端超长也不低于 1.5，宁可截内容也不要交付糊图
+        XCTAssertEqual(InfographicRenderer.scale(forHeight: 100_000), 1.5, accuracy: 0.001)
     }
 
     // MARK: - 词表

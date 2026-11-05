@@ -236,15 +236,46 @@ struct InfographicCard: View {
 /// 一张 1000–3000pt 高的图约 30MB 内存，仍在安全区内。
 @MainActor
 enum InfographicRenderer {
-    static let scale: CGFloat = 3
+    /// 像素预算：约 1200 万像素 ≈ 48MB 位图。
+    ///
+    /// 定这个数的依据：一张 393pt 宽的长图，9 段时高约 1100pt，3x 下是
+    /// 1179×3300（390 万像素，15MB），很安全；但服务端允许 30 段，
+    /// 那时高度接近 3000pt，3x 就是 1179×9000（1000 万像素，40MB），
+    /// 再叠加预览页已有的那张图，就到了 ImageRenderer 返回 nil 的边缘。
+    /// 与其在真机上偶发一张白屏，不如按高度把 scale 降下来。
+    static let pixelBudget: CGFloat = 12_000_000
 
-    static func makeImage(_ item: Item, generatedAt: Date = Date()) -> UIImage? {
-        let content = InfographicCard(item: item, generatedAt: generatedAt)
+    private static func card(_ item: Item, generatedAt: Date) -> some View {
+        InfographicCard(item: item, generatedAt: generatedAt)
             .frame(width: InfographicCard.width)
             // 强制浅色：分享出去的图不跟随设备外观（见 `InfographicCard` 注释）
             .environment(\.colorScheme, .light)
+    }
 
-        let renderer = ImageRenderer(content: content)
+    /// 排版后的真实高度。
+    ///
+    /// `ImageRenderer` 不暴露测量接口，只能借一个宿主控制器量一次。
+    /// 不量就没法定 scale——按段数估算会差得很远（note 长短影响很大）。
+    static func layoutHeight(for item: Item, generatedAt: Date = Date()) -> CGFloat {
+        let host = UIHostingController(rootView: card(item, generatedAt: generatedAt))
+        let size = host.sizeThatFits(
+            in: CGSize(width: InfographicCard.width, height: .greatestFiniteMagnitude)
+        )
+        return max(1, size.height)
+    }
+
+    /// 在「清晰」和「画得出来」之间取 scale。
+    ///
+    /// 下限 1.5：再低字就糊了，宁可少放内容也不要交付一张看不清的图。
+    static func scale(forHeight height: CGFloat) -> CGFloat {
+        let width = InfographicCard.width
+        let fit = sqrt(pixelBudget / max(1, width * max(1, height)))
+        return min(3, max(1.5, fit))
+    }
+
+    static func makeImage(_ item: Item, generatedAt: Date = Date()) -> UIImage? {
+        let scale = self.scale(forHeight: layoutHeight(for: item, generatedAt: generatedAt))
+        let renderer = ImageRenderer(content: card(item, generatedAt: generatedAt))
         renderer.scale = scale
         renderer.isOpaque = true
         return renderer.uiImage
