@@ -26,6 +26,13 @@ struct TranscribeSheet: View {
     @State private var stage: Stage = .checking
     @State private var transcriber = OnDeviceTranscriber()
     @State private var fetcher = FileDownloader()
+    /// 已跑了多少秒。转写没有百分比，界面能给的唯一诚实信息就是时间。
+    @State private var elapsed = 0
+    /// 上一次「有动静」的时刻：下载百分比变了、或认出了新字。
+    /// 看门狗看的是它与现在的差，不是总时长——慢和卡是两件事。
+    @State private var lastProgress = Date()
+    /// 每秒跳一次的看守。失去焦点就停，免得后台空转。
+    @State private var monitor: Task<Void, Never>?
 
     enum Stage: Equatable {
         case checking
@@ -37,6 +44,10 @@ struct TranscribeSheet: View {
         case transcribing(tail: String, chars: Int)
         case done(LocalTranscript)
         case failed(String)
+        /// 长时间没有任何进展。和 `failed` 分开，是因为它可能只是系统把任务
+        /// 丢了，重试多半能接着跑——文案和按钮都不一样。
+        /// 带上停在哪一步：取音源停和识别停，原因和办法不是一回事。
+        case stalled(seconds: Int, phase: TranscribePhase)
     }
 
     init(item: Item, preview: Stage? = nil, onDone: @escaping (LocalTranscript) -> Void = { _ in }) {
@@ -67,6 +78,8 @@ struct TranscribeSheet: View {
         .task {
             if preview == nil { await start() }
         }
+        // 面板关掉后看守没有意义，留着只是每秒醒一次。
+        .onDisappear { stopMonitor() }
     }
 
     // MARK: - 头尾
@@ -127,6 +140,17 @@ struct TranscribeSheet: View {
                 PrimaryButton(title: "重试") {
                     Task { await start() }
                 }
+
+            case .stalled:
+                // 停住时给两个出口：再跑一次（多数情况能接上），或者收工。
+                // 不给「取消」——转写任务已经停了，留着这个词反而像还没停。
+                PrimaryButton(title: "再跑一次") {
+                    Task { await start() }
+                }
+                Button("先不转") { dismiss() }
+                    .font(.cnChip)
+                    .foregroundStyle(Color.cnInk3)
+                    .buttonStyle(.plain)
 
             case .needsPermission:
                 PrimaryButton(title: "去设置里打开") {
@@ -222,6 +246,13 @@ struct TranscribeSheet: View {
                         .font(.cnChip)
                         .foregroundStyle(Color.cnInk2)
                     Spacer(minLength: 0)
+                    // 时间在动，就说明没死。这是「转圈」唯一缺的那条证据。
+                    if elapsed > 0 {
+                        Text(Self.mmss(elapsed))
+                            .font(.cnDuration)
+                            .foregroundStyle(Color.cnInk3)
+                            .monospacedDigit()
+                    }
                 }
                 Text("第一次要先把音轨取下来。已下载到本地的条目会跳过这一步。")
                     .font(.cnMeta)
@@ -239,6 +270,10 @@ struct TranscribeSheet: View {
                         .font(.cnChip)
                         .foregroundStyle(Color.cnInk2)
                     Spacer(minLength: 0)
+                    Text(Self.mmss(elapsed))
+                        .font(.cnDuration)
+                        .foregroundStyle(Color.cnInk3)
+                        .monospacedDigit()
                 }
 
                 // 只显示尾巴：这是「它确实在动」的证据。
@@ -263,6 +298,19 @@ struct TranscribeSheet: View {
             }
             .padding(Metric.space4)
             .background(cardBackground)
+
+        case .stalled(let seconds, let phase):
+            // 硬顶和「卡住」共用一个状态：秒数本身说明了是哪一种，
+            // 多存一个布尔值只会多一条能对不上的信息。
+            noticeCard(
+                icon: "hourglass",
+                title: "跑到 \(Self.mmss(seconds)) 停住了",
+                detail: TranscribeWatchdog.message(
+                    phase: phase,
+                    hardLimit: seconds >= TranscribeWatchdog.hardLimitSeconds
+                ),
+                tint: Color.cnInk2
+            )
 
         case .done(let transcript):
             doneBlock(transcript)
@@ -371,7 +419,10 @@ struct TranscribeSheet: View {
 
     @MainActor
     private func start(force: Bool = false) async {
+        stopMonitor()
         stage = .checking
+        elapsed = 0
+        lastProgress = Date()
 
         // 已经转写过就直接给结果：一次转写几十秒到几分钟，
         // 用户可能只是关掉又点回来，没理由让他再等一遍。
@@ -410,17 +461,26 @@ struct TranscribeSheet: View {
                 TranscribeCleanup.removeIfScratch(file)
             }
         }
+        // 看守从这里开始：下面每一步都可能静默停住，而界面上只有一个转圈。
+        startMonitor()
+        defer { stopMonitor() }
 
         do {
             let source = try await mediaFile()
             // 只登记、不直接删：用户已下载的那份在 Documents 里，
             // 由 `removeIfScratch` 的前缀判断挡掉。
             scratch.append(source)
+            // 看守在取音源期间就可能判定停住。这里必须先退出，
+            // 否则下载晚一步回来会把「停住了」那张卡又推走，用户看到界面自己跳回去。
+            guard !isResolved else { return }
             stage = .preparing("正在分离音轨…")
+            lastProgress = Date()
             let audio = try await AudioExtractor.extractM4A(from: source)
             scratch.append(audio.url)
+            guard !isResolved else { return }
 
             stage = .transcribing(tail: "", chars: 0)
+            lastProgress = Date()
             let started = Date()
             let transcript = try await transcriber.transcribe(
                 file: audio.url,
@@ -430,10 +490,12 @@ struct TranscribeSheet: View {
                 Task { @MainActor in
                     if case .transcribing = stage {
                         stage = .transcribing(tail: tail, chars: chars)
+                        lastProgress = Date()
                     }
                 }
             }
             // m4a 与临时 mp4 都在函数出口由上面的 defer 清掉。
+            guard !isResolved else { return }
 
             LocalTranscriptStore.shared.save(transcript)
             stage = .done(transcript)
@@ -445,15 +507,87 @@ struct TranscribeSheet: View {
                 "ms": String(Int(Date().timeIntervalSince(started) * 1000)),
             ])
         } catch let failure as OnDeviceTranscriber.Failure {
+            // 看守判定停住后会主动 cancel，那条路径上系统必然回调一个
+            // 「已取消」，不能让它把「卡住了」这张卡盖掉——真机上很难解释。
+            guard !isResolved else { return }
             stage = .failed(failure.errorDescription ?? "转写失败。")
             logs.error("transcribe.failed", failure.errorDescription ?? "转写失败", meta: [
                 "id": item.id,
             ])
         } catch let failure as ClipNoteClient.Failure {
+            guard !isResolved else { return }
             stage = .failed(failure.displayMessage)
         } catch {
-            stage = .failed(error.localizedDescription)
+            guard !isResolved else { return }
+            stage = .failed(TranscribeMessage.humanize(error))
+            logs.error("transcribe.failed", TranscribeMessage.humanize(error), meta: [
+                "id": item.id,
+            ])
         }
+    }
+
+    // MARK: - 看守
+
+    /// 已经给出结论的状态。到这里就不再让晚到的回调改写界面。
+    private var isResolved: Bool {
+        switch stage {
+        case .done, .stalled: return true
+        default: return false
+        }
+    }
+
+    private var runningPhase: TranscribePhase? {
+        switch stage {
+        // `.checking` 归到准备阶段：这一段在等 `playback` 接口回地址，
+        // 断网时会静默等十几秒，正是最需要被看守的一段。
+        case .checking, .preparing: return .preparing
+        case .transcribing: return .transcribing
+        default: return nil
+        }
+    }
+
+    /// 每秒跳一次，只在 `preparing` / `transcribing` 两态里计数。
+    ///
+    /// 判定用的不是总时长而是「距上次有动静过了多久」：一条 40 分钟的片子
+    /// 跑 6 分钟是正常的，一条 3 分钟的片子跑 6 分钟不是。
+    private func startMonitor() {
+        stopMonitor()
+        monitor = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { return }
+                guard let phase = runningPhase else { return }
+                elapsed += 1
+                let idle = Int(Date().timeIntervalSince(lastProgress))
+
+                if TranscribeWatchdog.isStalled(phase: phase, secondsSinceProgress: idle) {
+                    stop(stalledAfter: elapsed, phase: phase)
+                    return
+                }
+                if TranscribeWatchdog.isOverLimit(elapsed) {
+                    stop(stalledAfter: elapsed, phase: phase, hardLimit: true)
+                    return
+                }
+            }
+        }
+    }
+
+    private func stopMonitor() {
+        monitor?.cancel()
+        monitor = nil
+    }
+
+    private func stop(stalledAfter seconds: Int, phase: TranscribePhase, hardLimit: Bool = false) {
+        // 先落状态再取消：取消会立刻回调一个 error，那条路径上 `isResolved`
+        // 必须已经是 true，否则界面会被改写回「已取消」。
+        stage = .stalled(seconds: seconds, phase: phase)
+        monitor = nil
+        transcriber.cancel()
+        logs.warn("transcribe.stalled", "转写停住：\(phase)", meta: [
+            "id": item.id,
+            "sec": String(seconds),
+            "hard": hardLimit ? "1" : "0",
+        ])
     }
 
     /// 已下载的条目直接用本地文件：省一次下载，也避开地址过期。
@@ -472,6 +606,7 @@ struct TranscribeSheet: View {
         }
 
         stage = .preparing("正在取音源 · 0%")
+        lastProgress = Date()
         return try await download(url)
     }
 
@@ -482,6 +617,9 @@ struct TranscribeSheet: View {
                 Task { @MainActor in
                     if case .preparing = stage {
                         stage = .preparing("正在取音源 · \(Int(value * 100))%")
+                        // 百分比每跳一次都算「有动静」：4G 下 129MB 要几分钟，
+                        // 但只要在下载就不该被看门狗判成卡死。
+                        lastProgress = Date()
                     }
                 }
             } onFinish: { result in

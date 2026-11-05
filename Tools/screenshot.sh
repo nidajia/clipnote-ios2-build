@@ -99,10 +99,16 @@ shot detail-bookmarks   detail-bookmarks   light
 shot outline            outline            light
 shot segments           segments           light
 shot infographic        infographic        light
-# 本机转写面板（sheet，只能作为根呈现）。两态：转写中 / 完成。
-# 模拟器上真跑只会停在「这台设备暂时不行」，所以这两张走 preview 注入。
-shot transcribe         transcribe         light
-shot transcribe-running transcribe-running light
+# 本机转写面板（sheet，只能作为根呈现）。
+# 模拟器上真跑只会停在「这台设备暂时不行」，所以这几张全走 preview 注入。
+# 除了「转写中 / 完成」，另外四张是**失败路径**：真机上它们要么看运气
+# （权限被拒、系统听写停住），要么根本复现不了，只能在这里把文案看一遍。
+shot transcribe            transcribe            light
+shot transcribe-running    transcribe-running    light
+shot transcribe-blocked    transcribe-blocked    light
+shot transcribe-permission transcribe-permission light
+shot transcribe-stalled    transcribe-stalled    light
+shot transcribe-failed     transcribe-failed     light
 
 # 画布 06。第 4 个参数让脚本把它转正（见 upright_if_sideways）
 shot player-landscape player-landscape light landscape

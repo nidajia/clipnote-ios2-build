@@ -217,6 +217,96 @@ enum TranscribeGate {
     }
 }
 
+// MARK: - 「一直转圈」的兜底
+
+/// 转写跑到哪一步。
+///
+/// 两步的「多久没动静算卡住」不一样，因为它们的进展信号不同：
+/// 取音源 / 分离音轨有百分比，只要在下载就一定会动；转写阶段只有字数，
+/// 而系统听写在一句话中间可以几十秒不吐新字，所以阈值必须放宽一些，
+/// 否则会把正常的长句停顿误判成卡死。
+enum TranscribePhase: Equatable {
+    case preparing
+    case transcribing
+
+    var stallSeconds: Int {
+        switch self {
+        case .preparing:
+            // 129MB 的包在 4G 下也要几分钟，但有百分比就不会误伤；
+            // 这里卡的是「一个字节都没动」的情况。
+            return 120
+        case .transcribing:
+            return 45
+        }
+    }
+}
+
+/// 把「无声的转圈」变成一句人话。
+///
+/// 为什么需要它：`SFSpeechRecognitionTask` 在真机上有一种失败是不回调的——
+/// 既不 error 也不 final，界面就永远停在「正在本机识别 · 已认出 0 字」。
+/// 用户看到的是一个转不完的圈，比一句明确的「停住了」糟糕得多。
+/// 这里只做纯计算，判定与文案都能被单测钉住。
+enum TranscribeWatchdog {
+    /// 硬顶：一条 17 分钟的视频在本机转写约 3–5 分钟，45 分钟还没完
+    /// 一定是出事了，继续等只是浪费电。
+    static let hardLimitSeconds = 45 * 60
+
+    static func isStalled(phase: TranscribePhase, secondsSinceProgress: Int) -> Bool {
+        secondsSinceProgress >= phase.stallSeconds
+    }
+
+    static func isOverLimit(elapsed: Int) -> Bool {
+        elapsed >= hardLimitSeconds
+    }
+
+    /// 说清三件事：停在哪一步、为什么可能停、现在该怎么办。
+    static func message(phase: TranscribePhase, hardLimit: Bool = false) -> String {
+        if hardLimit {
+            return "已经跑了 45 分钟还没结束，这条多半超出本机能处理的范围了。"
+                + "建议先换一条十几分钟的片子确认设备正常，长片再单独排查。"
+        }
+        switch phase {
+        case .preparing:
+            return "取音源这一步停了。多半是网络断了，或者平台给的地址已经过期——"
+                + "重试会重新解析一次地址；连不上网时换 Wi-Fi 再试。"
+        case .transcribing:
+            return "系统听写这边停了。它在后台被系统回收、或听写服务短暂不可用时都会这样，"
+                + "重试一次通常能接着跑；如果每次都停在同一处，先用一条短片子确认设备本身没问题。"
+        }
+    }
+}
+
+/// 底层错误 → 中文一句话。
+///
+/// 走的是 `localizedDescription` 之外的那条路：URLSession 与文件系统给的原文
+/// 是英文（"The request timed out."），直接摆在界面上等于没说。
+/// 认不出来的再退回原文，但补一句「可以怎么办」，不留一句孤零零的报错。
+enum TranscribeMessage {
+    static func humanize(_ error: Error) -> String {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorTimedOut:
+                return "请求超时了。网络慢或平台没响应，重试一次；还超时就换个网络。"
+            case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost:
+                return "网络断了。连上网再重试——已经转好的文字不会丢。"
+            case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost:
+                return "连不上服务器。检查一下网络，或者稍后再试。"
+            default:
+                return "网络出错（\(ns.code)）。重试一次；还不行就把这串码发我。"
+            }
+        }
+        if ns.domain == NSPOSIXErrorDomain, ns.code == Int(POSIXErrorCode.ENOSPC.rawValue) {
+            return "本机存储满了。删掉几条已下载的内容腾出空间再试。"
+        }
+        if ns.domain == NSPOSIXErrorDomain {
+            return "本机读写出错（\(ns.code)）。重启 App 再试一次。"
+        }
+        return "转写中断了：\(ns.localizedDescription)　重试一次；每次都这样就把这句发我。"
+    }
+}
+
 enum OnDeviceSpeech {
     static let locale = Locale(identifier: "zh-CN")
 

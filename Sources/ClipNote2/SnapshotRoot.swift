@@ -308,23 +308,40 @@ struct SnapshotRoot: View {
     }
 
     /// 转写面板要停在哪一态。文案照真跑出来的样子写：有停顿、有口语。
+    ///
+    /// 四张「不正常」的图各有各的必要：真机上这四条分支都验不到
+    /// （模拟器上 `supportsOnDeviceRecognition` 恒为 false，权限/卡死/失败
+    /// 都不会自然出现），只能靠 preview 把它们摆出来，让文案被看见一次。
     private func transcribePreview(_ item: Item) -> TranscribeSheet.Stage {
-        if state == "transcribe-running" {
+        switch state {
+        case "transcribe-running":
             return .transcribing(
                 tail: "…所以你看这个缺口，它不是一年形成的，是一轮一轮融资把它推上去的",
                 chars: 218
             )
+        case "transcribe-blocked":
+            // 模拟器真实走到的就是这一支，所以文案要和系统给的一致
+            return .blocked(TranscribeSupport.needsAssets.message)
+        case "transcribe-permission":
+            return .needsPermission
+        case "transcribe-failed":
+            return .failed("识别完了但没有文字。可能是纯音乐、人声太轻，或者音轨是空的。")
+        case "transcribe-stalled":
+            // 03:32：既过了 45 秒的静默阈值，又没到 45 分钟的硬顶，
+            // 显示的是「卡住」那条文案而不是「超时」那条。
+            return .stalled(seconds: 212, phase: .transcribing)
+        default:
+            return .done(LocalTranscript(
+                itemId: item.id,
+                lines: SnapshotRoot.sampleTranscriptLines,
+                // 360 秒：样本最后一行在 336，覆盖率 0.93，
+                // 于是「只覆盖到…」那句不会出现——这才是正常跑完的样子。
+                // 覆盖率偏低的提示由单测覆盖，不在截图上占一张。
+                durationSeconds: 360,
+                createdAt: Date(timeIntervalSince1970: 1_793_400_000),
+                locale: "zh-CN"
+            ))
         }
-        return .done(LocalTranscript(
-            itemId: item.id,
-            lines: SnapshotRoot.sampleTranscriptLines,
-            // 360 秒：样本最后一行在 336，覆盖率 0.93，
-            // 于是「只覆盖到…」那句不会出现——这才是正常跑完的样子。
-            // 覆盖率偏低的提示由单测覆盖，不在截图上占一张。
-            durationSeconds: 360,
-            createdAt: Date(timeIntervalSince1970: 1_793_400_000),
-            locale: "zh-CN"
-        ))
     }
 
     /// 本机转写的样本。刻意保留口语和停顿（「对」「就是」），

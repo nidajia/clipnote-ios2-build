@@ -219,6 +219,75 @@ final class TranscribeTests: XCTestCase {
         XCTAssertFalse(TranscribeSupport.ready.message.isEmpty)
     }
 
+    // MARK: - 停住的判定
+
+    func testTranscribingStallsAfterQuietWindow() {
+        // 44 秒没新字是正常的长句停顿；45 秒说明系统那边已经不干活了
+        XCTAssertFalse(TranscribeWatchdog.isStalled(phase: .transcribing, secondsSinceProgress: 44))
+        XCTAssertTrue(TranscribeWatchdog.isStalled(phase: .transcribing, secondsSinceProgress: 45))
+    }
+
+    func testPreparingIsMorePatientThanTranscribing() {
+        // 取音源那一步的「动静」是百分比，4G 下下 129MB 可以很久才跳一次，
+        // 用转写那套 45 秒阈值会把正常下载误判成卡死
+        XCTAssertFalse(TranscribeWatchdog.isStalled(phase: .preparing, secondsSinceProgress: 45))
+        XCTAssertTrue(TranscribeWatchdog.isStalled(phase: .preparing, secondsSinceProgress: 120))
+        XCTAssertGreaterThan(
+            TranscribePhase.preparing.stallSeconds,
+            TranscribePhase.transcribing.stallSeconds
+        )
+    }
+
+    func testHardLimitIsFarBeyondAnyRealTranscription() {
+        // 17 分钟的视频在本机约 3–5 分钟跑完；45 分钟还没完一定是出事了
+        XCTAssertFalse(TranscribeWatchdog.isOverLimit(20 * 60))
+        XCTAssertTrue(TranscribeWatchdog.isOverLimit(TranscribeWatchdog.hardLimitSeconds))
+    }
+
+    func testStalledMessagesSayWhyAndWhatNext() {
+        // 「卡住了」必须给出下一步，否则和转圈没区别
+        let transcribing = TranscribeWatchdog.message(phase: .transcribing)
+        XCTAssertTrue(transcribing.contains("重试"))
+
+        let preparing = TranscribeWatchdog.message(phase: .preparing)
+        XCTAssertTrue(preparing.contains("网络") || preparing.contains("Wi-Fi"))
+
+        let limit = TranscribeWatchdog.message(phase: .transcribing, hardLimit: true)
+        XCTAssertTrue(limit.contains("45 分钟"))
+        XCTAssertNotEqual(limit, transcribing, "硬顶与卡住不能用同一句文案")
+    }
+
+    // MARK: - 报错说人话
+
+    func testTimeoutBecomesChineseSentence() {
+        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        let text = TranscribeMessage.humanize(error)
+        XCTAssertTrue(text.contains("超时"))
+        // 不能把系统的英文原文直接摆上去
+        XCTAssertFalse(text.lowercased().contains("the request timed out"))
+    }
+
+    func testOfflineSaysNetworkIsGone() {
+        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+        XCTAssertTrue(TranscribeMessage.humanize(error).contains("网络"))
+    }
+
+    func testDiskFullTellsUserToFreeSpace() {
+        let error = NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(POSIXErrorCode.ENOSPC.rawValue)
+        )
+        XCTAssertTrue(TranscribeMessage.humanize(error).contains("存储"))
+    }
+
+    func testUnknownErrorKeepsDetailButAddsNextStep() {
+        let error = NSError(domain: "SomeVendorDomain", code: 9,
+                            userInfo: [NSLocalizedDescriptionKey: "vendor exploded"])
+        let text = TranscribeMessage.humanize(error)
+        XCTAssertTrue(text.contains("vendor exploded"), "认不出来的错误要保留原文，否则没法排查")
+        XCTAssertTrue(text.contains("重试"))
+    }
+
     // MARK: - 临时文件清理
 
     func testScratchFileInsideTemporaryDirectoryIsRecognized() {
