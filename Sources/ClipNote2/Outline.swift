@@ -67,8 +67,9 @@ struct Outliner {
         let payload: [String: Any] = [
             "model": config.model,
             "temperature": 0.3,
-            // 顶层 3–5 个分支 + 每个 2–4 个叶子，约 600 token，给一倍余量
-            "max_tokens": 1600,
+            // 顶层 3–5 个分支 + 每个 2–4 个叶子。中文 + note 实测能到 1200 token 以上，
+            // 1600 时偶发截断（真机日志里同一条目时好时坏），抬到 2200 留足余量。
+            "max_tokens": 2200,
             "messages": [
                 ["role": "system", "content": Self.instructions],
                 ["role": "user", "content": Self.userContent(
@@ -132,15 +133,28 @@ struct Outliner {
 
     /// 解析模型输出。限制和和服务端保持一致，界面拿到的树一定可渲染。
     static func parse(_ raw: String) throws -> [OutlineNode] {
-        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.hasPrefix("```") {
-            if let firstNewline = text.firstIndex(of: "\n") {
-                text = String(text[text.index(after: firstNewline)...])
+        let text = stripFence(raw)
+
+        // 先按「逐个捡完整对象」解析。
+        //
+        // 为什么不能只做整段 `JSONSerialization`：模型被截断时最后一段是半个对象，
+        // 整个文档就非法，于是**前面写好的 4 个分支也一起丢掉**。
+        // 真机日志里同一条目一次成功、两次失败，全看模型那次有没有写完。
+        // 树是可以降级的：少一个分支仍然能用，全丢就完全不能用了。
+        let salvaged = salvageObjects(text)
+        if !salvaged.isEmpty {
+            var budget = 40
+            var nodes: [OutlineNode] = []
+            for obj in salvaged {
+                guard nodes.count < 6, budget > 0 else { break }
+                if let node = build(obj, depth: 0, budget: &budget) {
+                    nodes.append(node)
+                }
             }
-            if let fence = text.range(of: "```", options: .backwards) {
-                text = String(text[..<fence.lowerBound])
-            }
+            if !nodes.isEmpty { return nodes }
         }
+
+        // 兜底：整段解析（输出结构不规范但恰好是合法 JSON 的情况）
         guard let start = text.firstIndex(of: "{"),
               let end = text.lastIndex(of: "}"),
               start < end,
@@ -159,6 +173,75 @@ struct Outliner {
         }
         guard !nodes.isEmpty else { throw SummarizeFailure.unparsable(text) }
         return nodes
+    }
+
+    private static func stripFence(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("```") {
+            if let firstNewline = text.firstIndex(of: "\n") {
+                text = String(text[text.index(after: firstNewline)...])
+            }
+            if let fence = text.range(of: "```", options: .backwards) {
+                text = String(text[..<fence.lowerBound])
+            }
+        }
+        return text
+    }
+
+    /// 从 `"outline": [ ... ]` 里逐个收集**完整**的对象。
+    ///
+    /// 扫描时区分「字符串内」与「字符串外」，否则 note 里的花括号会把深度算错。
+    /// 遇到没闭合的对象直接丢弃——那正是被截断的尾巴。
+    static func salvageObjects(_ text: String) -> [[String: Any]] {
+        guard let keyRange = text.range(of: "\"outline\"") ?? text.range(of: "outline"),
+              let bracket = text[keyRange.upperBound...].firstIndex(of: "[")
+        else { return [] }
+
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var start: String.Index?
+        var out: [[String: Any]] = []
+
+        var i = text.index(after: bracket)
+        while i < text.endIndex {
+            let ch = text[i]
+
+            if escaped {
+                escaped = false
+                i = text.index(after: i)
+                continue
+            }
+            if inString {
+                if ch == "\\" { escaped = true } else if ch == "\"" { inString = false }
+                i = text.index(after: i)
+                continue
+            }
+
+            switch ch {
+            case "\"":
+                inString = true
+            case "{":
+                if depth == 0 { start = i }
+                depth += 1
+            case "}":
+                depth -= 1
+                if depth == 0, let begin = start {
+                    if let data = text[begin...i].data(using: .utf8),
+                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        out.append(obj)
+                    }
+                    start = nil
+                }
+                if depth < 0 { depth = 0 }
+            case "]":
+                if depth == 0 { return out }   // outline 数组结束
+            default:
+                break
+            }
+            i = text.index(after: i)
+        }
+        return out                              // 被截断：返回已经收到的部分
     }
 
     private static func build(_ raw: Any, depth: Int, budget: inout Int) -> OutlineNode? {

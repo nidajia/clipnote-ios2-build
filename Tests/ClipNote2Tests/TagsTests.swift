@@ -104,6 +104,30 @@ final class TagsTests: XCTestCase {
         XCTAssertEqual(nodes.map(\.title), ["有效"])
     }
 
+    /// 模型被截断时，前面已经写好的分支必须保住。
+    /// 真机日志里同一条目一次成功两次失败，就是这一条缺失导致的。
+    func testOutlineSalvagesTruncatedTail() throws {
+        let raw = #"{"outline":[{"title":"分支甲","children":[{"title":"叶子"}]},{"title":"分支乙"},{"title":"分支丙","chil"#
+        let nodes = try Outliner.parse(raw)
+        XCTAssertEqual(nodes.map(\.title), ["分支甲", "分支乙"])
+        XCTAssertEqual(nodes[0].children.first?.title, "叶子")
+    }
+
+    func testOutlineSkipsBrokenNodeButKeepsRest() throws {
+        // 中间一个对象非法，不该连坐后面的
+        let raw = #"{"outline":[{"title":"好的"},{"title":},{"title":"也好"}]}"#
+        let nodes = try Outliner.parse(raw)
+        XCTAssertEqual(nodes.map(\.title), ["好的", "也好"])
+    }
+
+    func testOutlineIgnoresBracesInsideNote() throws {
+        // note 里的花括号不能把深度算错
+        let raw = #"{"outline":[{"title":"甲","note":"用 { 和 } 举例"},{"title":"乙"}]}"#
+        let nodes = try Outliner.parse(raw)
+        XCTAssertEqual(nodes.count, 2)
+        XCTAssertEqual(nodes[0].note, "用 { 和 } 举例")
+    }
+
     func testOutlineRejectsGarbage() {
         XCTAssertThrowsError(try Outliner.parse("我不想画图"))
         XCTAssertThrowsError(try Outliner.parse(#"{"outline":[]}"#))

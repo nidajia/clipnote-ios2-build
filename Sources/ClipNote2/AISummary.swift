@@ -313,7 +313,10 @@ enum SummarizeFailure: Error, Equatable {
         case .truncated:
             return "模型的回复被截断了，分段没写完。换一个输出上限更大的模型，或先缩短这条视频。"
         case .unparsable(let raw):
-            return "模型没有按 JSON 回答：\(raw.prefix(40))"
+            // 把长度也带出来：接近上限就说明是截断，而不是模型乱答。
+            // 只给开头 40 字时，这两种原因在日志里长得一模一样，
+            // 排查会走错方向（真机上就为这个多花了一轮）。
+            return "模型没有按 JSON 回答（\(raw.count) 字）：\(raw.prefix(32))"
         }
     }
 }
