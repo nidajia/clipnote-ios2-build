@@ -564,7 +564,7 @@ struct TranscribeSheet: View {
                     stop(stalledAfter: elapsed, phase: phase)
                     return
                 }
-                if TranscribeWatchdog.isOverLimit(elapsed) {
+                if TranscribeWatchdog.isOverLimit(elapsed: elapsed) {
                     stop(stalledAfter: elapsed, phase: phase, hardLimit: true)
                     return
                 }

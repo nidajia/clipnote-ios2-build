@@ -240,8 +240,8 @@ final class TranscribeTests: XCTestCase {
 
     func testHardLimitIsFarBeyondAnyRealTranscription() {
         // 17 分钟的视频在本机约 3–5 分钟跑完；45 分钟还没完一定是出事了
-        XCTAssertFalse(TranscribeWatchdog.isOverLimit(20 * 60))
-        XCTAssertTrue(TranscribeWatchdog.isOverLimit(TranscribeWatchdog.hardLimitSeconds))
+        XCTAssertFalse(TranscribeWatchdog.isOverLimit(elapsed: 20 * 60))
+        XCTAssertTrue(TranscribeWatchdog.isOverLimit(elapsed: TranscribeWatchdog.hardLimitSeconds))
     }
 
     func testStalledMessagesSayWhyAndWhatNext() {
