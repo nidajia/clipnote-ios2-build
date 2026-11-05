@@ -388,6 +388,36 @@ private final class Once {
     }
 }
 
+// MARK: - 临时文件清理
+
+/// 转写中间产物的删除规则。
+///
+/// 为什么需要一个判断而不是直接 `removeItem`：`mediaFile()` 有两条来源——
+/// 用户已经下载到 Documents 的那份（这是用户数据，绝不能删）和这次为转写
+/// 临时下到 tmp 的 mp4（必须删）。URL 在流程里来回流转时没有携带来源标记，
+/// 路径前缀是唯一稳定的事实。
+///
+/// 要求落在目录**之内**而不是简单的 `hasPrefix`：否则 `/tmp` 与 `/tmp2`
+/// 会被判成同一层，删错东西。这条规则本身是纯函数，好让单测把边界钉住。
+enum TranscribeCleanup {
+    static func isScratch(_ file: URL, temporaryDirectory: URL) -> Bool {
+        let base = temporaryDirectory.standardizedFileURL.path
+        let target = file.standardizedFileURL.path
+        guard !base.isEmpty, target.hasPrefix(base) else { return false }
+        let rest = target.dropFirst(base.count)
+        return rest.hasPrefix("/") && rest.count > 1
+    }
+
+    /// 只删临时文件，用户已下载的文件会被静默放过。
+    static func removeIfScratch(
+        _ file: URL,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory
+    ) {
+        guard isScratch(file, temporaryDirectory: temporaryDirectory) else { return }
+        try? FileManager.default.removeItem(at: file)
+    }
+}
+
 // MARK: - 取音轨
 
 /// 从视频里抽出音轨。

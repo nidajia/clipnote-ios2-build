@@ -399,10 +399,26 @@ struct TranscribeSheet: View {
             return
         }
 
+        // 转写要在本地折腾两份文件：为取音源临时下的 mp4（抖音十来兆，B 站
+        // 能到上百兆）和从里面抽出来的 m4a。两份都得清。
+        // 用 defer 而不是在成功路径末尾删，是因为失败和取消也得清——之前只有
+        // 成功时删了 m4a，下载的那份 mp4 从头到尾没删过，转几次大视频就白占
+        // 几百兆，而 tmp 什么时候被系统回收没有保证。
+        var scratch: [URL] = []
+        defer {
+            for file in scratch {
+                TranscribeCleanup.removeIfScratch(file)
+            }
+        }
+
         do {
             let source = try await mediaFile()
+            // 只登记、不直接删：用户已下载的那份在 Documents 里，
+            // 由 `removeIfScratch` 的前缀判断挡掉。
+            scratch.append(source)
             stage = .preparing("正在分离音轨…")
             let audio = try await AudioExtractor.extractM4A(from: source)
+            scratch.append(audio.url)
 
             stage = .transcribing(tail: "", chars: 0)
             let started = Date()
@@ -417,7 +433,7 @@ struct TranscribeSheet: View {
                     }
                 }
             }
-            try? FileManager.default.removeItem(at: audio.url)
+            // m4a 与临时 mp4 都在函数出口由上面的 defer 清掉。
 
             LocalTranscriptStore.shared.save(transcript)
             stage = .done(transcript)

@@ -218,4 +218,56 @@ final class TranscribeTests: XCTestCase {
         }
         XCTAssertFalse(TranscribeSupport.ready.message.isEmpty)
     }
+
+    // MARK: - 临时文件清理
+
+    func testScratchFileInsideTemporaryDirectoryIsRecognized() {
+        let base = URL(fileURLWithPath: "/var/mobile/tmp")
+        let file = base.appendingPathComponent("cn-3F2A.mp4")
+        XCTAssertTrue(TranscribeCleanup.isScratch(file, temporaryDirectory: base))
+    }
+
+    func testDownloadedFileOutsideTemporaryDirectoryIsKept() {
+        // 「我 · 下载」里的文件是用户数据，转写不能顺手删掉
+        let base = URL(fileURLWithPath: "/var/mobile/tmp")
+        let file = URL(fileURLWithPath: "/var/mobile/Containers/Data/Application/ABC/Documents/downloads/cn.mp4")
+        XCTAssertFalse(TranscribeCleanup.isScratch(file, temporaryDirectory: base))
+    }
+
+    func testSiblingDirectoryWithSharedPrefixIsNotScratch() {
+        // 前缀相同不等于在目录里：/var/mobile/tmp2 不是 /var/mobile/tmp 的子路径
+        let base = URL(fileURLWithPath: "/var/mobile/tmp")
+        let file = URL(fileURLWithPath: "/var/mobile/tmp2/cn.mp4")
+        XCTAssertFalse(TranscribeCleanup.isScratch(file, temporaryDirectory: base))
+    }
+
+    func testTemporaryDirectoryItselfIsNotScratch() {
+        let base = URL(fileURLWithPath: "/var/mobile/tmp")
+        XCTAssertFalse(TranscribeCleanup.isScratch(base, temporaryDirectory: base))
+    }
+
+    func testRemoveIfScratchDeletesScratchAndSparesUserFile() throws {
+        let fm = FileManager.default
+        let scratchDir = fm.temporaryDirectory
+            .appendingPathComponent("cn-test-scratch-\(UUID().uuidString)", isDirectory: true)
+        let userDir = fm.temporaryDirectory
+            .appendingPathComponent("cn-test-user-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: userDir, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: scratchDir)
+            try? fm.removeItem(at: userDir)
+        }
+
+        let scratchFile = scratchDir.appendingPathComponent("cn-audio.m4a")
+        let userFile = userDir.appendingPathComponent("已下载.mp4")
+        try Data("x".utf8).write(to: scratchFile)
+        try Data("x".utf8).write(to: userFile)
+
+        TranscribeCleanup.removeIfScratch(scratchFile, temporaryDirectory: scratchDir)
+        TranscribeCleanup.removeIfScratch(userFile, temporaryDirectory: scratchDir)
+
+        XCTAssertFalse(fm.fileExists(atPath: scratchFile.path), "转写自己造的临时文件必须删掉")
+        XCTAssertTrue(fm.fileExists(atPath: userFile.path), "用户已下载的文件不能被当成临时文件删掉")
+    }
 }
