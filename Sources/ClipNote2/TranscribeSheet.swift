@@ -15,6 +15,9 @@ struct TranscribeSheet: View {
     /// 截图与预览专用：直接停在某一态，不真的跑转写。
     /// 正常路径传 nil，由 `start()` 走到对应状态。
     var preview: Stage?
+    /// 预览态的计时。传 0 时计时不会显示（真跑的第一秒就是这样），
+    /// 截图要证明「时间在走」就得给一个非零值。
+    var previewElapsed: Int = 0
     /// 转写完成后回传一份，让详情页立刻用它切分段。
     var onDone: (LocalTranscript) -> Void = { _ in }
 
@@ -50,11 +53,17 @@ struct TranscribeSheet: View {
         case stalled(seconds: Int, phase: TranscribePhase)
     }
 
-    init(item: Item, preview: Stage? = nil, onDone: @escaping (LocalTranscript) -> Void = { _ in }) {
+    init(
+        item: Item,
+        preview: Stage? = nil,
+        previewElapsed: Int = 0,
+        onDone: @escaping (LocalTranscript) -> Void = { _ in }
+    ) {
         self.item = item
         self.preview = preview
         self.onDone = onDone
         _stage = State(initialValue: preview ?? .checking)
+        _elapsed = State(initialValue: previewElapsed)
     }
 
     var body: some View {

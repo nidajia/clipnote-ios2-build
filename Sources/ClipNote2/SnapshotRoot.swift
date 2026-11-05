@@ -217,7 +217,13 @@ struct SnapshotRoot: View {
                 // 注意这两种都是**预览态**：模拟器上 supportsOnDeviceRecognition
                 // 一定是 false，真跑只会停在「这台设备暂时不行」，拍不到这两种。
                 if let item = library.items.first {
-                    TranscribeSheet(item: item, preview: transcribePreview(item))
+                    TranscribeSheet(
+                        item: item,
+                        preview: transcribePreview(item),
+                        // 转写中那一张要给一个非零计时，否则「右边那个计时器」
+                        // 在截图里根本不存在，等于没验。
+                        previewElapsed: state == "transcribe-running" ? 134 : 0
+                    )
                 } else {
                     Color.cnBg
                 }
