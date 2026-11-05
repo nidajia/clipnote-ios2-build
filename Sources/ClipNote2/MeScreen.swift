@@ -12,6 +12,9 @@ struct MeScreen: View {
     @EnvironmentObject private var downloads: DownloadStore
     @EnvironmentObject private var logs: LogStore
 
+    @State private var exporting = false
+    @State private var exportURL: URL?
+
     var body: some View {
         List {
             Section {
@@ -40,6 +43,14 @@ struct MeScreen: View {
                 } label: {
                     settingsRow("回收站", trashText, showsChevron: false)
                 }
+                Button {
+                    Task { await prepareExport() }
+                } label: {
+                    settingsRow("导出全部笔记", exporting ? "生成中…" : "Markdown",
+                                showsChevron: false)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.cnInk)
                 NavigationLink {
                     LogScreen()
                 } label: {
@@ -62,6 +73,62 @@ struct MeScreen: View {
         .scrollContentBackground(.hidden)
         .background(Color.cnBg)
         .navigationTitle("我")
+        .sheet(isPresented: Binding(
+            get: { exportURL != nil },
+            set: { if !$0 { exportURL = nil } }
+        )) {
+            if let exportURL {
+                exportSheet(exportURL)
+            }
+        }
+    }
+
+    /// 导出完成后只有一件事可做：把它分享出去（存文件、发微信、存笔记软件）。
+    private func exportSheet(_ url: URL) -> some View {
+        VStack(spacing: Metric.space4) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(Color.cnBrand)
+                .padding(.top, Metric.space5)
+
+            Text(url.lastPathComponent)
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk)
+
+            Text("共 \(library.items.count) 条。摘要是 AI 产的、笔记和书签是你写的，文件里已分别标注。")
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnInk3)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Metric.pagePad)
+
+            ShareLink(item: url) {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("分享 / 存为文件")
+                        .font(.cnButton)
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+                .background(
+                    Color.cnBrand,
+                    in: RoundedRectangle(cornerRadius: Metric.radiusButton, style: .continuous)
+                )
+            }
+            .padding(.horizontal, Metric.pagePad)
+
+            Button("完成") { exportURL = nil }
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk3)
+                .padding(.bottom, Metric.space4)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .background(Color.cnBg)
+        .presentationDetents([.height(360)])
     }
 
     // MARK: - 同步
@@ -128,6 +195,18 @@ struct MeScreen: View {
         case .failed(let message):
             return message
         }
+    }
+
+    /// 导出全库。失败只可能是「临时目录写不进去」，那种情况给一句话就够。
+    private func prepareExport() async {
+        guard !exporting, !library.items.isEmpty else { return }
+        exporting = true
+        defer { exporting = false }
+        exportURL = LibraryExporter.write(items: library.items)
+        logs.info("export.built", "导出全库为 Markdown", meta: [
+            "items": String(library.items.count),
+            "ok": exportURL == nil ? "0" : "1",
+        ])
     }
 
     // MARK: - 设置行
