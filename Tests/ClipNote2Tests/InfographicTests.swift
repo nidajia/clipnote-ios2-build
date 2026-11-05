@@ -48,12 +48,18 @@ final class InfographicTests: XCTestCase {
         XCTAssertEqual(InfographicRenderer.scale(forHeight: 800), 3, accuracy: 0.001)
     }
 
-    func testScaleDropsForLongContent() {
-        // 30 段约 3000pt 高，3x 会超像素预算，必须降下来
-        let scale = InfographicRenderer.scale(forHeight: 3000)
+    func testScaleKeeps3xWithinBudget() {
+        // 30 段约 2500pt：3x 仍在预算内，不该降（降了就是白降清晰度）
+        XCTAssertEqual(InfographicRenderer.scale(forHeight: 2500), 3, accuracy: 0.001)
+    }
+
+    func testScaleDropsOnlyWhenBudgetIsExceeded() {
+        // 3x 触顶在 3418pt 左右；5000pt 必须已经降下来
+        let height: CGFloat = 5000
+        let scale = InfographicRenderer.scale(forHeight: height)
         XCTAssertLessThan(scale, 3)
         XCTAssertGreaterThanOrEqual(scale, 1.5)
-        let pixels = InfographicCard.width * 3000 * scale * scale
+        let pixels = InfographicCard.width * height * scale * scale
         XCTAssertLessThanOrEqual(pixels, InfographicRenderer.pixelBudget * 1.01)
     }
 

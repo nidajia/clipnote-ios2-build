@@ -238,11 +238,12 @@ struct InfographicCard: View {
 enum InfographicRenderer {
     /// 像素预算：约 1200 万像素 ≈ 48MB 位图。
     ///
-    /// 定这个数的依据：一张 393pt 宽的长图，9 段时高约 1100pt，3x 下是
-    /// 1179×3300（390 万像素，15MB），很安全；但服务端允许 30 段，
-    /// 那时高度接近 3000pt，3x 就是 1179×9000（1000 万像素，40MB），
-    /// 再叠加预览页已有的那张图，就到了 ImageRenderer 返回 nil 的边缘。
-    /// 与其在真机上偶发一张白屏，不如按高度把 scale 降下来。
+    /// 依据实测：9 段内容高约 1100pt，3x 是 1170×3300（390 万像素，15MB）；
+    /// 30 段约 2500pt，3x 是 1170×7500（880 万像素，35MB），**仍在预算内**。
+    /// 所以这个开关不是给「普通长视频」用的，而是给内容撑爆的情况兜底——
+    /// 长 note、长标题、更宽的字号都会把高度推过 3418pt（3x 触顶的位置）。
+    /// 真到那一步，ImageRenderer 会返回 nil，界面变成一张白屏，
+    /// 那时再降 scale 已经来不及（渲染本身失败了）。
     static let pixelBudget: CGFloat = 12_000_000
 
     private static func card(_ item: Item, generatedAt: Date) -> some View {
