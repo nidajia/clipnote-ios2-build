@@ -617,6 +617,18 @@ struct ClipNoteClient {
                        body: ["url": url], as: APILibraryItem.self)
     }
 
+    struct APIBatchResult: Decodable {
+        var deleted: Int
+        var notFound: [String]
+    }
+
+    /// 批量移到回收站。一次请求、服务端一次写盘。
+    func batchDelete(ids: [String]) async throws -> APIBatchResult {
+        try await post("/api/v2/batch",
+                       body: ["action": "delete", "ids": ids],
+                       as: APIBatchResult.self)
+    }
+
     /// 回收站列表
     func trash() async throws -> APITrash {
         try await get("/api/v2/trash", as: APITrash.self)
@@ -1209,6 +1221,23 @@ final class LibraryStore: ObservableObject {
             return failure.displayMessage
         } catch {
             return error.localizedDescription
+        }
+    }
+
+    /// 批量移到回收站。返回实际删掉的条数；失败返回 nil。
+    func batchDelete(ids: [String]) async -> Int? {
+        guard let client, !ids.isEmpty else { return nil }
+        do {
+            let result = try await client.batchDelete(ids: ids)
+            await reload()
+            log?.info("batch.deleted", "批量移到回收站", meta: [
+                "count": String(result.deleted),
+                "missing": String(result.notFound.count),
+            ])
+            return result.deleted
+        } catch {
+            log?.error("batch.failed", "批量删除失败", meta: ["count": String(ids.count)])
+            return nil
         }
     }
 

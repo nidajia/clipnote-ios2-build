@@ -23,6 +23,11 @@ struct HomeScreen: View {
     @Environment(\.colorScheme) private var scheme
 
     @State private var query = ""
+    /// 多选模式。选中的 id 存集合，`filtered` 变化不会让已选项悄悄失效。
+    @State private var selecting = false
+    @State private var picked = Set<String>()
+    @State private var confirmBatchDelete = false
+    @State private var batchWorking = false
     @State private var filter: HomeFilter = .all
     @State private var showImport = false
     @State private var selected: Item?
@@ -86,14 +91,43 @@ struct HomeScreen: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showImport = true
-                    } label: {
-                        importLabel
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if !filtered.isEmpty {
+                        Button(selecting ? "取消" : "选择") {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                selecting.toggle()
+                                picked.removeAll()
+                            }
+                        }
+                        .font(.cnChip)
                     }
-                    .buttonStyle(.plain)
                 }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if !selecting {
+                        Button {
+                            showImport = true
+                        } label: {
+                            importLabel
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            // 多选时底部浮出操作条。不用 toolbar 的 bottomBar：
+            // 那条会和 tabBar 抢位置，而 tabBar 在本页是可见的。
+            .overlay(alignment: .bottom) {
+                if selecting {
+                    batchBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .alert("移到回收站？", isPresented: $confirmBatchDelete) {
+                Button("取消", role: .cancel) {}
+                Button("移到回收站", role: .destructive) {
+                    Task { await runBatchDelete() }
+                }
+            } message: {
+                Text("选中的 \(picked.count) 条会进回收站，30 天内可以恢复。")
             }
             .sheet(isPresented: $showImport) {
                 ImportSheet()
@@ -154,9 +188,23 @@ struct HomeScreen: View {
         } else {
             List(filtered) { item in
                 Button {
-                    selected = item
+                    if selecting {
+                        if picked.contains(item.id) { picked.remove(item.id) }
+                        else { picked.insert(item.id) }
+                    } else {
+                        selected = item
+                    }
                 } label: {
-                    ItemRow(model: item, isDownloaded: downloads.isDownloaded(item.id))
+                    HStack(spacing: Metric.space2) {
+                        if selecting {
+                            Image(systemName: picked.contains(item.id)
+                                  ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 19, weight: .regular))
+                                .foregroundStyle(picked.contains(item.id)
+                                                 ? Color.cnBrand : Color.cnInk3)
+                        }
+                        ItemRow(model: item, isDownloaded: downloads.isDownloaded(item.id))
+                    }
                 }
                 .buttonStyle(.plain)
                 // 左滑删除。当初选 List 而不是自绘列表，唯一的技术理由就是它能用。
@@ -187,6 +235,56 @@ struct HomeScreen: View {
             // 行本身不再硬关分隔线，由这里统一定义颜色
             .listRowSeparatorTint(Color.cnCard2)
             .listRowSpacing(0)
+        }
+    }
+
+    /// 多选时底部浮出的操作条。
+    private var batchBar: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(Color.cnHairlineSoft).frame(height: 1)
+            HStack(spacing: Metric.space3) {
+                Text(picked.isEmpty ? "选择要处理的条目" : "已选 \(picked.count) 条")
+                    .font(.cnChip)
+                    .foregroundStyle(picked.isEmpty ? Color.cnInk3 : Color.cnInk)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    confirmBatchDelete = true
+                } label: {
+                    Text(batchWorking ? "处理中…" : "移到回收站")
+                        .font(.cnChip)
+                        .foregroundStyle(picked.isEmpty ? Color.cnInk3 : Color.cnRed)
+                        .padding(.horizontal, Metric.space3)
+                        .padding(.vertical, 8)
+                        .background(
+                            (picked.isEmpty ? Color.cnCard3 : Color.cnRed.opacity(0.14)),
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(picked.isEmpty || batchWorking)
+            }
+            .padding(.horizontal, Metric.pagePad)
+            .padding(.vertical, Metric.space2)
+        }
+        .background(Color.cnBg)
+    }
+
+    private func runBatchDelete() async {
+        guard !picked.isEmpty, !batchWorking else { return }
+        batchWorking = true
+        defer { batchWorking = false }
+
+        let ids = Array(picked)
+        guard let count = await library.batchDelete(ids: ids) else {
+            showToast("批量删除失败，请重试")
+            return
+        }
+        showToast("已把 \(count) 条移到回收站")
+        withAnimation(.easeInOut(duration: 0.18)) {
+            selecting = false
+            picked.removeAll()
         }
     }
 
