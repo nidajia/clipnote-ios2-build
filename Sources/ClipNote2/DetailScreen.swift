@@ -240,7 +240,7 @@ struct DetailScreen: View {
             OutlineScreen(item: current)
         }
         .navigationDestination(isPresented: $showTranscript) {
-            TranscriptScreen(item: current, player: player)
+            TranscriptScreen(item: current)
         }
         .navigationDestination(isPresented: $showNote) {
             NoteScreen(item: current)
@@ -1086,18 +1086,18 @@ struct DetailScreen: View {
                 .frame(height: 1)
                 .padding(.vertical, 2)
 
-            // 逐句跟读和分段是同一层的两个读法：
-            // 分段看结构，逐句看原话。所以并排放，而不是藏进菜单。
+            // 字幕和分段并排：分段是结构，字幕是原话。
+            // 字幕的出口不是「读」，而是「带走」——复制全文或导出 SRT。
             Button {
                 showTranscript = true
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "text.alignleft")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("逐句跟读")
+                    Text("字幕")
                         .font(.cnCaption)
                     Spacer(minLength: 0)
-                    Text("跟着播放走")
+                    Text("可复制 / 导出 SRT")
                         .font(.cnCaption)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
