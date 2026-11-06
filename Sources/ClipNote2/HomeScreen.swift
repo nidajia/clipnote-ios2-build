@@ -93,17 +93,6 @@ struct HomeScreen: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if !filtered.isEmpty {
-                        Button(selecting ? "取消" : "选择") {
-                            withAnimation(.easeInOut(duration: 0.18)) {
-                                selecting.toggle()
-                                picked.removeAll()
-                            }
-                        }
-                        .font(.cnChip)
-                    }
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if !selecting {
                         Button {
@@ -293,10 +282,29 @@ struct HomeScreen: View {
     /// 钉在顶部的整块头部：搜索框 + 筛选条，一个固定高度，不随列表滚动
     private var pinnedHeader: some View {
         VStack(spacing: 0) {
-            searchField
-                .padding(.horizontal, Metric.pagePad)
-                .padding(.top, Metric.space2)
-                .padding(.bottom, Metric.space1)
+            HStack(spacing: Metric.space2) {
+                searchField
+                // 「选择」放在自定义头部而不是导航栏。
+                //
+                // 上一版放在 navigationBarLeading，真机上用户找不到（v42）。
+                // 导航栏那块区域的可见性我没法从代码确认，而头部是我们自己画的，
+                // 一定在视线里。功能做得出来却找不到入口，等于没做。
+                if !filtered.isEmpty {
+                    Button(selecting ? "取消" : "选择") {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            selecting.toggle()
+                            picked.removeAll()
+                        }
+                    }
+                    .font(.cnChip)
+                    .foregroundStyle(selecting ? Color.cnInk3 : Color.cnBrand)
+                    .frame(minWidth: 40, alignment: .trailing)
+                }
+            }
+            .padding(.horizontal, Metric.pagePad)
+            .padding(.top, Metric.space2)
+            .padding(.bottom, Metric.space1)
+
             filterBar
         }
         .background(Color.cnBg)
