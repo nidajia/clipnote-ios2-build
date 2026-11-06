@@ -661,13 +661,14 @@ struct BookmarkSuggestor {
                 text = String(text[..<fence.lowerBound])
             }
         }
-        guard let start = text.firstIndex(of: "{"),
-              let end = text.lastIndex(of: "}"),
-              start < end,
-              let data = String(text[start...end]).data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let array = root["bookmarks"] as? [Any]
-        else { throw SummarizeFailure.unparsable(text) }
+        // 先逐个捡完整对象：模型少写半个大括号时，前面的书签还能保住。
+        var array: [Any] = JSONSalvage.objects(text, key: "bookmarks")
+        if array.isEmpty {
+            guard let root = JSONSalvage.root(text),
+                  let whole = root["bookmarks"] as? [Any]
+            else { throw SummarizeFailure.unparsable(text) }
+            array = whole
+        }
 
         let known = transcript.map(\.t).sorted()
         var out: [APIBookmark] = []
@@ -828,17 +829,14 @@ struct Segmenter {
                 text = String(text[..<fence.lowerBound])
             }
         }
-        guard let start = text.firstIndex(of: "{"),
-              let end = text.lastIndex(of: "}"),
-              start < end,
-              let data = String(text[start...end]).data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            throw SummarizeFailure.unparsable(text)
-        }
-
-        guard let array = root["segments"] as? [Any] else {
-            throw SummarizeFailure.unparsable(text)
+        // 同上：先捡完整对象，尾巴被截断时保住前面的段。
+        // 分段比书签更怕全丢——没有分段，整条视频的导航就没了。
+        var array: [Any] = JSONSalvage.objects(text, key: "segments")
+        if array.isEmpty {
+            guard let root = JSONSalvage.root(text),
+                  let whole = root["segments"] as? [Any]
+            else { throw SummarizeFailure.unparsable(text) }
+            array = whole
         }
 
         // 模型给的 t 常常落在两个时间戳中间（比如给 137，而转写只有 130 和 152）。

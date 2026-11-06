@@ -259,7 +259,10 @@ struct SnapshotRoot: View {
                 HomeScreen(
                     initialSelection: detailItem,
                     detailPrepare: detailPrepare,
-                    showsImport: state == "import"
+                    showsImport: state == "import",
+                    // 多选那张图要能证明「选择」按钮和底部操作条真的在，
+                    // 光靠代码读一遍不算数——上一轮就是这么漏掉的。
+                    previewSelecting: state == "home-selecting"
                 )
             }
             .tabItem { Label("首页", systemImage: "house.fill") }

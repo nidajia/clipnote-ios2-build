@@ -97,6 +97,7 @@ shot detail-summary     detail-summary     light
 shot detail-segments    detail-segments    light
 shot detail-bookmarks   detail-bookmarks   light
 shot outline            outline            light
+shot home-selecting     home-selecting     light
 shot segments           segments           light
 shot infographic        infographic        light
 # 本机转写面板（sheet，只能作为根呈现）。

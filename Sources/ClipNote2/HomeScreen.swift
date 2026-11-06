@@ -39,10 +39,12 @@ struct HomeScreen: View {
     init(
         initialSelection: Item? = nil,
         detailPrepare: DetailScreen.PrepareState? = nil,
-        showsImport: Bool = false
+        showsImport: Bool = false,
+        previewSelecting: Bool = false
     ) {
         _selected = State(initialValue: initialSelection)
         _showImport = State(initialValue: showsImport)
+        _selecting = State(initialValue: previewSelecting)
         self.detailPrepare = detailPrepare
     }
 
@@ -313,17 +315,24 @@ struct HomeScreen: View {
                 .autocorrectionDisabled()
                 .submitLabel(.search)
 
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.cnInk3)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("清空搜索")
+            // **不要用 if 包住这个按钮。**
+            //
+            // 之前是 `if !query.isEmpty { 清空按钮 }`：输入第一个字符后视图树多了一个子节点，
+            // 而中文输入法正在组词（拼音还没上屏）——树一变，输入法会话被系统结束，
+            // 表现就是「汉字只打了第一个字母就再也打不进去」。
+            // 结构保持恒定，只改可见性与可点性。
+            Button {
+                query = ""
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.cnInk3)
             }
+            .buttonStyle(.plain)
+            .opacity(query.isEmpty ? 0 : 1)
+            .allowsHitTesting(!query.isEmpty)
+            .accessibilityHidden(query.isEmpty)
+            .accessibilityLabel("清空搜索")
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
