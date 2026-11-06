@@ -60,6 +60,7 @@ struct DetailScreen: View {
     @State private var showNote = false
     @State private var showOutline = false
     @State private var showRelink = false
+    @State private var showTranscript = false
     @State private var showInfographic = false
     @State private var showTranscribe = false
     @State private var notice: String?
@@ -237,6 +238,9 @@ struct DetailScreen: View {
         }
         .navigationDestination(isPresented: $showOutline) {
             OutlineScreen(item: current)
+        }
+        .navigationDestination(isPresented: $showTranscript) {
+            TranscriptScreen(item: current, player: player)
         }
         .navigationDestination(isPresented: $showNote) {
             NoteScreen(item: current)
@@ -1068,6 +1072,32 @@ struct DetailScreen: View {
                         .font(.cnCaption)
                     Spacer(minLength: 0)
                     Text("通读")
+                        .font(.cnCaption)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Color.cnInk3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Rectangle()
+                .fill(Color.cnHairlineSoft)
+                .frame(height: 1)
+                .padding(.vertical, 2)
+
+            // 逐句跟读和分段是同一层的两个读法：
+            // 分段看结构，逐句看原话。所以并排放，而不是藏进菜单。
+            Button {
+                showTranscript = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "text.alignleft")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("逐句跟读")
+                        .font(.cnCaption)
+                    Spacer(minLength: 0)
+                    Text("跟着播放走")
                         .font(.cnCaption)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
