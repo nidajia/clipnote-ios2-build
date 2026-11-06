@@ -21,6 +21,15 @@ struct TrashScreen: View {
     @State private var purgeTarget: APILibraryItem?
     @State private var showPurgeConfirm = false
 
+    /// 多选。批量恢复是安全操作；批量彻底删除只在确认框里写清「不可恢复」。
+    @State private var selecting = false
+    @State private var picked = Set<String>()
+    @State private var confirmPurge = false
+    @State private var working = false
+    /// 批量操作失败单独存一个变量：`errorMessage` 会把整个列表替换成错误页，
+    /// 而「删了 3 条、第 4 条失败」时用户还需要看到剩下的条目。
+    @State private var actionError: String?
+
     var body: some View {
         List {
             if loading {
@@ -43,9 +52,34 @@ struct TrashScreen: View {
             } else if items.isEmpty {
                 emptyState
             } else {
+                if let actionError {
+                    Section {
+                        Text(actionError)
+                            .font(.cnMeta)
+                            .foregroundStyle(Color.cnRed)
+                            .listRowBackground(Color.cnCard)
+                    }
+                }
                 Section {
                     ForEach(items, id: \.id) { api in
-                        row(api)
+                        Button {
+                            if selecting {
+                                if picked.contains(api.id) { picked.remove(api.id) }
+                                else { picked.insert(api.id) }
+                            }
+                        } label: {
+                            HStack(spacing: Metric.space2) {
+                                if selecting {
+                                    Image(systemName: picked.contains(api.id)
+                                          ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 19))
+                                        .foregroundStyle(picked.contains(api.id)
+                                                         ? Color.cnBrand : Color.cnInk3)
+                                }
+                                row(api)
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                 } footer: {
                     Text("删除的条目会留在这里，可以恢复。彻底删除后不可恢复。")
@@ -59,6 +93,33 @@ struct TrashScreen: View {
         .background(Color.cnBg)
         .navigationTitle("回收站")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if !items.isEmpty {
+                    Button(selecting ? "取消" : "选择") {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            selecting.toggle()
+                            picked.removeAll()
+                        }
+                    }
+                    .font(.cnChip)
+                }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if selecting {
+                batchBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .alert("彻底删除？", isPresented: $confirmPurge) {
+            Button("取消", role: .cancel) {}
+            Button("彻底删除", role: .destructive) {
+                Task { await runBatch("purge") }
+            }
+        } message: {
+            Text("选中的 \(picked.count) 条将被物理删除，**不可恢复**。")
+        }
         .task {
             if let previewItems {
                 items = previewItems
@@ -140,6 +201,76 @@ struct TrashScreen: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, Metric.space5)
             .listRowBackground(Color.cnCard)
+        }
+    }
+
+    /// 多选时底部浮出的操作条：恢复（安全）与彻底删除（危险）并排，
+    /// 但危险的那个用红色，且要再过一道确认。
+    private var batchBar: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(Color.cnHairlineSoft).frame(height: 1)
+            HStack(spacing: Metric.space2) {
+                Text(picked.isEmpty ? "选择条目" : "已选 \(picked.count) 条")
+                    .font(.cnChip)
+                    .foregroundStyle(picked.isEmpty ? Color.cnInk3 : Color.cnInk)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    Task { await runBatch("restore") }
+                } label: {
+                    Text("恢复")
+                        .font(.cnChip)
+                        .foregroundStyle(picked.isEmpty ? Color.cnInk3 : Color.cnBrand)
+                        .padding(.horizontal, Metric.space3)
+                        .padding(.vertical, 8)
+                        .background(
+                            (picked.isEmpty ? Color.cnCard3 : Color.cnBrand.opacity(0.12)),
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(picked.isEmpty || working)
+
+                Button {
+                    confirmPurge = true
+                } label: {
+                    Text("彻底删除")
+                        .font(.cnChip)
+                        .foregroundStyle(picked.isEmpty ? Color.cnInk3 : Color.cnRed)
+                        .padding(.horizontal, Metric.space3)
+                        .padding(.vertical, 8)
+                        .background(
+                            (picked.isEmpty ? Color.cnCard3 : Color.cnRed.opacity(0.14)),
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(picked.isEmpty || working)
+            }
+            .padding(.horizontal, Metric.pagePad)
+            .padding(.vertical, Metric.space2)
+        }
+        .background(Color.cnBg)
+    }
+
+    private func runBatch(_ action: String) async {
+        guard !picked.isEmpty, !working else { return }
+        working = true
+        defer { working = false }
+
+        let ids = Array(picked)
+        guard let count = await library.batch(action, ids: ids) else {
+            actionError = "操作失败，请重试。"
+            return
+        }
+        await load()
+        withAnimation(.easeInOut(duration: 0.18)) {
+            selecting = false
+            picked.removeAll()
+        }
+        if count > 0 {
+            actionError = nil
         }
     }
 

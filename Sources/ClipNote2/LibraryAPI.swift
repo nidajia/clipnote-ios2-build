@@ -618,14 +618,16 @@ struct ClipNoteClient {
     }
 
     struct APIBatchResult: Decodable {
-        var deleted: Int
+        var done: Int
         var notFound: [String]
+        /// purge 时被拒绝的条目（不在回收站里的那些）
+        var skipped: [String]
     }
 
-    /// 批量移到回收站。一次请求、服务端一次写盘。
-    func batchDelete(ids: [String]) async throws -> APIBatchResult {
+    /// 批量处理：delete / restore / purge。一次请求、服务端一次写盘。
+    func batch(action: String, ids: [String]) async throws -> APIBatchResult {
         try await post("/api/v2/batch",
-                       body: ["action": "delete", "ids": ids],
+                       body: ["action": action, "ids": ids],
                        as: APIBatchResult.self)
     }
 
@@ -1224,21 +1226,27 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// 批量移到回收站。返回实际删掉的条数；失败返回 nil。
-    func batchDelete(ids: [String]) async -> Int? {
+    /// 批量处理。返回实际处理条数；失败返回 nil。
+    func batch(_ action: String, ids: [String]) async -> Int? {
         guard let client, !ids.isEmpty else { return nil }
         do {
-            let result = try await client.batchDelete(ids: ids)
+            let result = try await client.batch(action: action, ids: ids)
             await reload()
-            log?.info("batch.deleted", "批量移到回收站", meta: [
-                "count": String(result.deleted),
+            log?.info("batch.done", "批量 \(action)", meta: [
+                "count": String(result.done),
                 "missing": String(result.notFound.count),
+                "skipped": String(result.skipped.count),
             ])
-            return result.deleted
+            return result.done
         } catch {
-            log?.error("batch.failed", "批量删除失败", meta: ["count": String(ids.count)])
+            log?.error("batch.failed", "批量 \(action) 失败", meta: ["count": String(ids.count)])
             return nil
         }
+    }
+
+    /// 批量移到回收站。
+    func batchDelete(ids: [String]) async -> Int? {
+        await batch("delete", ids: ids)
     }
 
     func loadTrash() async throws -> [APILibraryItem] {
