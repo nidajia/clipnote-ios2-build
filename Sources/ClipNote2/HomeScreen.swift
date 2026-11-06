@@ -55,10 +55,9 @@ struct HomeScreen: View {
         }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return list }
-        return list.filter {
-            $0.title.localizedCaseInsensitiveContains(q)
-                || $0.metaLine.localizedCaseInsensitiveContains(q)
-        }
+        // 交给 LibrarySearch：字段清单和输入框文案必须在一个地方，
+        // 分开写就会出现「写着能搜标签，实际搜不到」。
+        return list.filter { LibrarySearch.matches($0, query: q) }
     }
 
     /// `selected` 的布尔投影，供 iOS 16 的 navigationDestination(isPresented:) 使用。
@@ -209,7 +208,7 @@ struct HomeScreen: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.cnInk3)
 
-            TextField("搜索标题、要点、标签", text: $query)
+            TextField("搜索标题、作者、标签、笔记", text: $query)
                 .font(.cnBody)
                 .foregroundStyle(Color.cnInk)
                 .textInputAutocapitalization(.never)
