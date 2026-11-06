@@ -39,8 +39,8 @@ final class ExportTests: XCTestCase {
     func testSectionsAndOriginLabels() {
         let text = LibraryExporter.markdown(items: [
             item(
-                aiSummary: "模型写的摘要",
                 note: "我自己写的想法",
+                aiSummary: "模型写的摘要",
                 bookmarks: [APIBookmark(t: 65, note: "关键对照", by: "user")],
                 segments: [APISegment(title: "开头", t: 0, summary: "引出问题")],
                 outline: [OutlineNode(title: "主线", children: [])]
