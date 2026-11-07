@@ -189,7 +189,10 @@ enum PDFExporter {
         if !item.outline.isEmpty {
             section("脑图")
             for node in item.outline {
-                appendNode(node, depth: 0, into: out, append: append)
+                appendNode(node, depth: 0,
+                           append: { text, font, color, spacing in
+                               append(text, font: font, color: color, spaceAfter: spacing)
+                           })
             }
             out.append(NSAttributedString(string: "\n"))
         }
@@ -206,22 +209,22 @@ enum PDFExporter {
         return out
     }
 
+    /// 闭包实参不能带标签，所以这里用位置参数，
+    /// 由调用方包一层把标签映射回去（见上面的 `append` 调用）。
     private static func appendNode(
         _ node: OutlineNode, depth: Int,
-        into out: NSMutableAttributedString,
         append: (String, UIFont, UIColor, CGFloat) -> Void
     ) {
         let indent = String(repeating: "　", count: depth)
         append("\(indent)\(depth == 0 ? "■ " : "· ")\(node.title)",
-               font: .systemFont(ofSize: depth == 0 ? 11.5 : 11),
-               color: depth == 0 ? .black : .darkGray,
-               spaceAfter: 1)
+               .systemFont(ofSize: depth == 0 ? 11.5 : 11),
+               depth == 0 ? .black : .darkGray,
+               1)
         if !node.note.isEmpty {
-            append("\(indent)　\(node.note)", font: .systemFont(ofSize: 10),
-                   color: .gray, spaceAfter: 1)
+            append("\(indent)　\(node.note)", .systemFont(ofSize: 10), .gray, 1)
         }
         for child in node.children {
-            appendNode(child, depth: depth + 1, into: out, append: append)
+            appendNode(child, depth: depth + 1, append: append)
         }
     }
 

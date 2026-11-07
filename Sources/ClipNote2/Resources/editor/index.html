@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="toastui-editor.css">
+<link rel="stylesheet" href="toastui-editor-dark.css" id="dark-theme" disabled>
+<style>
+  /* 编辑器要贴满 WebView，任何内边距都会在键盘弹出时把内容推出视野 */
+  html, body { margin: 0; padding: 0; height: 100%; background: transparent; }
+  #editor { height: 100%; }
+  /* Toast UI 默认给编辑区加了竖线边框，手机上像卡片套卡片 */
+  .toastui-editor-defaultUI { border: none; }
+  .toastui-editor-main { background: transparent; }
+</style>
+</head>
+<body>
+<div id="editor"></div>
+<script src="toastui-editor.js"></script>
+<script src="zh-cn.js"></script>
+<script>
+(function () {
+  function post(payload) {
+    try {
+      window.webkit.messageHandlers.editor.postMessage(payload);
+    } catch (e) { /* 预览环境没有桥，忽略 */ }
+  }
+
+  var initial = (window.__INITIAL_MARKDOWN__ || "");
+
+  var editor = new toastui.Editor({
+    el: document.querySelector('#editor'),
+    height: '100%',
+    initialEditType: 'markdown',
+    previewStyle: 'tab',
+    initialValue: initial,
+    language: 'zh-CN',
+    usageStatistics: false,
+    hideModeSwitch: false,
+    toolbarItems: [
+      ['heading', 'bold', 'italic', 'strike'],
+      ['hr', 'quote'],
+      ['ul', 'ol', 'task', 'indent', 'outdent'],
+      ['table', 'image', 'link'],
+      ['code', 'codeblock']
+    ]
+  });
+
+  var timer = null;
+  editor.on('change', function () {
+    // 去抖：每敲一下都过桥会把主线程打满，而后端只需要「停下来时的内容」
+    if (timer) { clearTimeout(timer); }
+    timer = setTimeout(function () {
+      post({ type: 'change', value: editor.getMarkdown() });
+    }, 350);
+  });
+
+  window.__setMarkdown = function (md) {
+    if (editor.getMarkdown() === md) { return; }
+    editor.setMarkdown(md || '', false);
+  };
+
+  window.__setDark = function (isDark) {
+    document.getElementById('dark-theme').disabled = !isDark;
+    document.body.style.background = isDark ? '#111' : '#fff';
+  };
+
+  post({ type: 'ready' });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "clipnote-editor",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@toast-ui/editor": "^3.2.2"
+  }
+}

@@ -66,6 +66,21 @@ struct NoteScreen: View {
         .navigationTitle("我的笔记")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                // 富文本编辑单独一页：纯文本页负责「快速记一句」，
+                // 需要标题/表格/代码块时再进 Markdown 页。
+                // 两者写的是同一个字段，不做同步——谁最后保存以谁为准。
+                NavigationLink {
+                    MarkdownEditorScreen(item: item)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "textformat")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("富文本")
+                            .font(.cnChip)
+                    }
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("保存") { Task { await save() } }
                     .font(.cnChip)
