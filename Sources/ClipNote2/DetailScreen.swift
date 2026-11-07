@@ -61,6 +61,7 @@ struct DetailScreen: View {
     @State private var showOutline = false
     @State private var showRelink = false
     @State private var showTranscript = false
+    @State private var showTemplates = false
     @State private var showInfographic = false
     @State private var showTranscribe = false
     @State private var notice: String?
@@ -291,6 +292,12 @@ struct DetailScreen: View {
                 player.removeTimeObserver(timeObserver)
             }
             timeObserver = nil
+        }
+        .sheet(isPresented: $showTemplates) {
+            TemplateSheet { _, _ in
+                // 只重写摘要。分段/书签/脑图不动——换结构不该让别的东西跟着变。
+                Task { await generateSummary(force: true) }
+            }
         }
         .sheet(isPresented: $showRelink) {
             RelinkSheet(item: current) {
@@ -899,6 +906,20 @@ struct DetailScreen: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text("AI 摘要")
                     .font(.cnCaption)
+                // 模板名直接露在标题行：换模板是「改结构」，
+                // 属于这一块内容的属性，不该藏进二级菜单。
+                Button {
+                    showTemplates = true
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(SummaryTemplateStore.load().title)
+                            .font(.cnMeta)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.cnInk3)
+                }
+                .buttonStyle(.plain)
                 Spacer(minLength: 0)
                 infographicButton
                 refreshButton

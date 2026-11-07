@@ -328,6 +328,9 @@ enum SummarizeFailure: Error, Equatable {
 struct Summarizer {
     var config: AIConfig
     var session: URLSession = .shared
+    /// 摘要模板。只影响这一条链路（见 `SummaryTemplate` 顶部说明）。
+    var template: SummaryTemplate = SummaryTemplateStore.load()
+    var customPrompt: String = SummaryTemplateStore.loadCustomPrompt()
 
     func summarize(
         title: String,
@@ -349,7 +352,9 @@ struct Summarizer {
             "model": config.model,
             "temperature": 0.3,
             "messages": [
-                ["role": "system", "content": Self.instructions],
+                ["role": "system", "content": Self.instructions(
+                    template: template, customPrompt: customPrompt
+                )],
                 ["role": "user", "content": Self.userContent(
                     title: title, description: description,
                     platform: platform, duration: duration
@@ -394,7 +399,21 @@ struct Summarizer {
 
     // MARK: - 提示词
 
-    private static let instructions = """
+    static func instructions(template: SummaryTemplate, customPrompt: String) -> String {
+        var text = baseInstructions
+        let extra: String
+        if template == .custom {
+            extra = customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            extra = template.instruction
+        }
+        if !extra.isEmpty {
+            text += "\n" + extra
+        }
+        return text
+    }
+
+    private static let baseInstructions = """
     你是「片记」的内容摘要助手。只输出一个 JSON 对象，不要任何解释、不要 Markdown 代码块。
     格式：
     {"summary": "60-110 字的中文概述", "keyPoints": ["3-6 条要点"], "labels": ["2-3 个分类"]}
