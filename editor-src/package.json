@@ -3,6 +3,8 @@
   "private": true,
   "version": "1.0.0",
   "dependencies": {
-    "@toast-ui/editor": "^3.2.2"
+    "@toast-ui/editor": "^3.2.2",
+    "esbuild": "^0.28.2",
+    "jsdom": "^31.0.0"
   }
 }

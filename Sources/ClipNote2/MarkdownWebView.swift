@@ -82,18 +82,25 @@ struct MarkdownWebView: UIViewRepresentable {
 
             // 不信任 JS 的 ready 消息：它可能因为处理器没注册、脚本抛错而永远不来。
             // 页面加载完主动探一次，把真实状态写进日志。
+            // 分两步探：`toastui 存在但 Editor 没有`是这次真正的故障形态
+            // （npm 的 dist 缺 prosemirror，运行到一半抛错），
+            // 之前两种都报成"未定义"，把排查方向带偏了三次。
             webView.evaluateJavaScript(
-                "typeof toastui !== 'undefined' && !!toastui.Editor"
+                "[typeof toastui, (typeof toastui !== 'undefined' ? typeof toastui.Editor : '')]"
             ) { value, error in
                 if let error {
                     self.parent.onTrace("探针失败：\(error.localizedDescription)")
                     self.parent.onError("编辑器脚本没有就绪：\(error.localizedDescription)")
                     return
                 }
-                let ok = (value as? Bool) ?? false
-                self.parent.onTrace("探针 toastui=\(ok) \(self.elapsed())ms")
-                if !ok {
+                let kinds = (value as? [String]) ?? []
+                let toastuiKind = kinds.count > 0 ? kinds[0] : "?"
+                let editorKind = kinds.count > 1 ? kinds[1] : "?"
+                self.parent.onTrace("探针 toastui=\(toastuiKind) Editor=\(editorKind) \(self.elapsed())ms")
+                if toastuiKind == "undefined" {
                     self.parent.onError("编辑器脚本没有加载（toastui 未定义）")
+                } else if editorKind != "function" {
+                    self.parent.onError("编辑器脚本不完整（toastui 在，Editor=" + editorKind + "）")
                 }
             }
         }

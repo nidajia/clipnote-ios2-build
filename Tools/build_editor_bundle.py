@@ -11,10 +11,16 @@ import pathlib
 
 root = pathlib.Path(__file__).resolve().parent.parent
 editor = root / "Sources/ClipNote2/Resources/editor"
+src = root / "editor-src"
 
-css = (editor / "toastui-editor.css").read_text(encoding="utf-8")
+# 用 esbuild 自打的包，不是 npm 里的 dist。
+# 原因：dist/toastui-editor.js 把 prosemirror-* 当外部依赖，内联后运行时会抛
+# "Cannot read properties of undefined (reading 'PluginKey')"，
+# 结果 toastui 存在、Editor 不存在——三次白跑的真正原因。
+# 重打：cd editor-src && npx esbuild entry.js --bundle --format=iife --minify --outfile=editor-all.js
+css = (src / "editor-all.css").read_text(encoding="utf-8")
 dark = (editor / "toastui-editor-dark.css").read_text(encoding="utf-8")
-js = (editor / "toastui-editor.js").read_text(encoding="utf-8")
+js = (src / "editor-all.js").read_text(encoding="utf-8")
 i18n = (editor / "zh-cn.js").read_text(encoding="utf-8")
 
 # 内联到 <script> 里时，字符串中出现的 </script 会提前闭合标签
