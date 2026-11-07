@@ -190,6 +190,9 @@ struct SnapshotRoot: View {
                         initialModels: SnapshotRoot.sampleModels
                     )
                 }
+            } else if state == "note-probe" {
+                // 排障页：WebView 能不能执行内联 JS
+                NavigationStack { ProbeScreen() }
             } else if state == "note-editor" {
                 // 笔记编辑器：P2 的核心，之前从没被截图验证过。
                 // 直接作为根渲染，绕过详情页导航，减少变量。

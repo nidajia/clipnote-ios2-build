@@ -102,6 +102,7 @@ shot detail-segments    detail-segments    light
 shot detail-bookmarks   detail-bookmarks   light
 shot outline            outline            light
 shot note-editor      note-editor      light
+shot note-probe       note-probe       light
 shot home-selecting     home-selecting     light
 shot segments           segments           light
 shot infographic        infographic        light
