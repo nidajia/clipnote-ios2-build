@@ -97,10 +97,12 @@ struct NoteScreen: View {
             }
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            // 20 秒而不是 4 秒：1.1MB 的 HTML + 940KB 内联 JS 在模拟器上首次解析
+            // 可能就超过 4 秒。上一版把"慢"误判成"坏"，直接降级了。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
                 if !editorReady, editorError == nil {
                     gaveUp = true
-                    logs.error("editor.timeout", "4 秒未就绪，退回纯文本", meta: ["id": item.id])
+                    logs.error("editor.timeout", "20 秒未就绪，退回纯文本", meta: ["id": item.id])
                 }
             }
         }

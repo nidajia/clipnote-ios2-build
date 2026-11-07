@@ -42,7 +42,11 @@ shot() {
 
   # 等首帧稳定；冷启动比热启动慢。
   # 横屏那张还要等 App 自己请求转方向，多给两秒。
-  if [ "$rotate" = "landscape" ]; then sleep 6; else sleep 4; fi
+  # note-editor 要等 WebView 把 1.1MB 内联页面解析完——4 秒拍到的只是转圈，
+  # 那样这张图就证明不了"最终能不能出来"。
+  if [ "$state" = "note-editor" ]; then
+    sleep 25
+  elif [ "$rotate" = "landscape" ]; then sleep 6; else sleep 4; fi
   xcrun simctl io "$UDID" screenshot "screenshots/$name.png"
 
   if [ "$rotate" = "landscape" ]; then

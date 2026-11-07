@@ -20,6 +20,7 @@ struct MarkdownWebView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
+        context.coordinator.startedAt = Date()
         let config = WKWebViewConfiguration()
 
         let encoded = (try? JSONEncoder().encode(initial))
@@ -63,6 +64,12 @@ struct MarkdownWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         private let parent: MarkdownWebView
+        /// 用于区分「慢」和「不执行」：每个节点都带上距离创建过去的毫秒数。
+        var startedAt = Date()
+
+        private func elapsed() -> Int {
+            Int(Date().timeIntervalSince(startedAt) * 1000)
+        }
 
         init(_ parent: MarkdownWebView) {
             self.parent = parent
@@ -71,7 +78,7 @@ struct MarkdownWebView: UIViewRepresentable {
         // MARK: 导航
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            parent.onTrace("页面加载完成")
+            parent.onTrace("页面加载完成 \(elapsed())ms")
 
             // 不信任 JS 的 ready 消息：它可能因为处理器没注册、脚本抛错而永远不来。
             // 页面加载完主动探一次，把真实状态写进日志。
@@ -84,7 +91,7 @@ struct MarkdownWebView: UIViewRepresentable {
                     return
                 }
                 let ok = (value as? Bool) ?? false
-                self.parent.onTrace("探针 toastui=\(ok)")
+                self.parent.onTrace("探针 toastui=\(ok) \(self.elapsed())ms")
                 if !ok {
                     self.parent.onError("编辑器脚本没有加载（toastui 未定义）")
                 }
@@ -116,7 +123,7 @@ struct MarkdownWebView: UIViewRepresentable {
             DispatchQueue.main.async {
                 switch type {
                 case "ready":
-                    self.parent.onTrace("JS ready")
+                    self.parent.onTrace("JS ready \(self.elapsed())ms")
                     self.parent.onReady()
                 case "error":
                     let message = body["message"] as? String ?? "编辑器内部错误"
