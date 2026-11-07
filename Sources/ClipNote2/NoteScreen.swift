@@ -48,6 +48,26 @@ struct NoteScreen: View {
                 Text("\(text.count) 字")
                     .font(.cnCaption)
                     .foregroundStyle(Color.cnInk3)
+
+                // 富文本入口放在这里，不放导航栏。
+                // 导航栏左侧那个位置已经证明过「用户看不见」（v42 的「选择」按钮），
+                // 同一个坑不该踩第二次。
+                NavigationLink {
+                    MarkdownEditorScreen(item: item)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "textformat")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("富文本")
+                            .font(.cnCaption)
+                    }
+                    .foregroundStyle(Color.cnBrand)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.cnBrandSoft, in: Capsule())
+                }
+                .buttonStyle(.plain)
+
                 Spacer()
                 if failed {
                     Text("没存上，检查网络")
@@ -66,21 +86,6 @@ struct NoteScreen: View {
         .navigationTitle("我的笔记")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                // 富文本编辑单独一页：纯文本页负责「快速记一句」，
-                // 需要标题/表格/代码块时再进 Markdown 页。
-                // 两者写的是同一个字段，不做同步——谁最后保存以谁为准。
-                NavigationLink {
-                    MarkdownEditorScreen(item: item)
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "textformat")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("富文本")
-                            .font(.cnChip)
-                    }
-                }
-            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("保存") { Task { await save() } }
                     .font(.cnChip)

@@ -63,6 +63,7 @@ struct DetailScreen: View {
     @State private var showTranscript = false
     @State private var showTemplates = false
     @State private var pdfURL: URL?
+    @State private var showExport = false
     @State private var showInfographic = false
     @State private var showTranscribe = false
     @State private var notice: String?
@@ -157,6 +158,8 @@ struct DetailScreen: View {
                     aiSection
 
                     outlineRow
+
+                    exportRow
 
                     if showsSummary {
                         Rectangle()
@@ -304,6 +307,13 @@ struct DetailScreen: View {
                 player.removeTimeObserver(timeObserver)
             }
             timeObserver = nil
+        }
+        .sheet(isPresented: $showExport) {
+            ExportSheet(
+                hasSummary: !current.aiSummary.isEmpty,
+                onPDF: { exportPDF() },
+                onInfographic: { showInfographic = true }
+            )
         }
         .sheet(isPresented: Binding(
             get: { pdfURL != nil },
@@ -688,6 +698,39 @@ struct DetailScreen: View {
     /// 放进导航栏会和「笔记」抢位置（那里已经有一个常驻入口）；
     /// 放到卡片底部则会被推到折叠线以下——详情页首屏到摘要卡标题行就到头了，
     /// 这条是踩过的坑：「排在简介之后等于用户看不见」。
+    /// 导出的常驻入口。
+    ///
+    /// 之前 PDF 按钮在摘要卡头部、长图也在那里：没有摘要的条目就一个都点不到。
+    /// 现在收成一行，和「原视频」「字幕」同层——它属于「这条内容能带走什么」，
+    /// 不属于「AI 给了我什么」。
+    private var exportRow: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.cnHairlineSoft)
+                .frame(height: 1)
+                .padding(.vertical, 2)
+
+            Button {
+                showExport = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "square.and.arrow.up.on.square")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("导出")
+                        .font(.cnCaption)
+                    Spacer(minLength: 0)
+                    Text("PDF / 长图")
+                        .font(.cnCaption)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Color.cnInk3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     /// 导出 PDF。和「长图」并排：一个是给人看的图，一个是给存档/打印的文档。
     private var pdfButton: some View {
         Button {
@@ -972,8 +1015,6 @@ struct DetailScreen: View {
                 }
                 .buttonStyle(.plain)
                 Spacer(minLength: 0)
-                infographicButton
-                pdfButton
                 refreshButton
             }
             .foregroundStyle(Color.cnBrand)
