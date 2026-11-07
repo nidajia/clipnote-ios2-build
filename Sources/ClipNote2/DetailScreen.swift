@@ -103,44 +103,38 @@ struct DetailScreen: View {
         case failed(String)
     }
 
-    private var isPreparing: Bool { prepare == .loading }
-
-    /// 简介太短就不整块渲染。
+    /// 播放器与分段条：首屏第一块。
     ///
-    /// 真实数据的 `desc` 常常只是「感谢索导的配音@索拉KG5TEP」——16 个字，
-    /// 挂一个「简介」小标题去压一句致谢，比留白更难看。
-    /// 20 这个阈值是产品判断，不是技术限制；要改就改这一处。
-    private var showsSummary: Bool { item.summary.count >= 20 }
+    /// 拆这两个块是被编译器逼的：整个 `body` 是一个巨型表达式，
+    /// 加到一定规模后 Swift 类型推断直接超时（unable to type-check … in reasonable time）。
+    /// 拆开之后每个表达式的类型都好推，编译时间也回来了。
+    private var aboveFoldBlock: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            playerSurface
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                playerSurface
+            if item.playbackAvailable {
+                bookmarkBar
+            }
 
-                // 书签这一行：时间轴 + 标记按钮。
-                // 不再是「有书签才显示」——没有书签时也要有地方可以标。
-                if item.playbackAvailable {
-                    bookmarkBar
-                }
+            if let bookmarkHint {
+                Text(bookmarkHint)
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+                    .lineLimit(2)
+                    .padding(.horizontal, Metric.pagePad)
+                    .padding(.top, 4)
+                    .transition(.opacity)
+            }
 
-                if let bookmarkHint {
-                    Text(bookmarkHint)
-                        .font(.cnCaption)
-                        .foregroundStyle(Color.cnInk3)
-                        .lineLimit(2)
-                        .padding(.horizontal, Metric.pagePad)
-                        .padding(.top, 4)
-                        .transition(.opacity)
-                }
+            if !current.segments.isEmpty {
+                segmentRail
+            }
+        }
+    }
 
-                // 分段条贴在播放器正下方，常驻可见。
-                // 进独立页再点时间戳那条路绕得太远——用户想的是「跳到第 3 分钟」，
-                // 不是「先去读一遍目录」。
-                if !current.segments.isEmpty {
-                    segmentRail
-                }
-
-                VStack(alignment: .leading, spacing: Metric.space3) {
+    /// 标题往下到底部：正文主体。
+    private var bodyBlock: some View {
+        VStack(alignment: .leading, spacing: Metric.space3) {
                     Text(item.title)
                         .font(.cnTitle)
                         .foregroundStyle(Color.cnInk)
@@ -192,6 +186,23 @@ struct DetailScreen: View {
                         .padding(.top, Metric.space2)
                 }
                 .padding(Metric.pagePad)
+    }
+
+    private var isPreparing: Bool { prepare == .loading }
+
+    /// 简介太短就不整块渲染。
+    ///
+    /// 真实数据的 `desc` 常常只是「感谢索导的配音@索拉KG5TEP」——16 个字，
+    /// 挂一个「简介」小标题去压一句致谢，比留白更难看。
+    /// 20 这个阈值是产品判断，不是技术限制；要改就改这一处。
+    private var showsSummary: Bool { item.summary.count >= 20 }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                aboveFoldBlock
+
+                bodyBlock
             }
         }
         .background(Color.cnBg)
