@@ -72,7 +72,10 @@ struct DetailScreen: View {
 
     /// `initialPrepare` 只给截图用：让「已取到地址」这一态可被拍下来。
     /// 正常路径一律 `.idle`，由 `prefetch()` 去取。
-    init(item: Item, initialPrepare: PrepareState? = nil) {
+    /// 从搜索结果进来时，直接落到字幕页的这一句。
+    var focusTranscriptAt: Int? = nil
+
+    init(item: Item, initialPrepare: PrepareState? = nil, focusTranscriptAt: Int? = nil) {
         self.item = item
         if let initialPrepare {
             _prepare = State(initialValue: initialPrepare)
@@ -239,8 +242,16 @@ struct DetailScreen: View {
         .navigationDestination(isPresented: $showOutline) {
             OutlineScreen(item: current)
         }
+        // 从搜索结果点「字幕命中」进来：直接把字幕页推到最上面。
+        // 延迟一点是为了让详情页先完成推入动画，否则会出现两级导航同时动。
+        .onAppear {
+            guard focusTranscriptAt != nil, !showTranscript else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                showTranscript = true
+            }
+        }
         .navigationDestination(isPresented: $showTranscript) {
-            TranscriptScreen(item: current)
+            TranscriptScreen(item: current, focusAt: focusTranscriptAt)
         }
         .navigationDestination(isPresented: $showNote) {
             NoteScreen(item: current)

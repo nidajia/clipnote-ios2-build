@@ -28,6 +28,10 @@ struct HomeScreen: View {
     @State private var picked = Set<String>()
     @State private var confirmBatchDelete = false
     @State private var batchWorking = false
+    /// 本机已缓存的字幕，供搜索用。只读不写。
+    @State private var transcripts: [String: [TranscriptLine]] = [:]
+    /// 从搜索结果点进详情时要定位到的秒数。
+    @State private var focusTranscriptAt: Int?
     @State private var filter: HomeFilter = .all
     @State private var showImport = false
     @State private var selected: Item?
@@ -64,14 +68,17 @@ struct HomeScreen: View {
         guard !q.isEmpty else { return list }
         // 交给 LibrarySearch：字段清单和输入框文案必须在一个地方，
         // 分开写就会出现「写着能搜标签，实际搜不到」。
-        return list.filter { LibrarySearch.matches($0, query: q) }
+        return list.filter {
+            LibrarySearch.matches($0, query: q)
+                || !TranscriptIndex.hits(in: transcripts[$0.id] ?? [], query: q, limit: 3).isEmpty
+        }
     }
 
     /// `selected` 的布尔投影，供 iOS 16 的 navigationDestination(isPresented:) 使用。
     private var detailPushed: Binding<Bool> {
         Binding(
             get: { selected != nil },
-            set: { if !$0 { selected = nil } }
+            set: { if !$0 { selected = nil; focusTranscriptAt = nil } }
         )
     }
 
@@ -89,8 +96,15 @@ struct HomeScreen: View {
             // 自己包一层。包出来的行为一致：selected 有值时推入，返回时置空。
             .navigationDestination(isPresented: detailPushed) {
                 if let selected {
-                    DetailScreen(item: selected, initialPrepare: detailPrepare)
+                    DetailScreen(item: selected,
+                                 initialPrepare: detailPrepare,
+                                 focusTranscriptAt: focusTranscriptAt)
                 }
+            }
+            .task {
+                // 只读本机已缓存的字幕：搜索是每敲一下就重算的路径，
+                // 不能在这条路径上打网络。
+                transcripts = TranscriptIndex.load(itemIds: library.items.map(\.id))
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -186,15 +200,45 @@ struct HomeScreen: View {
                         selected = item
                     }
                 } label: {
-                    HStack(spacing: Metric.space2) {
-                        if selecting {
-                            Image(systemName: picked.contains(item.id)
-                                  ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 19, weight: .regular))
-                                .foregroundStyle(picked.contains(item.id)
-                                                 ? Color.cnBrand : Color.cnInk3)
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: Metric.space2) {
+                            if selecting {
+                                Image(systemName: picked.contains(item.id)
+                                      ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 19, weight: .regular))
+                                    .foregroundStyle(picked.contains(item.id)
+                                                     ? Color.cnBrand : Color.cnInk3)
+                            }
+                            ItemRow(model: item, isDownloaded: downloads.isDownloaded(item.id))
                         }
-                        ItemRow(model: item, isDownloaded: downloads.isDownloaded(item.id))
+
+                        // 字幕命中单独一行，是**独立按钮**：点它会直接去那一句，
+                        // 点条目的其余部分仍然是打开详情。
+                        // 两者语义不同，不该挤在同一个点击区域里。
+                        if !selecting, let hit = transcriptHit(for: item) {
+                            Button {
+                                focusTranscriptAt = hit.t
+                                selected = item
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "captions.bubble")
+                                        .font(.system(size: 10, weight: .semibold))
+                                    Text(mmss(hit.t))
+                                        .font(.cnMeta)
+                                    Text(hit.text)
+                                        .font(.cnMeta)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 8, weight: .semibold))
+                                }
+                                .foregroundStyle(Color.cnBrand)
+                                .padding(.vertical, 5)
+                                .padding(.leading, selecting ? 27 : 0)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
@@ -227,6 +271,20 @@ struct HomeScreen: View {
             .listRowSeparatorTint(Color.cnCard2)
             .listRowSpacing(0)
         }
+    }
+
+    private func transcriptHit(for item: Item) -> TranscriptHit? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return nil }
+        return TranscriptIndex.hits(in: transcripts[item.id] ?? [], query: q, limit: 1).first
+    }
+
+    private func mmss(_ seconds: Int) -> String {
+        let s = max(0, seconds)
+        if s >= 3600 {
+            return String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+        }
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     /// 多选时底部浮出的操作条。

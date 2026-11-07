@@ -30,11 +30,16 @@ enum LibrarySearch {
     ///
     /// 单串匹配会把「AI 泡沫」当成一个整体，而标题里通常写作「AI泡沫」，
     /// 中间有没有空格用户是记不住的。
-    static func matches(_ item: Item, query: String) -> Bool {
-        let terms = query
-            .split(whereSeparator: { $0.isWhitespace })
+    /// 切词。分开暴露是为了字幕搜索共用同一套规则——
+    /// 条目搜索和字幕搜索对「多个词」的解释必须一致，否则同一句话在两个地方结果不同。
+    static func terms(_ query: String) -> [String] {
+        query.split(whereSeparator: { $0.isWhitespace })
             .map(String.init)
             .filter { !$0.isEmpty }
+    }
+
+    static func matches(_ item: Item, query: String) -> Bool {
+        let terms = terms(query)
         guard !terms.isEmpty else { return true }
 
         let fields = haystacks(item)

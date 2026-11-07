@@ -10,6 +10,8 @@ import SwiftUI
 /// 而「这条视频说了什么、能不能带走」是刚需。
 struct TranscriptScreen: View {
     var item: Item
+    /// 从搜索结果点进来时要落到的秒数：滚到那一句并标出来。
+    var focusAt: Int? = nil
 
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var logs: LogStore
@@ -21,6 +23,7 @@ struct TranscriptScreen: View {
     @State private var message: String?
     @State private var showTranscribe = false
     @State private var copied = false
+    @State private var focused: Int?
 
     private let store = LocalTranscriptStore.shared
 
@@ -73,6 +76,7 @@ struct TranscriptScreen: View {
     }
 
     private var content: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
@@ -91,23 +95,34 @@ struct TranscriptScreen: View {
                 .padding(.top, Metric.space2)
                 .padding(.bottom, Metric.space3)
 
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                     HStack(alignment: .top, spacing: Metric.space2) {
                         Text(mmss(line.t))
                             .font(.cnMeta)
-                            .foregroundStyle(Color.cnInk3)
+                            .foregroundStyle(index == focused ? Color.cnBrand : Color.cnInk3)
                             .frame(width: 46, alignment: .leading)
                         Text(line.text)
                             .font(.cnChip)
-                            .foregroundStyle(Color.cnInk2)
+                            .foregroundStyle(index == focused ? Color.cnInk : Color.cnInk2)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                     }
                     .padding(.vertical, 5)
                     .padding(.horizontal, Metric.pagePad)
+                    .background(index == focused ? Color.cnBrand.opacity(0.08) : Color.clear)
+                    .id(index)
                 }
             }
             .padding(.bottom, Metric.space4)
+        }
+        .onAppear {
+            guard let focused else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(focused, anchor: .center)
+                }
+            }
+        }
         }
     }
 
@@ -136,6 +151,7 @@ struct TranscriptScreen: View {
             // 来源按缓存里的 locale 无法判定，用「已有字幕」表述，
             // 不假装知道它是平台给的还是自己识别的。
             source = "subtitle"
+            focused = focusIndex()
             loading = false
             return
         }
@@ -157,6 +173,7 @@ struct TranscriptScreen: View {
                 createdAt: Date(),
                 locale: "zh"
             ))
+            focused = focusIndex()
             loading = false
             logs.info("transcript.saved", "字幕落本地", meta: [
                 "id": item.id, "lines": String(lines.count),
@@ -165,6 +182,12 @@ struct TranscriptScreen: View {
             message = "字幕没取到：\n\(error.localizedDescription)"
             loading = false
         }
+    }
+
+    /// 定位到「第一句不早于 focusAt」的那句。
+    private func focusIndex() -> Int? {
+        guard let focusAt else { return nil }
+        return lines.firstIndex { $0.t >= focusAt }
     }
 
     // MARK: - 导出
