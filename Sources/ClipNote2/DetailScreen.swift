@@ -62,6 +62,7 @@ struct DetailScreen: View {
     @State private var showRelink = false
     @State private var showTranscript = false
     @State private var showTemplates = false
+    @State private var pdfURL: URL?
     @State private var showInfographic = false
     @State private var showTranscribe = false
     @State private var notice: String?
@@ -292,6 +293,54 @@ struct DetailScreen: View {
                 player.removeTimeObserver(timeObserver)
             }
             timeObserver = nil
+        }
+        .sheet(isPresented: Binding(
+            get: { pdfURL != nil },
+            set: { if !$0 { pdfURL = nil } }
+        )) {
+            if let pdfURL {
+                VStack(spacing: Metric.space4) {
+                    Image(systemName: "doc.richtext")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(Color.cnBrand)
+                        .padding(.top, Metric.space5)
+                    Text(pdfURL.lastPathComponent)
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, Metric.pagePad)
+                    Text("摘要、笔记、分段、书签、批注、脑图，按 A4 分页。不含封面与视频。")
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnInk3)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, Metric.pagePad)
+                    ShareLink(item: pdfURL) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("分享 / 存为文件")
+                                .font(.cnButton)
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(Color.cnBrand,
+                                    in: RoundedRectangle(cornerRadius: Metric.radiusButton,
+                                                         style: .continuous))
+                    }
+                    .padding(.horizontal, Metric.pagePad)
+                    Button("完成") { pdfURL = nil }
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk3)
+                        .padding(.bottom, Metric.space4)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
+                .background(Color.cnBg)
+                .presentationDetents([.height(360)])
+            }
         }
         .sheet(isPresented: $showTemplates) {
             TemplateSheet { _, _ in
@@ -666,6 +715,35 @@ struct DetailScreen: View {
     /// 放进导航栏会和「笔记」抢位置（那里已经有一个常驻入口）；
     /// 放到卡片底部则会被推到折叠线以下——详情页首屏到摘要卡标题行就到头了，
     /// 这条是踩过的坑：「排在简介之后等于用户看不见」。
+    /// 导出 PDF。和「长图」并排：一个是给人看的图，一个是给存档/打印的文档。
+    private var pdfButton: some View {
+        Button {
+            exportPDF()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.richtext")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("PDF")
+                    .font(.cnCaption)
+            }
+            .foregroundStyle(Color.cnBrand)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.cnBrandSoft, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func exportPDF() {
+        guard let url = PDFExporter.write(current) else {
+            notice = "PDF 没写出来，重试一次。"
+            logs.error("pdf.failed", "导出 PDF 失败", meta: ["id": current.id])
+            return
+        }
+        pdfURL = url
+        logs.info("pdf.built", "导出 PDF", meta: ["id": current.id])
+    }
+
     private var infographicButton: some View {
         Button {
             showInfographic = true
@@ -922,6 +1000,7 @@ struct DetailScreen: View {
                 .buttonStyle(.plain)
                 Spacer(minLength: 0)
                 infographicButton
+                pdfButton
                 refreshButton
             }
             .foregroundStyle(Color.cnBrand)
