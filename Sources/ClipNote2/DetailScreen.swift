@@ -310,7 +310,9 @@ struct DetailScreen: View {
             set: { if !$0 { pdfURL = nil } }
         )) {
             if let pdfURL {
-                PDFShareSheet(url: pdfURL) { pdfURL = nil }
+                // 显式 self：`if let pdfURL` 把名字遮住了，
+                // 直接写 pdfURL = nil 会被解析成给那个 let 赋值。
+                PDFShareSheet(url: pdfURL) { self.pdfURL = nil }
             }
         }
         .sheet(isPresented: $showTemplates) {
