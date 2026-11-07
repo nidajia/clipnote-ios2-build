@@ -2,22 +2,13 @@ import SwiftUI
 
 /// 我的笔记。独立一页。
 ///
-/// 为什么不放在详情页里直接编辑：详情页已经有简介、AI 摘要、作者备注三段文字，
-/// 再加一个可编辑区域就是第四段，滚动条会变得很长，而「读」和「写」是两种状态——
-/// 混在一页里，用户既读不干净也写不专注。
+/// 打开就是完整编辑器，没有模式切换。
+/// 上一版做成「纯文本 / Markdown」二选一，打开后用户还要先做一个决定才知道能写什么——
+/// 编辑器应该一进来就什么都有。
 ///
-/// 两种编辑模式写的是**同一个字段**：
-/// - 纯文本：快速记一句，起手最快；
-/// - Markdown：要标题、表格、代码块时切过去。
-/// 模式切换不跳页——上一版跳到一个新页面，用户回来后上下文全丢了。
+/// 但**不能有死路**：富文本起不来时自动退回纯文本，并且说清为什么。
 struct NoteScreen: View {
     var item: Item
-
-    enum Mode: String, CaseIterable, Identifiable {
-        case plain = "纯文本"
-        case markdown = "Markdown"
-        var id: String { rawValue }
-    }
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: LibraryStore
@@ -27,11 +18,10 @@ struct NoteScreen: View {
     @State private var saving = false
     @State private var failed = false
 
-    @State private var mode: Mode = .plain
     @State private var editorReady = false
     @State private var editorError: String?
-    /// 编辑器迟迟不 ready 时给用户一句话，而不是一直转圈。
-    @State private var readyTimeout = false
+    /// 超时也走降级：一条永远等不到的 ready 消息不该把用户锁在转圈里。
+    @State private var gaveUp = false
 
     init(item: Item) {
         self.item = item
@@ -39,15 +29,20 @@ struct NoteScreen: View {
     }
 
     private var dirty: Bool { text != item.note }
+    private var useFallback: Bool { editorError != nil || gaveUp }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            modeBar
+            if let editorError {
+                banner("编辑器没能启动：\(editorError)")
+            } else if gaveUp {
+                banner("编辑器加载超时，已切回纯文本。内容照常保存。")
+            }
 
-            if mode == .plain {
+            if useFallback {
                 plainEditor
             } else {
-                markdownEditor
+                editorArea
             }
 
             Divider().overlay(Color.cnHairline)
@@ -70,38 +65,46 @@ struct NoteScreen: View {
         }
     }
 
-    // MARK: - 模式切换
-
-    private var modeBar: some View {
-        HStack(spacing: Metric.space2) {
-            ForEach(Mode.allCases) { one in
-                Button {
-                    mode = one
-                } label: {
-                    Text(one.rawValue)
-                        .font(.cnCaption)
-                        .foregroundStyle(mode == one ? Color.cnBrand : Color.cnInk3)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            mode == one ? Color.cnBrandSoft : Color.clear,
-                            in: Capsule()
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer(minLength: 0)
-            if mode == .markdown, !editorReady, editorError == nil {
-                Text(readyTimeout ? "编辑器没加载起来" : "加载中…")
-                    .font(.cnMeta)
-                    .foregroundStyle(readyTimeout ? Color.cnRed : Color.cnInk3)
-            }
-        }
-        .padding(.horizontal, Metric.pagePad)
-        .padding(.vertical, 6)
+    private func banner(_ message: String) -> some View {
+        Text(message)
+            .font(.cnMeta)
+            .foregroundStyle(Color.cnRed)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Metric.pagePad)
+            .padding(.vertical, 6)
     }
 
-    // MARK: - 纯文本
+    private var editorArea: some View {
+        ZStack {
+            MarkdownWebView(
+                markdown: $text,
+                initial: text,
+                onReady: {
+                    editorReady = true
+                    logs.info("editor.ready", "编辑器就绪", meta: ["id": item.id])
+                },
+                onError: { message in
+                    editorError = message
+                    logs.error("editor.failed", message, meta: ["id": item.id])
+                },
+                onTrace: { step in
+                    // 每一步都进日志：用户上报后能直接看到卡在哪一步
+                    logs.info("editor.trace", step, meta: ["id": item.id])
+                }
+            )
+            if !editorReady, editorError == nil, !gaveUp {
+                RingSpinner(size: 16, color: .cnBrand)
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                if !editorReady, editorError == nil {
+                    gaveUp = true
+                    logs.error("editor.timeout", "4 秒未就绪，退回纯文本", meta: ["id": item.id])
+                }
+            }
+        }
+    }
 
     private var plainEditor: some View {
         ZStack(alignment: .topLeading) {
@@ -121,51 +124,6 @@ struct NoteScreen: View {
                 .padding(.top, 2)
         }
     }
-
-    // MARK: - Markdown
-
-    private var markdownEditor: some View {
-        ZStack {
-            if let editorError {
-                // 出错就把话说清楚。一直转圈是最糟的反馈——用户不知道等还是重试。
-                VStack(spacing: Metric.space2) {
-                    Text("编辑器没能启动")
-                        .font(.cnChip)
-                        .foregroundStyle(Color.cnInk)
-                    Text(editorError)
-                        .font(.cnMeta)
-                        .foregroundStyle(Color.cnRed)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, Metric.pagePad)
-                    Text("可以先切回「纯文本」继续写，内容不会丢。")
-                        .font(.cnMeta)
-                        .foregroundStyle(Color.cnInk3)
-                }
-            } else {
-                MarkdownWebView(
-                    markdown: $text,
-                    initial: text,
-                    onReady: {
-                        editorReady = true
-                        readyTimeout = false
-                    },
-                    onError: { editorError = $0 }
-                )
-                if !editorReady {
-                    RingSpinner(size: 16, color: .cnBrand)
-                }
-            }
-        }
-        .onAppear {
-            // 3 秒还没 ready 就不再假装"快好了"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                if !editorReady && editorError == nil { readyTimeout = true }
-            }
-        }
-    }
-
-    // MARK: - 状态条
 
     private var statusBar: some View {
         HStack {
