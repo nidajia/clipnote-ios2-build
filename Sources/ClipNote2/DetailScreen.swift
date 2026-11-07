@@ -713,9 +713,12 @@ struct DetailScreen: View {
             Button {
                 showExport = true
             } label: {
-                HStack(spacing: 5) {
+                // 定高 + 居中对齐：图标和文字的行高不一样，
+                // 只靠 HStack 默认对齐，文字会贴着分隔线往上飘。
+                HStack(spacing: 6) {
                     Image(systemName: "square.and.arrow.up.on.square")
                         .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 14)
                     Text("导出")
                         .font(.cnCaption)
                     Spacer(minLength: 0)
@@ -723,8 +726,10 @@ struct DetailScreen: View {
                         .font(.cnCaption)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 8)
                 }
                 .foregroundStyle(Color.cnInk3)
+                .frame(height: 40)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

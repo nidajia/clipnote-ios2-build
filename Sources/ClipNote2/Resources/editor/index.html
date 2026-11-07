@@ -28,7 +28,20 @@
 
   var initial = (window.__INITIAL_MARKDOWN__ || "");
 
-  var editor = new toastui.Editor({
+  // 任何异常都要报回原生，否则界面只会无限转圈——上一版就是这样，
+  // 用户看到的是转圈，我看不到的是「哪一行炸了」。
+  window.onerror = function (msg, src, line) {
+    post({ type: 'error', message: msg + ' @' + (src || '') + ':' + line });
+  };
+
+  if (typeof toastui === 'undefined' || !toastui.Editor) {
+    post({ type: 'error', message: '编辑器脚本没有加载（toastui 未定义）' });
+    return;
+  }
+
+  var editor;
+  try {
+    editor = new toastui.Editor({
     el: document.querySelector('#editor'),
     height: '100%',
     initialEditType: 'markdown',
@@ -44,7 +57,11 @@
       ['table', 'image', 'link'],
       ['code', 'codeblock']
     ]
-  });
+    });
+  } catch (e) {
+    post({ type: 'error', message: '初始化失败：' + (e && e.message ? e.message : e) });
+    return;
+  }
 
   var timer = null;
   editor.on('change', function () {
