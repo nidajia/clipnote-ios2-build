@@ -38,13 +38,13 @@ struct MarkdownWebView: UIViewRepresentable {
         web.scrollView.backgroundColor = .clear
         web.scrollView.keyboardDismissMode = .interactive
 
-        let (url, trace) = Self.preparedIndexURL()
-        for line in trace { onTrace(line) }
-        guard let url else {
-            onTrace("找不到可加载的 index.html")
-            DispatchQueue.main.async { self.onError("编辑器页面没有准备好（资源缺失）") }
+        guard let url = Self.bundleURL() else {
+            onTrace("包里没有 editor-bundle.html")
+            DispatchQueue.main.async { self.onError("编辑器页面缺失（editor-bundle.html）") }
             return web
         }
+        let sizeKB = ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) / 1024
+        onTrace("页面 \(url.lastPathComponent) \(sizeKB)KB")
         onTrace("开始加载 \(url.lastPathComponent)")
         web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         return web
@@ -52,62 +52,13 @@ struct MarkdownWebView: UIViewRepresentable {
 
     func updateUIView(_ web: WKWebView, context: Context) {}
 
-    /// 编辑器资源清单（被 xcodegen 拍平到 bundle 根）。
-    static let assetNames = [
-        "index.html",
-        "toastui-editor.js",
-        "toastui-editor.css",
-        "toastui-editor-dark.css",
-        "zh-cn.js",
-    ]
-
-    /// 准备可加载的页面地址。
+    /// 单文件页面：CSS 与 JS 全部内联（见 Tools/build_editor_bundle.py）。
     ///
-    /// **关键：不直接从 app bundle 里 loadFileURL。**
-    /// WKWebView 对 `file://` 子资源的读取受沙盒限制，从 bundle 根加载 HTML 时，
-    /// 同目录的 js/css 可能被静默拒绝——表现就是白屏、JS 一行都不执行，
-    /// 而且没有任何错误回调。这类失败极难从现象反推。
-    ///
-    /// 所以先把资源复制到 Caches/editor，再从那里加载：
-    /// 该目录在进程自己的容器里，读权限没有歧义。
-    /// 复制只做一次（按文件大小判断是否需要重刷）。
-    static func preparedIndexURL() -> (URL?, [String]) {
-        var trace: [String] = []
-        let fm = FileManager.default
-        guard let cacheRoot = fm.urls(for: .cachesDirectory, in: .userDomainMask).first else {
-            return (nil, ["拿不到 Caches 目录"])
-        }
-        let dir = cacheRoot.appendingPathComponent("editor", isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-
-        for name in assetNames {
-            let bundled = Bundle.main.url(forResource: name, withExtension: nil)
-                ?? Bundle.main.url(forResource: (name as NSString).deletingPathExtension,
-                                  withExtension: (name as NSString).pathExtension,
-                                  subdirectory: "editor")
-            guard let bundled else {
-                trace.append("缺资源：\(name)")
-                continue
-            }
-            let target = dir.appendingPathComponent(name)
-            let sameSize = (try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-                == (try? bundled.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-            if !sameSize {
-                try? fm.removeItem(at: target)
-                do {
-                    try fm.copyItem(at: bundled, to: target)
-                    trace.append("复制 \(name)")
-                } catch {
-                    trace.append("复制失败 \(name)：\(error.localizedDescription)")
-                }
-            }
-        }
-
-        let index = dir.appendingPathComponent("index.html")
-        guard fm.fileExists(atPath: index.path) else {
-            return (nil, trace + ["没有 index.html"])
-        }
-        return (index, trace)
+    /// 为什么不再用「HTML + 同目录 js/css」：真机上页面能加载完成，
+    /// 但同目录脚本不执行，`toastui` 未定义且无任何错误回调——连试三版都卡在这。
+    /// 单文件没有子资源请求，这类失败就整类消失。
+    static func bundleURL() -> URL? {
+        Bundle.main.url(forResource: "editor-bundle", withExtension: "html")
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
