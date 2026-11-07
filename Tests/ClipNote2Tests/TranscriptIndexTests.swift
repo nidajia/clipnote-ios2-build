@@ -29,7 +29,9 @@ final class TranscriptIndexTests: XCTestCase {
     }
 
     func testLimit() {
-        XCTAssertEqual(TranscriptIndex.hits(in: lines, query: "的", limit: 2).count, 2)
+        // "估值" 命中前两句；limit 要能截断
+        XCTAssertEqual(TranscriptIndex.hits(in: lines, query: "估值", limit: 2).count, 2)
+        XCTAssertEqual(TranscriptIndex.hits(in: lines, query: "估值", limit: 1).count, 1)
     }
 
     func testEmptyQueryGivesNothing() {
