@@ -22,6 +22,7 @@ enum LibrarySearch {
             item.authorNote,
         ]
         fields += item.bookmarks.map(\.note)
+        fields += item.annotations.map { "\($0.quote) \($0.note)" }
         fields += item.segments.map { "\($0.title) \($0.summary)" }
         return fields
     }

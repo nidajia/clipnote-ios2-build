@@ -29,6 +29,32 @@ struct APISource: Decodable, Equatable {
 }
 
 /// 一段总结。`t` 是这段开始的时间（秒），用来和播放器对齐。
+/// 对某一句话的批注。
+///
+/// 和 `APIBookmark` 的区别不是字段多少，而是**意图**：
+/// 书签是「记住这一刻」（备注可以空），批注是「对这句有话说」（必须有内容）。
+/// 所以 `quote` 存的是当时的原话——半年后只有自己的话、没有原文，是读不懂的。
+struct APIAnnotation: Decodable, Equatable, Hashable {
+    var t: Int
+    var quote: String
+    var note: String
+
+    private enum CodingKeys: String, CodingKey { case t, quote, note }
+
+    init(t: Int, quote: String = "", note: String) {
+        self.t = t
+        self.quote = quote
+        self.note = note
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        t = (try? c.decodeIfPresent(Int.self, forKey: .t)) ?? 0
+        quote = (try? c.decodeIfPresent(String.self, forKey: .quote)) ?? ""
+        note = (try? c.decodeIfPresent(String.self, forKey: .note)) ?? ""
+    }
+}
+
 struct APISegment: Decodable, Equatable, Hashable, Identifiable {
     var title: String
     var t: Int
@@ -159,6 +185,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     /// AI 脑图。树形，服务端限 3 层 / 40 节点。
     var outline: [OutlineNode] = []
     var outlineAt: Int = 0
+    var annotations: [APIAnnotation] = []
+    var annotationsAt: Int = 0
     /// "bilibili" / "douyin" / ...。跳 App 要用它选 scheme。
     var platform: String = ""
     /// 软删时间戳（毫秒）。只在回收站里有值，列表里一律为 nil。
@@ -171,6 +199,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case bookmarks, bookmarksAt
         case author, authorId, videoId, sourceURL, authorNote, authorNoteAt
         case authorAvatar, note, noteAt, outline, outlineAt
+        case annotations, annotationsAt
     }
 
     init(
@@ -235,6 +264,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         authorAvatar = try c.decodeIfPresent(String.self, forKey: .authorAvatar) ?? ""
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         outline = try c.decodeIfPresent([OutlineNode].self, forKey: .outline) ?? []
+        annotations = (try? c.decodeIfPresent([APIAnnotation].self, forKey: .annotations)) ?? []
         noteAt = try c.decodeIfPresent(Int.self, forKey: .noteAt) ?? 0
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
@@ -606,6 +636,13 @@ struct ClipNoteClient {
         ["title": node.title,
          "note": node.note,
          "children": node.children.map(encodeNode)]
+    }
+
+    /// 整体替换一条内容的批注。
+    func saveAnnotations(id: String, annotations: [APIAnnotation]) async throws -> APILibraryItem {
+        let payload = annotations.map { ["t": $0.t, "quote": $0.quote, "note": $0.note] as [String: Any] }
+        return try await post("/api/v2/items/\(encode(id))/annotations",
+                              body: ["annotations": payload], as: APILibraryItem.self)
     }
 
     /// 给老条目补原始链接：解析 URL、核对标题后回填 bvid 与作者 id。
@@ -1220,6 +1257,24 @@ final class LibraryStore: ObservableObject {
             return nil
         } catch let failure as ClipNoteClient.Failure {
             log?.error("link.relink_failed", failure.displayMessage, meta: ["id": id])
+            return failure.displayMessage
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// 保存批注（整体替换）。成功返回 nil。
+    func saveAnnotations(id: String, annotations: [APIAnnotation]) async -> String? {
+        guard let client else { return "还没有连上服务端。" }
+        do {
+            _ = try await client.saveAnnotations(id: id, annotations: annotations)
+            await reload()
+            log?.info("annotation.saved", "批注已保存", meta: [
+                "id": id, "count": String(annotations.count),
+            ])
+            return nil
+        } catch let failure as ClipNoteClient.Failure {
+            log?.error("annotation.failed", failure.displayMessage, meta: ["id": id])
             return failure.displayMessage
         } catch {
             return error.localizedDescription

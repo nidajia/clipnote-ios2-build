@@ -21,11 +21,20 @@ struct TranscriptScreen: View {
     @State private var durationSeconds: Int = 0
     @State private var loading = true
     @State private var message: String?
+    @State private var error: String?
     @State private var showTranscribe = false
     @State private var copied = false
     @State private var focused: Int?
+    @State private var annotations: [APIAnnotation] = []
+    @State private var editing: AnnotationTarget?
 
     private let store = LocalTranscriptStore.shared
+
+    /// sheet(item:) 需要一个 Identifiable。用句子的秒数当 id——同一句只有一个批注。
+    struct AnnotationTarget: Identifiable {
+        let id: Int
+        let line: TranscriptLine
+    }
 
     var body: some View {
         Group {
@@ -64,6 +73,17 @@ struct TranscriptScreen: View {
             }
         }
         .task { await load() }
+        .sheet(item: $editing) { target in
+            AnnotationEditor(
+                quote: target.line.text,
+                timeText: mmss(target.line.t),
+                existing: annotation(for: target.line.t)?.note ?? "",
+                onSave: { note in save(note, for: target.line) },
+                onDelete: annotation(for: target.line.t) == nil
+                    ? nil
+                    : { save("", for: target.line) }
+            )
+        }
         .sheet(isPresented: $showTranscribe) {
             TranscribeSheet(item: item) { transcript in
                 lines = transcript.lines
@@ -78,6 +98,14 @@ struct TranscriptScreen: View {
     private var content: some View {
         ScrollViewReader { proxy in
         ScrollView {
+            if let error {
+                Text(error)
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnRed)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Metric.pagePad)
+                    .padding(.top, Metric.space2)
+            }
             LazyVStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                     Text(source == "subtitle" ? "平台字幕" : "本机识别")
@@ -106,11 +134,40 @@ struct TranscriptScreen: View {
                             .foregroundStyle(index == focused ? Color.cnInk : Color.cnInk2)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
+
+                        Button {
+                            editing = AnnotationTarget(id: line.t, line: line)
+                        } label: {
+                            Image(systemName: annotation(for: line.t) == nil
+                                  ? "plus.circle" : "text.bubble.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(annotation(for: line.t) == nil
+                                                 ? Color.cnInk3 : Color.cnBrand)
+                                .frame(width: 28, height: 24)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .padding(.vertical, 5)
                     .padding(.horizontal, Metric.pagePad)
                     .background(index == focused ? Color.cnBrand.opacity(0.08) : Color.clear)
                     .id(index)
+
+                    if let note = annotation(for: line.t)?.note, !note.isEmpty {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "text.bubble")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.cnBrand)
+                                .padding(.top, 3)
+                            Text(note)
+                                .font(.cnMeta)
+                                .foregroundStyle(Color.cnInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.leading, 46 + Metric.space2)
+                        .padding(.trailing, Metric.pagePad)
+                        .padding(.bottom, 4)
+                    }
                 }
             }
             .padding(.bottom, Metric.space4)
@@ -145,6 +202,10 @@ struct TranscriptScreen: View {
     // MARK: - 数据
 
     private func load() async {
+        // 批注跟着条目走，不是跟着字幕文件走：字幕可以重新识别，
+        // 但批注是用户写的，不能因为换了一份字幕就丢。
+        annotations = library.items.first { $0.id == item.id }?.annotations ?? []
+
         if let cached = store.load(id: item.id), !cached.lines.isEmpty {
             lines = cached.lines
             durationSeconds = cached.durationSeconds
@@ -188,6 +249,35 @@ struct TranscriptScreen: View {
     private func focusIndex() -> Int? {
         guard let focusAt else { return nil }
         return lines.firstIndex { $0.t >= focusAt }
+    }
+
+    // MARK: - 批注
+
+    private func annotation(for t: Int) -> APIAnnotation? {
+        annotations.first { $0.t == t }
+    }
+
+    /// 保存一句的批注。空内容即删除。
+    ///
+    /// 整体替换而不是逐条增删：批注数量少（一条片子通常几句到几十句），
+    /// 整体替换让「界面看到的」和「服务端存的」永远一致。
+    private func save(_ note: String, for line: TranscriptLine) {
+        var next = annotations.filter { $0.t != line.t }
+        if !note.isEmpty {
+            next.append(APIAnnotation(t: line.t, quote: line.text, note: note))
+        }
+        next.sort { $0.t < $1.t }
+        annotations = next
+
+        Task {
+            if let failure = await library.saveAnnotations(id: item.id, annotations: next) {
+                error = failure
+                return
+            }
+            logs.info("annotation.saved", note.isEmpty ? "删除批注" : "写入批注", meta: [
+                "id": item.id, "t": String(line.t),
+            ])
+        }
     }
 
     // MARK: - 导出
