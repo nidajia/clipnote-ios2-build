@@ -85,6 +85,23 @@ setTimeout(() => {
     w.__replaceAll("");
   }
 
+  console.log("── 粘贴 ──");
+  {
+    const pmDom = d.querySelector(".ProseMirror");
+    w.__replaceAll("");
+    const ev = new w.Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "clipboardData", {
+      value: {
+        types: ["text/plain"],
+        getData: (kind) => (kind === "text/plain" ? "<ol><li>甲</li><li>乙</li></ol>" : ""),
+      },
+    });
+    pmDom.dispatchEvent(ev);
+    const pasted = w.__getMarkdown();
+    ok(pasted.includes("甲"), "纯文本里的 HTML 片段被当成结构插入", JSON.stringify(pasted));
+    ok(!pasted.includes("<ol>"), "正文里不出现 <ol> 标签");
+  }
+
   console.log("── 内容 ──");
   const initial = w.__getMarkdown ? w.__getMarkdown() : null;
   ok(typeof initial === "string", "__getMarkdown 可用", initial && initial.slice(0, 30));

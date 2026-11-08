@@ -8,7 +8,7 @@
 // 序列化反过来必须自己写：产出的是用户笔记的**存储格式**，
 // 必须逐字可控，不能受库的默认风格左右。
 import markdownit from "markdown-it";
-import { DOMParser as PMDOMParser } from "prosemirror-model";
+import { DOMParser as PMDOMParser, Slice } from "prosemirror-model";
 import {
   MarkdownSerializer,
   MarkdownSerializerState,
@@ -142,4 +142,34 @@ export function normalizeMarkdown(text) {
     .replace(/[ \t]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+// ── 粘贴：把「纯文本里的 HTML」救回来 ────────────────────────────
+//
+// 有些来源（微信、部分网页/编辑器）在剪贴板里只给纯文本，而那段纯文本
+// 本身就是标记源码。直接插入的话，正文里会永久留下 `<ol><li></ol>` 这类字符串，
+// 而且它会跟着笔记存进服务端——那是内容，不是渲染问题，事后只能手工删。
+//
+// 边界很清楚：**只在粘贴这一刻接受 HTML，转成节点后不留标签**。
+// 存储格式仍然只有 Markdown 一种。
+
+const HTML_START = /^\s*<(p|div|ul|ol|li|table|thead|tbody|tr|td|th|blockquote|pre|h[1-6]|hr)\b[^>]*>/i;
+const HTML_END = /<\/[a-z][a-z0-9]*>\s*$/i;
+
+/// 是不是「一段完整的 HTML 元素」。
+/// 必须首尾都像标签，避免把正文里顺手写的 `<div` 当成 HTML 吞掉。
+export function looksLikeHtml(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return false;
+  return HTML_START.test(trimmed) && HTML_END.test(trimmed);
+}
+
+/// HTML 片段 → 可插入的切片。
+/// innerHTML 只作用在游离节点上：脚本不会执行，图片也不会被请求；
+/// 解析进我们的 schema 之后，不认识的标签一律被丢掉。
+export function htmlToSlice(html) {
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  const doc = PMDOMParser.fromSchema(schema).parse(holder);
+  return new Slice(doc.content, 0, 0);
 }

@@ -12,7 +12,7 @@ import { gapCursor } from "prosemirror-gapcursor";
 import { tableEditing } from "prosemirror-tables";
 import { sinkListItem, liftListItem } from "prosemirror-schema-list";
 import { schema, nodes } from "./schema.js";
-import { markdownToDoc, docToMarkdown, sliceToMarkdown } from "./markdown.js";
+import { markdownToDoc, docToMarkdown, sliceToMarkdown, looksLikeHtml, htmlToSlice } from "./markdown.js";
 import { markdownInputRules, bold, italic, exitEmptyCodeBlock } from "./commands.js";
 import { createToolbar } from "./toolbar.js";
 import "./styles.css";
@@ -38,7 +38,11 @@ function placeholderPlugin() {
     view(editorView) {
       const sync = () => {
         const doc = editorView.state.doc;
-        const empty = doc.childCount === 1 && doc.firstChild.textContent.trim() === "";
+        // 「空」必须是「一个空段落」，不能是「一个没有文字的块」。
+        // 后者会把空表格、空代码块、分隔线都判成空，占位文字压在内容上。
+        const empty = doc.childCount === 1
+          && doc.firstChild.type === nodes.paragraph
+          && doc.firstChild.content.size === 0;
         editorView.dom.classList.toggle("is-empty", empty);
       };
       sync();
@@ -86,6 +90,26 @@ export function mount(root) {
   const view = new EditorView(editorHost, {
     state: buildState(window.__INITIAL_MARKDOWN__ || ""),
     attributes: { "data-placeholder": PLACEHOLDER, spellcheck: "false" },
+    /// 剪贴板里只有纯文本、而那文本是 HTML 源码时，转成节点再插入。
+    /// 不这么做，正文里会永久留下 `<ol><li></ol>` 这种字符串并跟着笔记存进服务端。
+    /// 有 text/html 时交给 ProseMirror 默认解析——它比这里更懂结构。
+    handlePaste(pasteView, event) {
+      const data = event.clipboardData;
+      if (!data) return false;
+      if ((data.getData("text/html") || "").trim()) return false;
+      const text = data.getData("text/plain") || "";
+      if (!looksLikeHtml(text)) return false;
+      try {
+        const slice = htmlToSlice(text);
+        if (!slice.size) return false;
+        pasteView.dispatch(pasteView.state.tr.replaceSelection(slice).scrollIntoView());
+        return true;
+      } catch (error) {
+        // 结构装不下（比如往表格格里塞整张表）就退回默认粘贴，
+        // 宁可留下文字，也不能吞掉用户复制的东西。
+        return false;
+      }
+    },
     dispatchTransaction(tr) {
       const next = view.state.apply(tr);
       view.updateState(next);
