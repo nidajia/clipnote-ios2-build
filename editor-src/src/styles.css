@@ -1,0 +1,463 @@
+/* 片记笔记编辑器 · 自有样式
+   视觉语言沿用已验证过的那一版：45px 工具栏 / #f7f9fc 底色 / 正文左右 20px，
+   与 App 的 Metric.pagePad 对齐。这里不引入任何第三方 CSS。 */
+
+:root {
+  --ink: #1a1c20;
+  --ink-2: #4a5060;
+  --ink-3: #9aa1ad;
+  --line: #ebedf2;
+  --line-soft: #e6e9ef;
+  --bg: #ffffff;
+  --toolbar-bg: #f7f9fc;
+  --brand: #2f6fed;
+  --brand-soft: #e8eefc;
+  --code-bg: #f7f8fa;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font: 15px/1.7 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  color: var(--ink);
+  overflow: hidden;
+}
+
+#cn-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── 工具栏 ────────────────────────────────────────────────────
+   一行到底，横向滚动。按钮 flex:0 0 auto 是必须的：
+   否则 flex 会把 32px 的按钮压到 20 出头，看得见、点不准。 */
+.cn-tb-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.cn-tb {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  height: 45px;
+  padding: 0 6px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.cn-tb::-webkit-scrollbar {
+  display: none;
+}
+
+.cn-tb-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0 3px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-2);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cn-tb-btn:active {
+  background: #e9edf4;
+}
+
+.cn-tb-btn.is-on {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.cn-tb-btn:disabled {
+  opacity: 0.32;
+}
+
+.cn-tb-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 18px;
+  margin: 0 6px;
+  background: #e1e3e9;
+}
+
+/* 右缘渐隐：只渐到工具栏自己的底色。渐到纯白会变成一条白杠，比没有更糟。 */
+.cn-tb-fade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 36px;
+  height: 45px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  background: linear-gradient(to right, rgba(247, 249, 252, 0), var(--toolbar-bg) 58%);
+}
+
+.cn-tb-fade.on {
+  opacity: 1;
+}
+
+.cn-tb-fade::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  margin-top: -5px;
+  border-top: 1.5px solid var(--ink-3);
+  border-right: 1.5px solid var(--ink-3);
+  transform: rotate(45deg);
+}
+
+/* ── 弹层 ────────────────────────────────────────────────────── */
+.cn-tb-popup-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cn-tb-popup {
+  position: fixed;
+  min-width: 132px;
+  padding: 6px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(20, 26, 40, 0.16), 0 0 0 1px rgba(20, 26, 40, 0.06);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  pointer-events: auto;
+}
+
+.cn-tb-popup.open {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.cn-tb-item {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+}
+
+.cn-tb-item:active {
+  background: #f2f4f8;
+}
+
+.cn-tb-grid-label {
+  padding: 2px 6px 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.cn-tb-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 22px);
+  gap: 3px;
+}
+
+.cn-tb-grid-cell {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #dfe3ea;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.cn-tb-grid-cell.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.cn-tb-input {
+  display: block;
+  width: 208px;
+  margin: 4px 4px 8px;
+  padding: 8px 10px;
+  border: 1px solid #dfe3ea;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.cn-tb-input:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+
+.cn-tb-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 0 4px 2px;
+}
+
+.cn-tb-primary,
+.cn-tb-secondary {
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: 0;
+  font: inherit;
+  font-size: 14px;
+}
+
+.cn-tb-primary {
+  background: var(--brand);
+  color: #fff;
+}
+
+.cn-tb-secondary {
+  background: #eef1f6;
+  color: var(--ink-2);
+}
+
+/* ── 编辑区 ──────────────────────────────────────────────────── */
+.cn-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.ProseMirror {
+  position: relative;
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  padding: 14px 20px 44px;
+  outline: none;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  caret-color: var(--brand);
+}
+
+.ProseMirror.is-empty::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.ProseMirror ::selection {
+  background: rgba(47, 111, 237, 0.16);
+}
+
+/* ── 正文排版 ────────────────────────────────────────────────── */
+.ProseMirror p {
+  margin: 0 0 10px;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3,
+.ProseMirror h4,
+.ProseMirror h5,
+.ProseMirror h6 {
+  margin: 18px 0 8px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.ProseMirror h1 { font-size: 23px; }
+.ProseMirror h2 { font-size: 19px; }
+.ProseMirror h3 { font-size: 16.5px; }
+.ProseMirror h4,
+.ProseMirror h5,
+.ProseMirror h6 { font-size: 15px; }
+
+.ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
+.ProseMirror li {
+  margin: 2px 0;
+}
+
+.ProseMirror li > p {
+  margin: 0;
+}
+
+/* ── 任务清单 ──────────────────────────────────────────────────
+   勾选态挂在 li 上，所以普通项和任务项可以混在同一个列表里。
+   勾选框用 ::before 画，不插真正的 <input>：
+   真 input 会抢焦点，也会被复制路径带出去。 */
+.ProseMirror li[data-task] {
+  list-style: none;
+  position: relative;
+  min-height: 22px;
+}
+
+/* 勾选框要停在「原来的圆点」位置上，正文左缘才和普通条目对齐。
+   所以用负偏移挪进 ul 的内边距里，而不是给 li 加左内边距。 */
+.ProseMirror li[data-task]::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #c6ccd8;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.ProseMirror li[data-task][data-checked="true"]::before {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+
+.ProseMirror li[data-task][data-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: -13px;
+  top: 6px;
+  width: 4px;
+  height: 8px;
+  border-right: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(40deg);
+}
+
+/* 已勾选的条目压一档明度，方便扫读哪些做完了。
+   不加删除线：笔记里的句子仍要能读。 */
+.ProseMirror li[data-checked="true"] {
+  color: var(--ink-3);
+}
+
+.ProseMirror blockquote {
+  margin: 0 0 12px;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid #dfe3ea;
+  color: var(--ink-2);
+}
+
+.ProseMirror hr {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.ProseMirror code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f2f4f7;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+}
+
+.ProseMirror pre {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  overflow-x: auto;
+}
+
+.ProseMirror pre code {
+  padding: 0;
+  background: none;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ProseMirror a {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+/* ── 表格 ────────────────────────────────────────────────────── */
+.ProseMirror table {
+  width: 100%;
+  margin: 0 0 12px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.ProseMirror th,
+.ProseMirror td {
+  position: relative;
+  min-width: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  vertical-align: top;
+  font-size: 14px;
+}
+
+.ProseMirror th {
+  background: #f7f8fa;
+  font-weight: 600;
+  text-align: left;
+}
+
+.ProseMirror th > p,
+.ProseMirror td > p {
+  margin: 0;
+}
+
+/* 选中的单元格：表格里必须有可见反馈，否则用户不知道在改哪一格 */
+.ProseMirror .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(47, 111, 237, 0.12);
+  pointer-events: none;
+}
+
+.ProseMirror .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  background: var(--brand);
+  pointer-events: none;
+}
+
+.ProseMirror.resize-cursor {
+  cursor: col-resize;
+}
+
+/* 光标位置提示：空段落或表格单元里也能看出光标在哪 */
+.ProseMirror-gapcursor::after {
+  border-top: 1.5px solid var(--ink);
+}

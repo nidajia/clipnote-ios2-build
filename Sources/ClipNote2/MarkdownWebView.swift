@@ -82,11 +82,11 @@ struct MarkdownWebView: UIViewRepresentable {
 
             // 不信任 JS 的 ready 消息：它可能因为处理器没注册、脚本抛错而永远不来。
             // 页面加载完主动探一次，把真实状态写进日志。
-            // 分两步探：`toastui 存在但 Editor 没有`是这次真正的故障形态
-            // （npm 的 dist 缺 prosemirror，运行到一半抛错），
-            // 之前两种都报成"未定义"，把排查方向带偏了三次。
+            //
+            // 探针问的是「接口在不在」，不是「某个变量叫不叫 toastui」——
+            // 上一版就是按实现细节探测，换了引擎之后整类判断全废。
             webView.evaluateJavaScript(
-                "[typeof toastui, (typeof toastui !== 'undefined' ? typeof toastui.Editor : '')]"
+                "[typeof window.__probe, typeof window.__getMarkdown, typeof window.__replaceAll]"
             ) { value, error in
                 if let error {
                     self.parent.onTrace("探针失败：\(error.localizedDescription)")
@@ -94,13 +94,16 @@ struct MarkdownWebView: UIViewRepresentable {
                     return
                 }
                 let kinds = (value as? [String]) ?? []
-                let toastuiKind = kinds.count > 0 ? kinds[0] : "?"
-                let editorKind = kinds.count > 1 ? kinds[1] : "?"
-                self.parent.onTrace("探针 toastui=\(toastuiKind) Editor=\(editorKind) \(self.elapsed())ms")
-                if toastuiKind == "undefined" {
-                    self.parent.onError("编辑器脚本没有加载（toastui 未定义）")
-                } else if editorKind != "function" {
-                    self.parent.onError("编辑器脚本不完整（toastui 在，Editor=" + editorKind + "）")
+                let probeKind = kinds.count > 0 ? kinds[0] : "?"
+                let markdownKind = kinds.count > 1 ? kinds[1] : "?"
+                let replaceKind = kinds.count > 2 ? kinds[2] : "?"
+                self.parent.onTrace(
+                    "探针 probe=\(probeKind) getMarkdown=\(markdownKind) replaceAll=\(replaceKind) \(self.elapsed())ms"
+                )
+                if probeKind != "function" {
+                    self.parent.onError("编辑器没有挂载（__probe 缺失）")
+                } else if markdownKind != "function" || replaceKind != "function" {
+                    self.parent.onError("编辑器接口不完整（取存文本的方法缺失）")
                 }
             }
         }

@@ -50,24 +50,23 @@ final class NoteEditorTests: XCTestCase {
         XCTAssertEqual(EditorEvent.parse(["value": "没有 type"]), .ignored)
     }
 
-    // MARK: - 出的页面是不是单栏
+    // MARK: - 出的页面是不是我们自己的单栏编辑器
 
-    func testBundledEditorIsSingleColumnWysiwyg() throws {
+    func testBundledEditorContract() throws {
         let html = try Self.bundleHTML()
 
-        // 生成物有 700KB 以上；突然变小多半是漏了内联脚本。
-        XCTAssertGreaterThan(html.count, 400_000, "editor-bundle.html 不完整")
+        // 生成物有 400KB 以上；突然变小多半是漏了内联脚本。
+        XCTAssertGreaterThan(html.count, 300_000, "editor-bundle.html 不完整")
 
-        XCTAssertTrue(html.contains("initialEditType: 'wysiwyg'"),
-                      "编辑器必须初始化为单栏所见即所得")
-        XCTAssertTrue(html.contains("hideModeSwitch: true"),
-                      "单栏形态下不应该保留「编辑 / 预览」页签")
-        XCTAssertTrue(html.contains("id=\"edge-fade\""),
-                      "右缘渐隐层缺失，横向滑动就没有提示")
-        XCTAssertTrue(html.contains("overflow-x: auto"),
-                      "工具栏必须是横向滚动，而不是折行或被压缩")
-        XCTAssertTrue(html.contains("body.no-collapse"),
-                      "「⋯」只能在不折叠确认之后才隐藏，否则按钮会被藏死")
+        XCTAssertTrue(html.contains("id=\"cn-app\""), "页面缺少编辑器挂载点")
+        XCTAssertTrue(html.contains("cn-tb-fade"), "右缘渐隐层缺失，横向滑动就没有提示")
+        XCTAssertTrue(html.contains("overflow-x: auto"), "工具栏必须是横向滚动，而不是折行或被压缩")
+        XCTAssertTrue(html.contains("ProseMirror"), "编辑区没有挂载")
+        XCTAssertTrue(html.contains("data-task"), "任务清单的节点标记缺失")
+
+        // 引擎已经换成自己的实现。这条断言是「真的换了」的证据：
+        // 旧包一旦被误装回来，这里立刻红。
+        XCTAssertFalse(html.contains("@toast-ui"), "仍然是旧引擎的产物")
     }
 
     func testBundleIsBundledIntoApp() {

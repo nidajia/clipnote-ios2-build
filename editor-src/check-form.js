@@ -1,15 +1,5 @@
-// 编辑器形态自检：在 jsdom 里真的执行这份 HTML，回答五个问题——
-//   1. 脚本是否完整执行（toastui.Editor 是函数）
-//   2. 形态是不是单栏所见即所得（wysiwyg，且页签容器不可见）
-//   3. 工具栏按钮是不是全留在栏里（没有被 Toast UI 折叠进 ⋯）
-//   4. 横向滑动与右缘渐隐的样式是否在位
-//   5. 内容回环是否成立（写进去的 Markdown 能不能原样拿出来）
-//
-// 为什么不用肉眼看截图做这件事：截图只能证明「画出来了」，
-// 证明不了 mode 到底是哪一个、按钮到底折叠没折叠——而这两件事才是这一轮的全部内容。
-//
-// 注意：jsdom 不做布局，工具栏宽度一律是 0，所以「能不能滑」在这里只能验结构和 CSS，
-// 真实宽度下的表现由真机截图负责。这条边界写在这里，免得下次又被 0 宽度骗一遍。
+// 自研编辑器的冒烟自检：先在 jsdom 里跑，回答「有没有起来」。
+// 布局类问题（能不能横滑、渐隐在不在）jsdom 一律返回 0，交给真实浏览器那张图。
 const { JSDOM, VirtualConsole } = require("jsdom");
 const fs = require("fs");
 const path = require("path");
@@ -20,21 +10,16 @@ const html = fs.readFileSync(file, "utf8");
 const errors = [];
 const posted = [];
 const vc = new VirtualConsole();
-vc.on("jsdomError", (e) => errors.push("jsdomError: " + String(e.message || e).slice(0, 200)));
-vc.on("error", (m) => errors.push("console.error: " + String(m).slice(0, 200)));
+vc.on("jsdomError", (e) => errors.push(String(e.message || e).slice(0, 300)));
+vc.on("error", (m) => errors.push("console.error: " + String(m).slice(0, 300)));
 
 const dom = new JSDOM(html, {
   runScripts: "dangerously",
   pretendToBeVisual: true,
   virtualConsole: vc,
-  url: "file:///tmp/editor-bundle.html",
+  url: "file:///tmp/editor.html",
   beforeParse(window) {
-    // 桥：真机上由 WKScriptMessageHandler 提供，这里截下来当断言依据。
-    window.webkit = {
-      messageHandlers: {
-        editor: { postMessage: (p) => posted.push(p) },
-      },
-    };
+    window.webkit = { messageHandlers: { editor: { postMessage: (p) => posted.push(p) } } };
   },
 });
 
@@ -46,50 +31,54 @@ function ok(cond, label, detail) {
 
 setTimeout(() => {
   const w = dom.window;
-  const css = html.slice(0, html.indexOf("</style>"));
+  const d = w.document;
+  const probe = typeof w.__probe === "function" ? w.__probe() : null;
 
-  console.log("── 加载 ──");
-  ok(typeof w.toastui === "object" && w.toastui !== null, "toastui 已定义", typeof w.toastui);
-  ok(typeof w.toastui?.Editor === "function", "toastui.Editor 是构造函数", typeof w.toastui?.Editor);
+  console.log("── 启动 ──");
   ok(errors.length === 0, "运行期零报错", errors.slice(0, 2).join(" | ") || "0 条");
   ok(posted.some((p) => p.type === "ready"), "已向原生端发出 ready");
+  ok(probe && probe.ok, "__probe 可用");
 
-  console.log("── 形态 ──");
-  const probe = typeof w.__editorProbe === "function" ? w.__editorProbe() : null;
-  ok(probe !== null, "__editorProbe 可用");
-  if (probe) {
-    ok(probe.mode === "wysiwyg", "编辑模式是 wysiwyg", probe.mode);
-    ok(probe.tabVisible === false, "「编辑/预览」页签不可见", probe.tabVisible ? "仍可见" : "display:none");
-    ok(probe.items === 15, "15 个按钮都在工具栏里", `${probe.items} 个`);
-    ok(probe.moreVisible === false, "没有多余的 ⋯ 折叠按钮", probe.moreVisible ? "仍可见" : "display:none");
-    ok(w.document.body.classList.contains("no-collapse"), "已启用「不折叠」模式（失败会保留 ⋯）");
-  }
+  console.log("── 结构 ──");
+  ok(!!d.querySelector(".cn-tb"), "工具栏已挂载");
+  ok(!!d.querySelector(".ProseMirror"), "编辑区已挂载");
+  ok((probe && probe.items) === 15, "工具栏 15 个按钮", probe ? `${probe.items} 个` : "-");
+  ok(!!d.querySelector(".cn-tb-fade"), "右缘渐隐层存在");
+  ok(d.querySelectorAll(".cn-tb-divider").length === 4, "4 条分隔线",
+    `${d.querySelectorAll(".cn-tb-divider").length} 条`);
 
-  console.log("── 横滑与渐隐（结构，非布局）──");
-  ok(/\.toastui-editor-defaultUI-toolbar\s*\{[^}]*overflow-x:\s*auto/.test(css), "工具栏容器可横向滚动");
-  ok(/\.toastui-editor-defaultUI-toolbar\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto/.test(css), "按钮不被压缩");
-  ok(/\.toastui-editor-defaultUI-toolbar::-webkit-scrollbar\s*\{\s*display:\s*none/.test(css), "滚动条已隐藏");
-  ok(/body\.no-collapse \.toastui-editor-defaultUI-toolbar \.more\s*\{\s*display:\s*none/.test(css), "⋯ 折叠按钮已隐藏（有条件）");
-  ok(/#edge-fade\.on\s*\{\s*opacity:\s*1/.test(css), "右缘渐隐有开启态");
-  ok(!!w.document.getElementById("edge-fade"), "渐隐层已挂进 DOM");
-  ok(/toastui-editor-defaultUI-toolbar'\)\) \{\s*return 100000/.test(html), "折叠判定被绕开（clientWidth 哨兵）");
+  console.log("── 内容 ──");
+  const initial = w.__getMarkdown ? w.__getMarkdown() : null;
+  ok(typeof initial === "string", "__getMarkdown 可用", initial && initial.slice(0, 30));
 
-  console.log("── 内容回环 ──");
-  const editor = w.__editorInstance;
-  if (editor) {
-    editor.setMarkdown("## 标题\n\n一段正文，含 **粗体**。\n\n- 甲\n- 乙", false);
-    const back = editor.getMarkdown();
-    ok(back.includes("## 标题"), "二级标题原样保留", back.split("\n")[0]);
-    ok(back.includes("**粗体**"), "粗体标记原样保留");
-    // 列表符号可能被归一化成 *，只认内容不认符号——这不是缺陷。
-    ok(back.includes("甲") && back.includes("乙"), "列表项原样保留");
-  } else {
-    ok(false, "能拿到编辑器实例（__editorInstance）");
-  }
+  const sample = "# 标题\n\n一段正文，含 **粗体**。\n\n- 甲\n- 乙\n\n> 引用\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n```js\nconst x = 1\n```";
+  if (w.__replaceAll) w.__replaceAll(sample);
+  const back = w.__getMarkdown ? w.__getMarkdown() : "";
+  ok(back.includes("# 标题"), "一级标题往返保留");
+  ok(back.includes("**粗体**"), "粗体往返保留");
+  ok(back.includes("- 甲"), "无序列表往返保留");
+  ok(back.includes("> 引用"), "引用往返保留");
+  ok(back.includes("| a | b |"), "表格往返保留", back.split("\n").find((l) => l.startsWith("|")) || "无");
+  ok(back.includes("```js"), "代码块语言保留");
+
+  const tasks = "- [ ] 还没做\n- [x] 已经做完";
+  w.__replaceAll(tasks);
+  const taskBack = w.__getMarkdown();
+  ok(taskBack.includes("- [ ] 还没做"), "未勾选任务往返保留", taskBack.split("\n")[0]);
+  ok(taskBack.includes("- [x] 已经做完"), "已勾选任务往返保留");
+
+  // 普通项和任务项写在同一个列表里，是笔记里最常见的形态。
+  // 用逐字相等断言：这里一旦变形（比如 ul 被当成 ol），只有精确比较才抓得住。
+  const mixed = "- 普通一\n- 普通二\n- [ ] 任务一\n- [x] 任务二";
+  w.__replaceAll(mixed);
+  const mixedBack = w.__getMarkdown();
+  ok(mixedBack === mixed, "混排列表逐字往返", JSON.stringify(mixedBack));
 
   setTimeout(() => {
-    const changed = posted.find((p) => p.type === "change");
-    ok(!!changed, "内容变化会回传 change 事件", changed ? `${String(changed.value).length} 字` : "未收到");
+    const changed = posted.filter((p) => p.type === "change");
+    ok(changed.length > 0, "内容变化回传 change", `${changed.length} 次`);
+    const errs = posted.filter((p) => p.type === "error");
+    ok(errs.length === 0, "没有向原生端报 error", errs.map((e) => e.message).join(" | ") || "0 条");
 
     console.log("");
     if (failures.length) {
@@ -98,5 +87,5 @@ setTimeout(() => {
     }
     console.log("结果：全部通过");
     process.exit(0);
-  }, 600);
-}, 1800);
+  }, 700);
+}, 1500);
