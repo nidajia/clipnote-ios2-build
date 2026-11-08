@@ -149,6 +149,13 @@ struct APIAudio: Decodable, Equatable {
     var url: String
 }
 
+/// 图片上传的响应。只有两个字段是我们关心的：
+/// 成不成、以及写进 Markdown 的那个地址。
+struct APIUploadResult: Decodable {
+    let ok: Bool
+    let url: String
+}
+
 struct APILibraryItem: Decodable, Equatable, Identifiable {
     var id: String
     var kind: String
@@ -623,9 +630,22 @@ struct ClipNoteClient {
                        body: ["note": note], as: APILibraryItem.self)
     }
 
+    /// 上传一张笔记配图，返回可直接写进 Markdown 的绝对地址。
+    ///
+    /// 走 base64 而不是 multipart：服务端只用标准库，解析 multipart 要自己写边界处理，
+    /// 而这里一次只有一张图，base64 的 33% 膨胀在压缩后可以忽略。
+    func uploadImage(jpeg data: Data) async throws -> String {
+        let result = try await post("/api/v2/upload",
+                                    body: ["data": data.base64EncodedString()],
+                                    as: APIUploadResult.self)
+        guard !result.url.isEmpty else {
+            throw Failure.malformed("上传成功但没有返回地址")
+        }
+        return result.url
+    }
+
     /// 保存脑图。
-    func saveOutline(id: String, outline: [OutlineNode]) async throws -> APILibraryItem {
-        // 手写编码：OutlineNode 是 Decodable-only（只需要读服务端的），
+    func saveOutline(id: String, outline: [OutlineNode]) async throws -> APILibraryItem {        // 手写编码：OutlineNode 是 Decodable-only（只需要读服务端的），
         // 为了一个写接口给它加 Encodable 会连带影响所有解码路径。
         let encoded = outline.map(Self.encodeNode)
         return try await post("/api/v2/items/\(encode(id))/outline",

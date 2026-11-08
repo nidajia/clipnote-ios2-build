@@ -1,7 +1,7 @@
 import SwiftUI
 import WebKit
 
-/// Markdown 编辑区（Toast UI Editor，随包离线）。
+/// Markdown 编辑区（自研编辑器，单文件内联）。
 ///
 /// 两次"一直转圈"之后定的规矩：**每一步都要留痕**。
 /// WebView 的失败模式太多（文件没找到、脚本没加载、JS 抛错、消息没送达），
@@ -9,9 +9,13 @@ import WebKit
 /// 用户上报日志后能直接看到卡在哪一步。
 struct MarkdownWebView: UIViewRepresentable {
     @Binding var markdown: String
+    /// 选图上传成功后要插进正文的地址。用完即清（见 updateUIView）。
+    @Binding var pendingImage: String?
     var initial: String
     var onReady: () -> Void
     var onError: (String) -> Void
+    /// 页面要求选图时回调：选图必须由原生端做（PHPicker）。
+    var onPickImage: () -> Void
     /// 每一步的状态回调，供上层写日志。
     var onTrace: (String) -> Void
 
@@ -51,7 +55,22 @@ struct MarkdownWebView: UIViewRepresentable {
         return web
     }
 
-    func updateUIView(_ web: WKWebView, context: Context) {}
+    func updateUIView(_ web: WKWebView, context: Context) {
+        // 只在「拿到了新图片地址」时动作。用 Binding 而不是直接持有 WKWebView：
+        // 直接持有会让视图层多一份引用，而这个 WebView 会被 .id 重建。
+        guard let url = pendingImage, !url.isEmpty else { return }
+        let encoded = (try? JSONEncoder().encode(url))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        web.evaluateJavaScript("window.__insertImage(\(encoded));") { value, error in
+            if let error {
+                self.onTrace("插图失败：\(error.localizedDescription)")
+            } else if let ok = value as? Bool, ok == false {
+                self.onTrace("插图被页面拒绝（地址不合法或位置不可插）")
+            }
+        }
+        // 用完即清：不清的话每次状态刷新都会重复插同一张图
+        DispatchQueue.main.async { self.pendingImage = nil }
+    }
 
     /// 单文件页面：CSS 与 JS 全部内联（见 Tools/build_editor_bundle.py）。
     ///
@@ -136,6 +155,8 @@ struct MarkdownWebView: UIViewRepresentable {
                     // 页面里的「降级但不致命」信息。写进日志，但不触发退回纯文本：
                     // 工具栏折叠没绕开这类问题，用户仍然能用 ⋯ 展开，不该因此丢掉富文本。
                     self.parent.onTrace("JS 降级：\(text)")
+                case .pickImage:
+                    self.parent.onPickImage()
                 case .ignored:
                     self.parent.onTrace("收到无法解析的消息")
                 }

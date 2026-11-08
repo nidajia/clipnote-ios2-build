@@ -118,7 +118,11 @@ export function mount(root) {
     },
   });
 
-  toolbar = createToolbar(view);
+  toolbar = createToolbar(view, {
+    // 选图必须由原生端做：WebView 里的 <input type=file> 在 iOS 上
+    // 依赖未文档化的行为，而且上传要绕 CORS。交给 PHPicker + URLSession 更确定。
+    pickImage: () => post({ type: "pickImage" }),
+  });
   root.appendChild(toolbar.el);
   toolbar.sync(view.state);
 
@@ -202,6 +206,21 @@ export function mount(root) {
     if (empty) return false;
     view.dispatch(view.state.tr.insertText(md || "", from, to));
     return true;
+  };
+
+  /// 插入图片。由原生端在「选图 → 上传」成功后调用。
+  /// 只认 http(s)：把 data: 或 file: 塞进来会让笔记变成几百 KB 的字符串，
+  /// 而笔记字段服务端只留 4000 字。
+  window.__insertImage = (url, alt) => {
+    const source = String(url || "").trim();
+    if (!/^https?:\/\//i.test(source)) return false;
+    try {
+      const node = nodes.image.create({ src: source, alt: alt || null });
+      view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView());
+      return true;
+    } catch (error) {
+      return false;
+    }
   };
 
   window.__focus = () => view.focus();

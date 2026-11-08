@@ -30,6 +30,7 @@ const ICON = {
   indent: svg('<path d="M3 5h14M3 15h14"/><path d="M9 10h8"/><path d="M6 8l2 2-2 2"/>'),
   outdent: svg('<path d="M3 5h14M3 15h14"/><path d="M9 10h8"/><path d="M6 8l-2 2 2 2"/>'),
   table: svg('<path d="M3 4h14v12H3z"/><path d="M3 8h14M8 4v12"/>'),
+  image: svg('<path d="M3 4.5h14v11H3z"/><circle cx="7.2" cy="8.4" r="1.3"/><path d="M4 14l4-4 3.2 3.2L14 10l2 2.4"/>'),
   task: svg('<path d="M3.6 4.6h12.8v12.8H3.6z"/><path d="M6.6 11.2l2.3 2.3 4.5-4.9"/>'),
   link: svg('<path d="M8.5 11.5a3 3 0 0 0 4.3.3l2-2a3 3 0 0 0-4.3-4.3l-1.1 1.1"/>' +
             '<path d="M11.5 8.5a3 3 0 0 0-4.3-.3l-2 2a3 3 0 0 0 4.3 4.3l1.1-1.1"/>'),
@@ -69,6 +70,7 @@ const GROUPS = [
   ],
   [
     { id: "table", title: "插入表格", icon: ICON.table, popup: "table" },
+    { id: "image", title: "插入图片", icon: ICON.image, action: "pickImage" },
     { id: "link", title: "插入链接", icon: ICON.link, popup: "link" },
   ],
   [
@@ -82,7 +84,7 @@ const GROUPS = [
  * sync 在每次事务后调用，用来更新按下态与置灰态——
  * 按钮点了没反应之前，至少要先能看出「现在不能点」。
  */
-export function createToolbar(view) {
+export function createToolbar(view, handlers = {}) {
   const el = document.createElement("div");
   el.className = "cn-tb";
   el.setAttribute("role", "toolbar");
@@ -114,6 +116,13 @@ export function createToolbar(view) {
           b.setAttribute("aria-expanded", "true");
           openPopup(spec.popup, b);
         }
+        return;
+      }
+      // 交给原生端做的事（选图等）没有「现在能不能做」这一说，
+      // 直接调用，不参与置灰判断。
+      if (spec.action) {
+        const handler = handlers[spec.action];
+        if (handler) handler();
         return;
       }
       const command = spec.run();

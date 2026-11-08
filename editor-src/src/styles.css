@@ -416,6 +416,19 @@ body {
   text-decoration: none;
 }
 
+/* 图片：宽度不得超过版心。手机上横图占满、竖图不撑破布局。 */
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  vertical-align: bottom;
+}
+
+.ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 /* 高亮：用真正的荧光笔色，不要用正黄（白底上正黄几乎看不见） */
 .ProseMirror mark {
   padding: 0 1px;

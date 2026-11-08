@@ -54,7 +54,7 @@ setTimeout(() => {
   console.log("── 结构 ──");
   ok(!!d.querySelector(".cn-tb"), "工具栏已挂载");
   ok(!!d.querySelector(".ProseMirror"), "编辑区已挂载");
-  ok((probe && probe.items) === 18, "工具栏 18 个按钮", probe ? `${probe.items} 个` : "-");
+  ok((probe && probe.items) === 19, "工具栏 19 个按钮", probe ? `${probe.items} 个` : "-");
   ok(!!d.querySelector(".cn-tb-fade"), "右缘渐隐层存在");
   ok(d.querySelectorAll(".cn-tb-divider").length === 5, "5 条分隔线",
     `${d.querySelectorAll(".cn-tb-divider").length} 条`);
@@ -115,6 +115,15 @@ setTimeout(() => {
   ok(back.includes("> 引用"), "引用往返保留");
   ok(back.includes("| a | b |"), "表格往返保留", back.split("\n").find((l) => l.startsWith("|")) || "无");
   ok(back.includes("```js"), "代码块语言保留");
+
+  // 图片：往返要逐字一致；插入接口只认 http(s)
+  const imgMd = "看图：![截图](https://example.com/a.png) 就是这样";
+  w.__replaceAll(imgMd);
+  ok(w.__getMarkdown() === imgMd, "图片 Markdown 逐字往返", JSON.stringify(w.__getMarkdown()));
+  w.__replaceAll("");
+  ok(w.__insertImage("data:image/png;base64,AAA") === false, "拒绝 data: 地址（会把笔记撑爆）");
+  ok(w.__insertImage("https://example.com/b.png") === true, "插入 https 图片");
+  ok(w.__getMarkdown() === "![](https://example.com/b.png)", "插入结果写入正文");
 
   // 高亮与删除线：这两个以前不在序列化器的标记表里，
   // 一带上就会在保存时抛错，而平时完全看不出来。

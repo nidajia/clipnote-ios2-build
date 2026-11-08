@@ -25,6 +25,12 @@ struct NoteScreen: View {
     /// 重试次数。改这个值会重建 WebView（见 `.id(editorAttempt)`）。
     @State private var editorAttempt = 0
 
+    /// 选图与上传。
+    @State private var pendingImage: String?
+    @State private var pickingPhoto = false
+    @State private var uploadingImage = false
+    @State private var imageError: String?
+
     init(item: Item) {
         self.item = item
         _text = State(initialValue: item.note)
@@ -39,6 +45,17 @@ struct NoteScreen: View {
                 banner("编辑器没能启动：\(editorError)", canRetry: true)
             } else if gaveUp {
                 banner("编辑器加载超时，已切回纯文本。内容照常保存。", canRetry: true)
+            }
+
+            if let imageError {
+                banner(imageError)
+            }
+            if uploadingImage {
+                Text("图片上传中…")
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+                    .padding(.horizontal, Metric.pagePad)
+                    .padding(.vertical, 4)
             }
 
             if useFallback {
@@ -65,6 +82,12 @@ struct NoteScreen: View {
             // 比任何界面问题都严重。dirty 判断保证不会白写一次。
             if dirty { Task { await save() } }
         }
+        .sheet(isPresented: $pickingPhoto) {
+            PhotoPicker { image in
+                pickingPhoto = false
+                upload(image)
+            }
+        }
     }
 
     private func banner(_ message: String, canRetry: Bool = false) -> some View {
@@ -85,10 +108,42 @@ struct NoteScreen: View {
         .padding(.vertical, 6)
     }
 
+    /// 压图 → 上传 → 让页面插到光标处。
+    ///
+    /// 失败必须说话。静默失败会让用户以为图已经插进去了，关掉页面才发现没有。
+    private func upload(_ image: UIImage) {
+        imageError = nil
+        guard let data = image.clipnoteJPEG() else {
+            imageError = "这张图片读不出来，换一张试试"
+            logs.error("note.image.failed", "压图失败", meta: ["id": item.id])
+            return
+        }
+        uploadingImage = true
+        Task {
+            do {
+                let url = try await ClipNoteClient.production.uploadImage(jpeg: data)
+                await MainActor.run {
+                    uploadingImage = false
+                    pendingImage = url
+                    logs.info("note.image.uploaded", "图片已插入", meta: [
+                        "id": item.id, "kb": String((data.count + 1023) / 1024),
+                    ])
+                }
+            } catch {
+                await MainActor.run {
+                    uploadingImage = false
+                    let readable = (error as? ClipNoteClient.Failure)?.displayMessage
+                        ?? "网络不稳，稍后再试"
+                    imageError = "图片没传上去：\(readable)"
+                    logs.error("note.image.failed", readable, meta: ["id": item.id])
+                }
+            }
+        }
+    }
+
     /// 重建 WebView，而不是只把标记清掉：
     /// 只清标记的话，同一个已经死掉的页面还在，重试永远等不到 ready。
-    private func retryEditor() {
-        editorReady = false
+    private func retryEditor() {        editorReady = false
         editorError = nil
         gaveUp = false
         editorAttempt += 1
@@ -101,6 +156,7 @@ struct NoteScreen: View {
         ZStack {
             MarkdownWebView(
                 markdown: $text,
+                pendingImage: $pendingImage,
                 initial: text,
                 onReady: {
                     editorReady = true
@@ -109,6 +165,10 @@ struct NoteScreen: View {
                 onError: { message in
                     editorError = message
                     logs.error("editor.failed", message, meta: ["id": item.id])
+                },
+                onPickImage: {
+                    imageError = nil
+                    pickingPhoto = true
                 },
                 onTrace: { step in
                     // 每一步都进日志：用户上报后能直接看到卡在哪一步

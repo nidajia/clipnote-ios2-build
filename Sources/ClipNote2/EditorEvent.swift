@@ -6,16 +6,18 @@ import Foundation
 /// 也可能只是慢。之前这几种都报成一句含糊的话，把排查方向带偏了三次。
 /// 字符串散在 Coordinator 的 switch 里就没法单测，放这里可以。
 ///
-/// 约定（JS 侧见 `Tools/build_editor_bundle.py`）：
-/// - `ready`  页面就绪
-/// - `change` 内容变化，带 `value`（Markdown 原文）
-/// - `error`  致命，原生端应退回纯文本
-/// - `trace`  降级但不致命（例如工具栏折叠没绕开），只写日志
+/// 约定（JS 侧见 `Tools/build_editor_bundle.py` / `editor-src/src/editor.js`）：
+/// - `ready`    页面就绪
+/// - `change`   内容变化，带 `value`（Markdown 原文）
+/// - `error`    致命，原生端应退回纯文本
+/// - `trace`    降级但不致命（例如工具栏折叠没绕开），只写日志
+/// - `pickImage` 页面要求选图：WebView 里做不了系统相册，必须交回原生
 enum EditorEvent: Equatable {
     case ready
     case change(String)
     case failure(String)
     case degraded(String)
+    case pickImage
     case ignored
 
     static func parse(_ body: Any) -> EditorEvent {
@@ -44,6 +46,9 @@ enum EditorEvent: Equatable {
                 return .ignored
             }
             return .degraded(message)
+
+        case "pickImage":
+            return .pickImage
 
         default:
             return .ignored

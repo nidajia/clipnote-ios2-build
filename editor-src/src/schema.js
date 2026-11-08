@@ -104,6 +104,28 @@ const blocks = {
 
   text: { group: "inline" },
 
+  // 图片。inline 而不是 block：Markdown 里 `![]()` 本来就是行内元素，
+  // 做成 block 会让「一句话中间插一张图」这种写法在往返时错位。
+  image: {
+    inline: true,
+    group: "inline",
+    attrs: { src: {}, alt: { default: null }, title: { default: null } },
+    draggable: true,
+    parseDOM: [{
+      tag: "img[src]",
+      getAttrs: (dom) => ({
+        src: dom.getAttribute("src"),
+        alt: dom.getAttribute("alt"),
+        title: dom.getAttribute("title"),
+      }),
+    }],
+    toDOM: (node) => ["img", {
+      src: node.attrs.src,
+      alt: node.attrs.alt,
+      title: node.attrs.title,
+    }],
+  },
+
   hard_break: {
     inline: true,
     group: "inline",
