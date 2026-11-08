@@ -20,6 +20,18 @@ const dom = new JSDOM(html, {
   url: "file:///tmp/editor.html",
   beforeParse(window) {
     window.webkit = { messageHandlers: { editor: { postMessage: (p) => posted.push(p) } } };
+
+    // jsdom 没有布局，也就没有 getClientRects。ProseMirror 在 scrollIntoView 时
+    // 会调它（撤销、插入都会走到），不补就会抛 "e.getClientRects is not a function"，
+    // 被 window.onerror 当成致命错误——那是脚手架缺口，不是编辑器的问题。
+    const emptyRect = () => ({
+      x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0,
+    });
+    window.Element.prototype.getClientRects = function () { return [emptyRect()]; };
+    window.Range.prototype.getClientRects = function () { return [emptyRect()]; };
+    if (!window.Range.prototype.getBoundingClientRect) {
+      window.Range.prototype.getBoundingClientRect = emptyRect;
+    }
   },
 });
 
@@ -42,9 +54,9 @@ setTimeout(() => {
   console.log("── 结构 ──");
   ok(!!d.querySelector(".cn-tb"), "工具栏已挂载");
   ok(!!d.querySelector(".ProseMirror"), "编辑区已挂载");
-  ok((probe && probe.items) === 15, "工具栏 15 个按钮", probe ? `${probe.items} 个` : "-");
+  ok((probe && probe.items) === 17, "工具栏 17 个按钮", probe ? `${probe.items} 个` : "-");
   ok(!!d.querySelector(".cn-tb-fade"), "右缘渐隐层存在");
-  ok(d.querySelectorAll(".cn-tb-divider").length === 4, "4 条分隔线",
+  ok(d.querySelectorAll(".cn-tb-divider").length === 5, "5 条分隔线",
     `${d.querySelectorAll(".cn-tb-divider").length} 条`);
 
   console.log("── 工具栏行为 ──");
@@ -57,6 +69,20 @@ setTimeout(() => {
     codeBtn.click();
     const backToText = w.__getMarkdown();
     ok(!backToText.includes("```"), "再点一次退回正文——手机上没有 Esc，必须有退路");
+  }
+
+  const undoBtn = d.querySelector('.cn-tb-btn[data-cmd="undo"]');
+  const redoBtn = d.querySelector('.cn-tb-btn[data-cmd="redo"]');
+  ok(!!undoBtn && !!redoBtn, "撤销 / 重做按钮存在");
+  if (undoBtn && redoBtn) {
+    w.__replaceAll("第一版内容");
+    ok(!undoBtn.disabled, "有变更后撤销可点");
+    undoBtn.click();
+    ok(w.__getMarkdown() === "", "撤销回到变更前");
+    ok(!redoBtn.disabled, "撤销后重做可点");
+    redoBtn.click();
+    ok(w.__getMarkdown() === "第一版内容", "重做恢复内容");
+    w.__replaceAll("");
   }
 
   console.log("── 内容 ──");

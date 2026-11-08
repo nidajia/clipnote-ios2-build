@@ -37,11 +37,19 @@ body {
 }
 
 /* ── 工具栏 ────────────────────────────────────────────────────
+   贴在底部：键盘弹起时 WKWebView 会被压缩，工具栏自然就落在键盘上方，
+   和 iOS 原生输入增强栏的位置一致。放顶部会离手指太远，
+   而且键盘一挡，编辑区只剩半屏。
    一行到底，横向滚动。按钮 flex:0 0 auto 是必须的：
    否则 flex 会把 32px 的按钮压到 20 出头，看得见、点不准。 */
 .cn-tb-wrap {
   position: relative;
   flex: 0 0 auto;
+  order: 2;
+}
+
+.cn-editor {
+  order: 1;
 }
 
 .cn-tb {
@@ -51,7 +59,7 @@ body {
   height: 45px;
   padding: 0 6px;
   background: var(--toolbar-bg);
-  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
@@ -145,7 +153,7 @@ body {
   background: #fff;
   box-shadow: 0 8px 28px rgba(20, 26, 40, 0.16), 0 0 0 1px rgba(20, 26, 40, 0.06);
   opacity: 0;
-  transform: translateY(-4px);
+  transform: translateY(4px);
   transition: opacity 0.14s ease, transform 0.14s ease;
   pointer-events: auto;
 }

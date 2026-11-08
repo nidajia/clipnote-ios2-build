@@ -80,17 +80,17 @@ struct MarkdownWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             parent.onTrace("页面加载完成 \(elapsed())ms")
 
-            // 不信任 JS 的 ready 消息：它可能因为处理器没注册、脚本抛错而永远不来。
-            // 页面加载完主动探一次，把真实状态写进日志。
+            // 探针只用来「写日志」，不再当门禁用。
             //
-            // 探针问的是「接口在不在」，不是「某个变量叫不叫 toastui」——
-            // 上一版就是按实现细节探测，换了引擎之后整类判断全废。
+            // 上一版拿 `typeof toastui === 'function'` 判断编辑器能不能用，
+            // 结果换了引擎之后，页面明明挂起来了，探针仍报「没加载」，
+            // 界面直接退回纯文本——用户看到的是一堆 Markdown 符号。
+            // 判据必须来自页面自己：它挂载成功会发 ready，失败会发 error。
             webView.evaluateJavaScript(
                 "[typeof window.__probe, typeof window.__getMarkdown, typeof window.__replaceAll]"
             ) { value, error in
                 if let error {
-                    self.parent.onTrace("探针失败：\(error.localizedDescription)")
-                    self.parent.onError("编辑器脚本没有就绪：\(error.localizedDescription)")
+                    self.parent.onTrace("探针异常（仅记录）：\(error.localizedDescription)")
                     return
                 }
                 let kinds = (value as? [String]) ?? []
@@ -100,11 +100,6 @@ struct MarkdownWebView: UIViewRepresentable {
                 self.parent.onTrace(
                     "探针 probe=\(probeKind) getMarkdown=\(markdownKind) replaceAll=\(replaceKind) \(self.elapsed())ms"
                 )
-                if probeKind != "function" {
-                    self.parent.onError("编辑器没有挂载（__probe 缺失）")
-                } else if markdownKind != "function" || replaceKind != "function" {
-                    self.parent.onError("编辑器接口不完整（取存文本的方法缺失）")
-                }
             }
         }
 

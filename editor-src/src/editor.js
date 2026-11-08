@@ -19,6 +19,10 @@ import "./styles.css";
 
 const PLACEHOLDER = "写点什么：这条视频对你有什么用、哪句话值得记、下次要试什么。";
 
+/// 页面标识。改动 DOM 结构或节点模型时改这里的版本号，
+/// 这样线上日志能直接看出「装的是哪一版页面」。
+const EDITOR_ID = "cn-editor/3";
+
 function post(payload) {
   try {
     window.webkit.messageHandlers.editor.postMessage(payload);
@@ -71,10 +75,9 @@ function buildState(markdown) {
 }
 
 export function mount(root) {
-  const toolbarHost = document.createElement("div");
   const editorHost = document.createElement("div");
   editorHost.className = "cn-editor";
-  root.append(toolbarHost, editorHost);
+  root.appendChild(editorHost);
 
   let toolbar = null;
   let lastSent = "";
@@ -92,7 +95,7 @@ export function mount(root) {
   });
 
   toolbar = createToolbar(view);
-  toolbarHost.appendChild(toolbar.el);
+  root.appendChild(toolbar.el);
   toolbar.sync(view.state);
 
   function currentMarkdown() {
@@ -110,6 +113,17 @@ export function mount(root) {
   }
 
   lastSent = currentMarkdown();
+
+  // 页面自报身份与内容规模。
+  // 有了这一行，日志里就能一眼分出「跑的是哪个页面」和「内容到底解析成什么」——
+  // 上一次的教训：探针只报实现细节，日志里完全看不出页面版本，白查半天。
+  const doc = view.state.doc;
+  let blocks = 0;
+  doc.forEach(() => { blocks += 1; });
+  post({
+    type: "trace",
+    message: `页面 ${EDITOR_ID} · ${blocks} 个块 · ${doc.textContent.length} 字`,
+  });
 
   // 勾选框要能点。只响应左侧 28px 的勾选区域，
   // 点正文仍然是把光标放进这一项——编辑和勾选不该抢同一个手势。

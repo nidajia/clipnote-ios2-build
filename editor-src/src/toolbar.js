@@ -5,12 +5,15 @@
 // 那条补丁整类消失：按钮不许收缩、容器横向滚动、右缘渐隐，三行 CSS 的事。
 import { nodes, schemaMarks } from "./schema.js";
 import * as cmd from "./commands.js";
+import { undo, redo } from "prosemirror-history";
 
 const svg = (inner) =>
   `<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" ` +
   `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 
 const ICON = {
+  undo: svg('<path d="M7 7L3.5 10.5 7 14"/><path d="M3.5 10.5h8a4.5 4.5 0 0 1 0 9H8"/>'),
+  redo: svg('<path d="M13 7l3.5 3.5L13 14"/><path d="M16.5 10.5h-8a4.5 4.5 0 0 0 0 9H12"/>'),
   heading: svg('<path d="M5 5v10M14 5v10M5 10h9"/><path d="M16.2 7.2l1.4-.9v5"/>'),
   bold: svg('<path d="M6.5 4h4.2a3.4 3.4 0 0 1 0 6.8H6.5z" stroke-width="1.8"/>' +
             '<path d="M6.5 10.8h4.8a3.6 3.6 0 0 1 0 7.2H6.5z" stroke-width="1.8"/>'),
@@ -33,6 +36,13 @@ const ICON = {
 };
 
 const GROUPS = [
+  [
+    // 手机上没有 ⌘Z。撤销/重做必须是按钮，否则误操作只能靠重新打一遍。
+    { id: "undo", title: "撤销", icon: ICON.undo, run: () => undo,
+      enabled: (s) => undo(s, undefined, undefined) },
+    { id: "redo", title: "重做", icon: ICON.redo, run: () => redo,
+      enabled: (s) => redo(s, undefined, undefined) },
+  ],
   [
     { id: "heading", title: "标题", icon: ICON.heading, popup: "heading",
       active: (s) => s.selection.$from.parent.type === nodes.heading },
@@ -121,7 +131,9 @@ export function createToolbar(view) {
     panel.className = "cn-tb-popup";
     const rect = anchor.getBoundingClientRect();
     panel.style.left = `${Math.max(6, Math.min(rect.left, window.innerWidth - 220))}px`;
-    panel.style.top = `${Math.round(el.getBoundingClientRect().bottom + 4)}px`;
+    // 工具栏在底部，弹层必须向上展开：往下会顶出屏幕，
+    // 用户点「表格」看到的是一个看不见的网格。
+    panel.style.bottom = `${Math.round(window.innerHeight - el.getBoundingClientRect().top + 4)}px`;
 
     if (kind === "heading") {
       [["正文", 0], ["标题 1", 1], ["标题 2", 2], ["标题 3", 3]].forEach(([label, level]) => {

@@ -22,6 +22,8 @@ struct NoteScreen: View {
     @State private var editorError: String?
     /// 超时也走降级：一条永远等不到的 ready 消息不该把用户锁在转圈里。
     @State private var gaveUp = false
+    /// 重试次数。改这个值会重建 WebView（见 `.id(editorAttempt)`）。
+    @State private var editorAttempt = 0
 
     init(item: Item) {
         self.item = item
@@ -34,9 +36,9 @@ struct NoteScreen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let editorError {
-                banner("编辑器没能启动：\(editorError)")
+                banner("编辑器没能启动：\(editorError)", canRetry: true)
             } else if gaveUp {
-                banner("编辑器加载超时，已切回纯文本。内容照常保存。")
+                banner("编辑器加载超时，已切回纯文本。内容照常保存。", canRetry: true)
             }
 
             if useFallback {
@@ -65,13 +67,34 @@ struct NoteScreen: View {
         }
     }
 
-    private func banner(_ message: String) -> some View {
-        Text(message)
-            .font(.cnMeta)
-            .foregroundStyle(Color.cnRed)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Metric.pagePad)
-            .padding(.vertical, 6)
+    private func banner(_ message: String, canRetry: Bool = false) -> some View {
+        HStack(spacing: 8) {
+            Text(message)
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnRed)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            if canRetry {
+                Button("重试") { retryEditor() }
+                    .font(.cnChip)
+                    .foregroundStyle(Color.cnBrand)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.vertical, 6)
+    }
+
+    /// 重建 WebView，而不是只把标记清掉：
+    /// 只清标记的话，同一个已经死掉的页面还在，重试永远等不到 ready。
+    private func retryEditor() {
+        editorReady = false
+        editorError = nil
+        gaveUp = false
+        editorAttempt += 1
+        logs.info("editor.retry", "重试编辑器", meta: [
+            "id": item.id, "attempt": String(editorAttempt),
+        ])
     }
 
     private var editorArea: some View {
@@ -92,17 +115,21 @@ struct NoteScreen: View {
                     logs.info("editor.trace", step, meta: ["id": item.id])
                 }
             )
+            // 换掉 id 才会真正重建 WebView
+            .id(editorAttempt)
             if !editorReady, editorError == nil, !gaveUp {
                 RingSpinner(size: 16, color: .cnBrand)
             }
         }
         .onAppear {
-            // 20 秒而不是 4 秒：1.1MB 的 HTML + 940KB 内联 JS 在模拟器上首次解析
-            // 可能就超过 4 秒。上一版把"慢"误判成"坏"，直接降级了。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
-                if !editorReady, editorError == nil {
+            // 8 秒：自研页面在真机上约 0.5 秒就绪（日志有记录），
+            // 20 秒那种宽限是给旧版 1.1MB 页面留的，现在只会让「卡住」更难忍。
+            // 记下本次尝试序号：重试之后，上一次的定时器不能再把新页面判死。
+            let current = editorAttempt
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                if !editorReady, editorError == nil, editorAttempt == current {
                     gaveUp = true
-                    logs.error("editor.timeout", "20 秒未就绪，退回纯文本", meta: ["id": item.id])
+                    logs.error("editor.timeout", "8 秒未就绪，退回纯文本", meta: ["id": item.id])
                 }
             }
         }
