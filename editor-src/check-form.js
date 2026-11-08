@@ -54,7 +54,7 @@ setTimeout(() => {
   console.log("── 结构 ──");
   ok(!!d.querySelector(".cn-tb"), "工具栏已挂载");
   ok(!!d.querySelector(".ProseMirror"), "编辑区已挂载");
-  ok((probe && probe.items) === 17, "工具栏 17 个按钮", probe ? `${probe.items} 个` : "-");
+  ok((probe && probe.items) === 18, "工具栏 18 个按钮", probe ? `${probe.items} 个` : "-");
   ok(!!d.querySelector(".cn-tb-fade"), "右缘渐隐层存在");
   ok(d.querySelectorAll(".cn-tb-divider").length === 5, "5 条分隔线",
     `${d.querySelectorAll(".cn-tb-divider").length} 条`);
@@ -115,6 +115,13 @@ setTimeout(() => {
   ok(back.includes("> 引用"), "引用往返保留");
   ok(back.includes("| a | b |"), "表格往返保留", back.split("\n").find((l) => l.startsWith("|")) || "无");
   ok(back.includes("```js"), "代码块语言保留");
+
+  // 高亮与删除线：这两个以前不在序列化器的标记表里，
+  // 一带上就会在保存时抛错，而平时完全看不出来。
+  for (const sample of ["这是 ==高亮== 的一句", "这句 ~~划掉~~ 了", "混合 ==高亮 **粗体**=="]) {
+    w.__replaceAll(sample);
+    ok(w.__getMarkdown() === sample, "逐字往返：" + sample, JSON.stringify(w.__getMarkdown()));
+  }
 
   const tasks = "- [ ] 还没做\n- [x] 已经做完";
   w.__replaceAll(tasks);

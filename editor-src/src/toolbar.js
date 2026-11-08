@@ -20,6 +20,8 @@ const ICON = {
   italic: svg('<path d="M9 4h6M6 16h6M12 4l-4 12"/>'),
   strike: svg('<path d="M4 10h12"/><path d="M12.4 6.2A3.2 3.2 0 0 0 6.6 8c0 1 .7 1.6 2.2 2"/>' +
               '<path d="M7.6 13.8A3.2 3.2 0 0 0 13.4 12"/>'),
+  highlight: svg('<path d="M4 16.5h4.2L16.4 8.3a2 2 0 0 0-2.8-2.8L5.4 13.7z"/>' +
+                 '<path d="M3 19h14" stroke-width="2.4"/>'),
   hr: svg('<path d="M3 10h14"/>'),
   quote: svg('<path d="M5 4v12"/><path d="M9 6h8M9 10h8M9 14h5"/>'),
   bullet: svg('<path d="M4 6h.01M4 10h.01M4 14h.01" stroke-width="2.6"/>' +
@@ -49,6 +51,7 @@ const GROUPS = [
     { id: "bold", title: "加粗", icon: ICON.bold, run: () => cmd.bold, active: cmd.markActive(schemaMarks.strong) },
     { id: "italic", title: "斜体", icon: ICON.italic, run: () => cmd.italic, active: cmd.markActive(schemaMarks.em) },
     { id: "strike", title: "删除线", icon: ICON.strike, run: () => cmd.strike, active: cmd.markActive(schemaMarks.strike) },
+    { id: "highlight", title: "高亮", icon: ICON.highlight, run: () => cmd.highlight, active: cmd.markActive(schemaMarks.highlight) },
   ],
   [
     { id: "hr", title: "分隔线", icon: ICON.hr, run: () => cmd.horizontalRule,
@@ -130,10 +133,6 @@ export function createToolbar(view) {
     const panel = document.createElement("div");
     panel.className = "cn-tb-popup";
     const rect = anchor.getBoundingClientRect();
-    panel.style.left = `${Math.max(6, Math.min(rect.left, window.innerWidth - 220))}px`;
-    // 工具栏在底部，弹层必须向上展开：往下会顶出屏幕，
-    // 用户点「表格」看到的是一个看不见的网格。
-    panel.style.bottom = `${Math.round(window.innerHeight - el.getBoundingClientRect().top + 4)}px`;
 
     if (kind === "heading") {
       [["正文", 0], ["标题 1", 1], ["标题 2", 2], ["标题 3", 3]].forEach(([label, level]) => {
@@ -217,6 +216,24 @@ export function createToolbar(view) {
     }
 
     popupLayer.appendChild(panel);
+
+    // 先在 DOM 里量出真实宽高，再决定放哪。
+    // 之前拿写死的 220px 当右边界，而链接弹层实际更宽——
+    // 于是它被推到屏幕右侧之外，输入框和「取消」都点不到。
+    const width = panel.offsetWidth || 220;
+    const height = panel.offsetHeight || 120;
+    const margin = 8;
+    panel.style.left = `${Math.round(Math.min(Math.max(margin, rect.left), window.innerWidth - width - margin))}px`;
+
+    // 工具栏在底部，弹层向上展开；高度不够时改贴顶部，宁可压住内容也不留半截。
+    const toolbarTop = el.getBoundingClientRect().top;
+    const bottom = Math.round(window.innerHeight - toolbarTop + 4);
+    if (bottom + height + margin <= window.innerHeight) {
+      panel.style.bottom = `${bottom}px`;
+    } else {
+      panel.style.top = `${margin}px`;
+    }
+
     popups.length = 0;
     popups.push(panel);
     requestAnimationFrame(() => panel.classList.add("open"));

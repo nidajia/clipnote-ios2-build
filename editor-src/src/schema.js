@@ -25,6 +25,12 @@ const marks = {
     parseDOM: [{ tag: "code" }],
     toDOM: () => ["code", 0],
   },
+  // 高亮。选 mark 元素 + `==` 语法：这是唯一能在纯 Markdown 里往返、
+  // 又不让存储格式变味的高亮表达。颜色和字号做不到这一点（见文档）。
+  highlight: {
+    parseDOM: [{ tag: "mark" }],
+    toDOM: () => ["mark", 0],
+  },
   link: {
     attrs: { href: {}, title: { default: null } },
     inclusive: false,

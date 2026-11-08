@@ -148,6 +148,8 @@ body {
 .cn-tb-popup {
   position: fixed;
   min-width: 132px;
+  /* 任何弹层都不许宽过屏幕：窄屏上「拿不准宽度就撑出去」是最容易犯的错 */
+  max-width: calc(100vw - 16px);
   padding: 6px;
   border-radius: 10px;
   background: #fff;
@@ -207,7 +209,9 @@ body {
 
 .cn-tb-input {
   display: block;
+  box-sizing: border-box;
   width: 208px;
+  max-width: 100%;
   margin: 4px 4px 8px;
   padding: 8px 10px;
   border: 1px solid #dfe3ea;
@@ -410,6 +414,14 @@ body {
 .ProseMirror a {
   color: var(--brand);
   text-decoration: none;
+}
+
+/* 高亮：用真正的荧光笔色，不要用正黄（白底上正黄几乎看不见） */
+.ProseMirror mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: #ffe58f;
+  color: inherit;
 }
 
 /* ── 表格 ────────────────────────────────────────────────────── */

@@ -8,6 +8,7 @@
 // 序列化反过来必须自己写：产出的是用户笔记的**存储格式**，
 // 必须逐字可控，不能受库的默认风格左右。
 import markdownit from "markdown-it";
+import markPlugin from "markdown-it-mark";
 import { DOMParser as PMDOMParser, Slice } from "prosemirror-model";
 import {
   MarkdownSerializer,
@@ -24,6 +25,9 @@ const md = markdownit("default", {
   breaks: false,
   typographer: false,
 });
+
+// 高亮：`==这段==` → <mark>。选它而不是内联样式，是因为它能原样存回 Markdown。
+md.use(markPlugin);
 
 /// 单元格内容压成一行：表格在 Markdown 里没有换行位。
 function cellText(state, cell) {
@@ -88,7 +92,14 @@ const serializer = new MarkdownSerializer(
     table_cell: (state, node) => state.renderContent(node),
     table_header: (state, node) => state.renderContent(node),
   },
-  defaultMarkdownSerializer.marks,
+  {
+    ...defaultMarkdownSerializer.marks,
+    // 默认表里只有 em / strong / code / link 四种。
+    // 删除线和高亮必须显式加进来，否则序列化到它们时直接抛错——
+    // 这个错只会在「带删除线的笔记一保存」时出现，平时看不出来。
+    strike: { open: "~~", close: "~~", mixable: true, expelEnclosingWhitespace: true },
+    highlight: { open: "==", close: "==", mixable: true, expelEnclosingWhitespace: true },
+  },
 );
 
 /// 把 `- [ ] 甲` 认成任务项。

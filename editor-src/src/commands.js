@@ -33,6 +33,7 @@ export const bold = toggleMark(schemaMarks.strong);
 export const italic = toggleMark(schemaMarks.em);
 export const strike = toggleMark(schemaMarks.strike);
 export const code = toggleMark(schemaMarks.code);
+export const highlight = toggleMark(schemaMarks.highlight);
 
 export const paragraph = setBlockType(nodes.paragraph);
 export const heading = (level) => setBlockType(nodes.heading, { level });
