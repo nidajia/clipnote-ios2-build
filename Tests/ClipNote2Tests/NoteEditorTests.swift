@@ -87,8 +87,7 @@ final class NoteEditorTests: XCTestCase {
         StubURLProtocol.handler = { request in
             let path = request.url?.path ?? ""
             if path.hasSuffix("/note") {
-                if let body = request.httpBody,
-                   let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                if let obj = Self.jsonObject(from: request),
                    let note = obj["note"] as? String {
                     received = note
                 }
@@ -117,8 +116,7 @@ final class NoteEditorTests: XCTestCase {
         StubURLProtocol.handler = { request in
             let path = request.url?.path ?? ""
             if path.hasSuffix("/note") {
-                if let body = request.httpBody,
-                   let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                if let obj = Self.jsonObject(from: request) {
                     received = obj["note"] as? String
                 }
                 return (200, ["Content-Type": "application/json"], Self.itemJSON(note: ""))
@@ -159,6 +157,38 @@ final class NoteEditorTests: XCTestCase {
             .deletingLastPathComponent()   // ios2
         let url = root.appendingPathComponent("Sources/ClipNote2/Resources/editor-bundle.html")
         return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// 取请求体的 JSON。
+    ///
+    /// 坑：URLProtocol 里读不到 `request.httpBody`——URLSession 在交给协议层之前
+    /// 已经把请求体转成了 `httpBodyStream`。只读 httpBody 永远是 nil，
+    /// 表现就是「断言收到空字符串」。这一条打红过两条用例，写在这里备查。
+    private static func jsonObject(from request: URLRequest) -> [String: Any]? {
+        guard let data = bodyData(request),
+              let parsed = try? JSONSerialization.jsonObject(with: data) else {
+            return nil
+        }
+        return parsed as? [String: Any]
+    }
+
+    private static func bodyData(_ request: URLRequest) -> Data? {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+
+        var data = Data()
+        let capacity = 4096
+        var buffer = [UInt8](repeating: 0, count: capacity)
+        // 不先问 hasBytesAvailable：某些流在 open 之后、首次 read 之前它返回 false，
+        // 那样会读到空数据。直接读到 EOF 更稳。
+        while true {
+            let read = stream.read(&buffer, maxLength: capacity)
+            if read <= 0 { break }
+            data.append(contentsOf: buffer[0..<read])
+        }
+        return data.isEmpty ? nil : data
     }
 
     private static func libraryJSON(note: String) -> Data {
