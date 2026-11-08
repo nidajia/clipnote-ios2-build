@@ -121,27 +121,25 @@ struct MarkdownWebView: UIViewRepresentable {
 
         func userContentController(_ controller: WKUserContentController,
                                   didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any],
-                  let type = body["type"] as? String else {
-                parent.onTrace("收到无法解析的消息")
-                return
-            }
+            // 先解析成值类型再切线程：解析是纯函数，可以单测（见 EditorEvent）。
+            let event = EditorEvent.parse(message.body)
 
             DispatchQueue.main.async {
-                switch type {
-                case "ready":
+                switch event {
+                case .ready:
                     self.parent.onTrace("JS ready \(self.elapsed())ms")
                     self.parent.onReady()
-                case "error":
-                    let message = body["message"] as? String ?? "编辑器内部错误"
-                    self.parent.onTrace("JS 错误：\(message)")
-                    self.parent.onError(message)
-                case "change":
-                    if let value = body["value"] as? String {
-                        self.parent.markdown = value
-                    }
-                default:
-                    break
+                case .change(let value):
+                    self.parent.markdown = value
+                case .failure(let text):
+                    self.parent.onTrace("JS 错误：\(text)")
+                    self.parent.onError(text)
+                case .degraded(let text):
+                    // 页面里的「降级但不致命」信息。写进日志，但不触发退回纯文本：
+                    // 工具栏折叠没绕开这类问题，用户仍然能用 ⋯ 展开，不该因此丢掉富文本。
+                    self.parent.onTrace("JS 降级：\(text)")
+                case .ignored:
+                    self.parent.onTrace("收到无法解析的消息")
                 }
             }
         }
