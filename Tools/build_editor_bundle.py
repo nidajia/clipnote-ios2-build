@@ -147,17 +147,22 @@ script = """
   // 按钮全部留在工具栏里，由容器的 overflow-x 去滚。
   // 只对这一个元素生效，不影响页面其它任何元素。
   (function () {
-    var desc = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
-    if (!desc || !desc.get) return;
-    Object.defineProperty(Element.prototype, 'clientWidth', {
-      configurable: true,
-      get: function () {
-        if (this.classList && this.classList.contains('toastui-editor-defaultUI-toolbar')) {
-          return 100000;
+    try {
+      var desc = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
+      if (!desc || !desc.get) return;
+      Object.defineProperty(Element.prototype, 'clientWidth', {
+        configurable: true,
+        get: function () {
+          if (this.classList && this.classList.contains('toastui-editor-defaultUI-toolbar')) {
+            return 100000;
+          }
+          return desc.get.call(this);
         }
-        return desc.get.call(this);
-      }
-    });
+      });
+    } catch (e) {
+      // 某些 WebKit 版本上 DOM 访问器不可重定义。这里失败只是退化成 ⋯ 折叠，
+      // 但它在 new Editor 之前——让异常冒出去就等于把编辑器整个丢掉。
+    }
   })();
 
   try {
