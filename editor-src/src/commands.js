@@ -100,7 +100,25 @@ export const horizontalRule = (state, dispatch) => {
   return true;
 };
 
-export const setCodeBlock = setBlockType(nodes.code_block, { params: "" });
+const codeBlockRaw = setBlockType(nodes.code_block, { params: "" });
+
+/// 已在代码块里再点一次 = 变回正文。
+/// 手机上没有 Esc，也没有 Mod-Enter，不给退路就是把用户关在代码块里。
+export const setCodeBlock = (state, dispatch) => {
+  const { $from } = state.selection;
+  if ($from.parent.type === nodes.code_block) {
+    return setBlockType(nodes.paragraph)(state, dispatch);
+  }
+  return codeBlockRaw(state, dispatch);
+};
+
+/// 空代码块里按回车就退出。有内容时回车仍然是换行——写代码的人要的是换行。
+export const exitEmptyCodeBlock = (state, dispatch) => {
+  const { $from } = state.selection;
+  if ($from.parent.type !== nodes.code_block) return false;
+  if ($from.parent.content.size > 0) return false;
+  return setBlockType(nodes.paragraph)(state, dispatch);
+};
 
 function buildTable(rows, cols) {
   const cell = () => nodes.table_cell.create(null, nodes.paragraph.create());

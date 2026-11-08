@@ -13,7 +13,7 @@ import { tableEditing } from "prosemirror-tables";
 import { sinkListItem, liftListItem } from "prosemirror-schema-list";
 import { schema, nodes } from "./schema.js";
 import { markdownToDoc, docToMarkdown, sliceToMarkdown } from "./markdown.js";
-import { markdownInputRules, bold, italic } from "./commands.js";
+import { markdownInputRules, bold, italic, exitEmptyCodeBlock } from "./commands.js";
 import { createToolbar } from "./toolbar.js";
 import "./styles.css";
 
@@ -55,6 +55,8 @@ function buildState(markdown) {
         "Mod-y": redo,
         "Mod-b": bold,
         "Mod-i": italic,
+        // 放在 baseKeymap 之前：只有在空代码块里才拦截回车，其余情况交回默认行为。
+        Enter: exitEmptyCodeBlock,
         Tab: sinkListItem(nodes.list_item),
         "Shift-Tab": liftListItem(nodes.list_item),
         "Mod-Enter": exitCode,

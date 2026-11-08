@@ -47,6 +47,18 @@ setTimeout(() => {
   ok(d.querySelectorAll(".cn-tb-divider").length === 4, "4 条分隔线",
     `${d.querySelectorAll(".cn-tb-divider").length} 条`);
 
+  console.log("── 工具栏行为 ──");
+  const codeBtn = d.querySelector('.cn-tb-btn[data-cmd="codeblock"]');
+  ok(!!codeBtn, "代码块按钮存在");
+  if (codeBtn) {
+    codeBtn.click();
+    const inCode = w.__getMarkdown();
+    ok(inCode.startsWith("```"), "点一次进入代码块", JSON.stringify(inCode.slice(0, 8)));
+    codeBtn.click();
+    const backToText = w.__getMarkdown();
+    ok(!backToText.includes("```"), "再点一次退回正文——手机上没有 Esc，必须有退路");
+  }
+
   console.log("── 内容 ──");
   const initial = w.__getMarkdown ? w.__getMarkdown() : null;
   ok(typeof initial === "string", "__getMarkdown 可用", initial && initial.slice(0, 30));
