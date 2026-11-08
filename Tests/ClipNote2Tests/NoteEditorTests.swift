@@ -60,9 +60,14 @@ final class NoteEditorTests: XCTestCase {
 
         XCTAssertTrue(html.contains("id=\"cn-app\""), "页面缺少编辑器挂载点")
         XCTAssertTrue(html.contains("cn-tb-fade"), "右缘渐隐层缺失，横向滑动就没有提示")
-        XCTAssertTrue(html.contains("overflow-x: auto"), "工具栏必须是横向滚动，而不是折行或被压缩")
         XCTAssertTrue(html.contains("ProseMirror"), "编辑区没有挂载")
         XCTAssertTrue(html.contains("data-task"), "任务清单的节点标记缺失")
+
+        // 断言前先压掉空白：esbuild 会把 CSS 压成 `overflow-x:auto`，
+        // 写死带空格的字符串会在打包方式变化时误红一次（已经误红过一次）。
+        let compact = html.replacingOccurrences(of: " ", with: "")
+        XCTAssertTrue(compact.contains("overflow-x:auto"),
+                      "工具栏必须是横向滚动，而不是折行或被压缩")
 
         // 引擎已经换成自己的实现。这条断言是「真的换了」的证据：
         // 旧包一旦被误装回来，这里立刻红。
