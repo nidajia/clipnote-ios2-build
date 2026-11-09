@@ -33,7 +33,37 @@ export const bold = toggleMark(schemaMarks.strong);
 export const italic = toggleMark(schemaMarks.em);
 export const strike = toggleMark(schemaMarks.strike);
 export const code = toggleMark(schemaMarks.code);
-export const highlight = toggleMark(schemaMarks.highlight);
+
+/// 高亮。同一颜色再点一次＝取消；换颜色＝替换。
+/// 没有选区时只改「接下来输入的文字」的颜色，不改已有内容——
+/// 那才是用户按下按钮时预期发生的事。
+export const highlight = (color) => (state, dispatch) => {
+  const type = schemaMarks.highlight;
+  const { from, to, empty } = state.selection;
+  if (empty) {
+    if (dispatch) dispatch(state.tr.addStoredMark(type.create({ color })));
+    return true;
+  }
+  const current = type.isInSet(state.doc.resolve(from).marks());
+  if (dispatch) {
+    let tr = state.tr.removeMark(from, to, type);
+    if (!current || current.attrs.color !== color) {
+      tr = tr.addMark(from, to, type.create({ color }));
+    }
+    dispatch(tr.scrollIntoView());
+  }
+  return true;
+};
+
+/// 去掉选区上的高亮（任何颜色）。
+export const clearHighlight = (state, dispatch) => {
+  const type = schemaMarks.highlight;
+  const { from, to, empty } = state.selection;
+  if (empty) return false;
+  if (!state.doc.rangeHasMark(from, to, type)) return false;
+  if (dispatch) dispatch(state.tr.removeMark(from, to, type).scrollIntoView());
+  return true;
+};
 
 export const paragraph = setBlockType(nodes.paragraph);
 export const heading = (level) => setBlockType(nodes.heading, { level });

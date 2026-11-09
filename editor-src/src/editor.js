@@ -21,7 +21,7 @@ const PLACEHOLDER = "写点什么：这条视频对你有什么用、哪句话�
 
 /// 页面标识。改动 DOM 结构或节点模型时改这里的版本号，
 /// 这样线上日志能直接看出「装的是哪一版页面」。
-const EDITOR_ID = "cn-editor/3";
+const EDITOR_ID = "cn-editor/4";
 
 function post(payload) {
   try {

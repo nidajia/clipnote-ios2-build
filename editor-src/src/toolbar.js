@@ -3,7 +3,7 @@
 // 旧版用的是 Toast UI 的工具栏，它自带「放不下就折叠进 ⋯」的逻辑，
 // 我们为了让按钮留在栏里横滑，得去改写它的 clientWidth。现在工具栏是自己的，
 // 那条补丁整类消失：按钮不许收缩、容器横向滚动、右缘渐隐，三行 CSS 的事。
-import { nodes, schemaMarks } from "./schema.js";
+import { nodes, schemaMarks, HIGHLIGHT_COLORS } from "./schema.js";
 import * as cmd from "./commands.js";
 import { undo, redo } from "prosemirror-history";
 
@@ -52,7 +52,8 @@ const GROUPS = [
     { id: "bold", title: "加粗", icon: ICON.bold, run: () => cmd.bold, active: cmd.markActive(schemaMarks.strong) },
     { id: "italic", title: "斜体", icon: ICON.italic, run: () => cmd.italic, active: cmd.markActive(schemaMarks.em) },
     { id: "strike", title: "删除线", icon: ICON.strike, run: () => cmd.strike, active: cmd.markActive(schemaMarks.strike) },
-    { id: "highlight", title: "高亮", icon: ICON.highlight, run: () => cmd.highlight, active: cmd.markActive(schemaMarks.highlight) },
+    { id: "highlight", title: "高亮", icon: ICON.highlight, popup: "highlight",
+      active: cmd.markActive(schemaMarks.highlight) },
   ],
   [
     { id: "hr", title: "分隔线", icon: ICON.hr, run: () => cmd.horizontalRule,
@@ -159,8 +160,38 @@ export function createToolbar(view, handlers = {}) {
       });
     }
 
-    if (kind === "table") {
-      const grid = document.createElement("div");
+    // 高亮调色板。六个颜色一排放，一屏内能点准；
+    // 同色再点一次＝取消，换色＝替换，由命令层保证。
+    if (kind === "highlight") {
+      const row = document.createElement("div");
+      row.className = "cn-tb-swatches";
+      HIGHLIGHT_COLORS.forEach((item) => {
+        const dot = document.createElement("button");
+        dot.type = "button";
+        dot.className = "cn-tb-swatch";
+        dot.style.background = item.hex;
+        dot.setAttribute("aria-label", item.label + "色高亮");
+        dot.title = item.label;
+        dot.addEventListener("click", () => {
+          cmd.highlight(item.code)(view.state, view.dispatch, view);
+          closeAllPopups();
+          view.focus();
+        });
+        row.appendChild(dot);
+      });
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "cn-tb-item";
+      clear.textContent = "取消高亮";
+      clear.addEventListener("click", () => {
+        cmd.clearHighlight(view.state, view.dispatch, view);
+        closeAllPopups();
+        view.focus();
+      });
+      panel.append(row, clear);
+    }
+
+    if (kind === "table") {      const grid = document.createElement("div");
       grid.className = "cn-tb-grid";
       const label = document.createElement("div");
       label.className = "cn-tb-grid-label";

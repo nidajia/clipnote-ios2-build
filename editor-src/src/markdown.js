@@ -8,7 +8,6 @@
 // 序列化反过来必须自己写：产出的是用户笔记的**存储格式**，
 // 必须逐字可控，不能受库的默认风格左右。
 import markdownit from "markdown-it";
-import markPlugin from "markdown-it-mark";
 import { DOMParser as PMDOMParser, Slice } from "prosemirror-model";
 import {
   MarkdownSerializer,
@@ -26,8 +25,84 @@ const md = markdownit("default", {
   typographer: false,
 });
 
-// 高亮：`==这段==` → <mark>。选它而不是内联样式，是因为它能原样存回 Markdown。
-md.use(markPlugin);
+// 高亮：`==这段==`（黄）或 `=={g}这段==`（绿）→ <mark data-c="g">。
+//
+// 不用 markdown-it-mark 的原因：它只认 `==`，没有颜色位。
+// 这里改成「inline 解析完之后扫一遍 text token」——
+// `**粗体**` 之类已经成型，包在中间的自然跟着被标记包住，嵌套不用另外处理。
+const DELIM = /==(?:\{([a-z])\})?/g;
+
+function applyHighlight(tokens, Token) {
+  const hits = [];
+  tokens.forEach((tok, index) => {
+    if (tok.type !== "text") return;
+    DELIM.lastIndex = 0;
+    let match;
+    while ((match = DELIM.exec(tok.content)) !== null) {
+      hits.push({
+        tokenIndex: index,
+        at: match.index,
+        len: match[0].length,
+        color: match[1] || "y",
+      });
+    }
+  });
+  if (hits.length < 2) return tokens;
+
+  // 两两配对：第 1 个开、第 2 个合……落单的最后一个不处理，原样留作文字
+  const usable = hits.slice(0, hits.length - (hits.length % 2));
+  const byToken = new Map();
+  usable.forEach((hit, i) => {
+    hit.open = i % 2 === 0;
+    if (!byToken.has(hit.tokenIndex)) byToken.set(hit.tokenIndex, []);
+    byToken.get(hit.tokenIndex).push(hit);
+  });
+
+  const makeText = (content) => {
+    const token = new Token("text", "", 0);
+    token.content = content;
+    return token;
+  };
+  const makeMark = (open, color) => {
+    if (open) {
+      const token = new Token("cn_highlight_open", "mark", 1);
+      token.meta = { color };
+      return token;
+    }
+    return new Token("cn_highlight_close", "mark", -1);
+  };
+
+  const out = [];
+  tokens.forEach((tok, index) => {
+    const list = byToken.get(index);
+    if (!list) {
+      out.push(tok);
+      return;
+    }
+    const content = tok.content;
+    let cursor = 0;
+    list.forEach((hit) => {
+      if (hit.at > cursor) out.push(makeText(content.slice(cursor, hit.at)));
+      out.push(makeMark(hit.open, hit.color));
+      cursor = hit.at + hit.len;
+    });
+    if (cursor < content.length) out.push(makeText(content.slice(cursor)));
+  });
+  return out;
+}
+
+md.core.ruler.after("inline", "cn_highlight", (state) => {
+  state.tokens.forEach((block) => {
+    if (block.type !== "inline" || !block.children) return;
+    block.children = applyHighlight(block.children, state.Token);
+  });
+});
+
+md.renderer.rules.cn_highlight_open = (tokens, idx) => {
+  const color = (tokens[idx].meta && tokens[idx].meta.color) || "y";
+  return `<mark data-c="${color}">`;
+};
+md.renderer.rules.cn_highlight_close = () => "</mark>";
 
 /// 单元格内容压成一行：表格在 Markdown 里没有换行位。
 function cellText(state, cell) {
@@ -98,7 +173,18 @@ const serializer = new MarkdownSerializer(
     // 删除线和高亮必须显式加进来，否则序列化到它们时直接抛错——
     // 这个错只会在「带删除线的笔记一保存」时出现，平时看不出来。
     strike: { open: "~~", close: "~~", mixable: true, expelEnclosingWhitespace: true },
-    highlight: { open: "==", close: "==", mixable: true, expelEnclosingWhitespace: true },
+    // 高亮：黄色是默认值，不写标记位，保证 `==x==` 这种老写法还能原样往返。
+    highlight: {
+      open: (state, mark) => {
+        const color = mark.attrs.color;
+        return color && color !== "y" ? `=={${color}}` : "==";
+      },
+      close: "==",
+      // mixable 必须为 true：否则序列化器遇到中间夹着粗体/斜体的片段时
+      // 不敢让高亮跨过去，会把 `==a **b** c==` 拆成 `==a== **==b==** ==c==`。
+      mixable: true,
+      expelEnclosingWhitespace: true,
+    },
   },
 );
 

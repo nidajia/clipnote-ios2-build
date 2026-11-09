@@ -437,6 +437,32 @@ body {
   color: inherit;
 }
 
+.ProseMirror mark[data-c="g"] { background: #c3eda8; }
+.ProseMirror mark[data-c="b"] { background: #bfdcff; }
+.ProseMirror mark[data-c="p"] { background: #ffc9dd; }
+.ProseMirror mark[data-c="o"] { background: #ffd8a8; }
+.ProseMirror mark[data-c="u"] { background: #ddd0ff; }
+
+/* 调色板：六个色块一排放进弹层 */
+.cn-tb-swatches {
+  display: flex;
+  gap: 7px;
+  padding: 6px 6px 8px;
+}
+
+.cn-tb-swatch {
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid rgba(20, 26, 40, 0.14);
+  border-radius: 8px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cn-tb-swatch:active {
+  transform: scale(0.92);
+}
+
 /* ── 表格 ────────────────────────────────────────────────────── */
 .ProseMirror table {
   width: 100%;

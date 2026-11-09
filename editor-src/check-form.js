@@ -127,9 +127,30 @@ setTimeout(() => {
 
   // 高亮与删除线：这两个以前不在序列化器的标记表里，
   // 一带上就会在保存时抛错，而平时完全看不出来。
-  for (const sample of ["这是 ==高亮== 的一句", "这句 ~~划掉~~ 了", "混合 ==高亮 **粗体**=="]) {
+  for (const sample of [
+    "这是 ==高亮== 的一句",
+    "这句 ~~划掉~~ 了",
+    "混合 ==高亮 **粗体**==",
+    "绿色 =={g}绿色高亮==",
+    "蓝色 =={b}蓝色== 与 粉色 =={p}粉色==",
+    "橙色 =={o}橙色== 紫色 =={u}紫色==",
+    "跨格式 =={g}高亮 **粗体** 并列== 结束",
+    "落单的 == 不是高亮",
+  ]) {
     w.__replaceAll(sample);
     ok(w.__getMarkdown() === sample, "逐字往返：" + sample, JSON.stringify(w.__getMarkdown()));
+  }
+
+  // 调色板：点开高亮按钮，应出现 6 个色块 + 「取消高亮」
+  const hlBtn = d.querySelector('.cn-tb-btn[data-cmd="highlight"]');
+  ok(!!hlBtn, "高亮按钮存在");
+  if (hlBtn) {
+    hlBtn.click();
+    ok(d.querySelectorAll(".cn-tb-swatch").length === 6, "调色板 6 个色块",
+      String(d.querySelectorAll(".cn-tb-swatch").length));
+    const clearBtn = [...d.querySelectorAll(".cn-tb-item")].find((n) => n.textContent === "取消高亮");
+    ok(!!clearBtn, "调色板带「取消高亮」");
+    hlBtn.click(); // 再点一次关掉，别影响后续用例
   }
 
   const tasks = "- [ ] 还没做\n- [x] 已经做完";

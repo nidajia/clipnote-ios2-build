@@ -7,6 +7,17 @@ import { Schema } from "prosemirror-model";
 import { addListNodes } from "prosemirror-schema-list";
 import { tableNodes } from "prosemirror-tables";
 
+/// 高亮可用的颜色。code 会写进 Markdown（`=={g}文本==`），
+/// 所以一旦发布就不能随便改——改了会让存量笔记里的颜色错位。
+export const HIGHLIGHT_COLORS = [
+  { code: "y", label: "黄", hex: "#ffe58f" },
+  { code: "g", label: "绿", hex: "#c3eda8" },
+  { code: "b", label: "蓝", hex: "#bfdcff" },
+  { code: "p", label: "粉", hex: "#ffc9dd" },
+  { code: "o", label: "橙", hex: "#ffd8a8" },
+  { code: "u", label: "紫", hex: "#ddd0ff" },
+];
+
 /// 内联标记。顺序即嵌套顺序，序列化时从外往内包。
 const marks = {
   strong: {
@@ -25,11 +36,15 @@ const marks = {
     parseDOM: [{ tag: "code" }],
     toDOM: () => ["code", 0],
   },
-  // 高亮。选 mark 元素 + `==` 语法：这是唯一能在纯 Markdown 里往返、
-  // 又不让存储格式变味的高亮表达。颜色和字号做不到这一点（见文档）。
+  // 高亮。用 mark 元素 + `==` 语法：这是唯一能在纯 Markdown 里往返、
+  // 又不让存储格式变味的高亮表达。颜色用 `=={x}` 前缀，不引入内联样式。
   highlight: {
-    parseDOM: [{ tag: "mark" }],
-    toDOM: () => ["mark", 0],
+    attrs: { color: { default: "y" } },
+    parseDOM: [{
+      tag: "mark",
+      getAttrs: (dom) => ({ color: dom.getAttribute("data-c") || "y" }),
+    }],
+    toDOM: (node) => ["mark", { "data-c": node.attrs.color || "y" }, 0],
   },
   link: {
     attrs: { href: {}, title: { default: null } },
