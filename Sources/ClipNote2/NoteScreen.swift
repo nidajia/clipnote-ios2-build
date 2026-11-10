@@ -194,20 +194,42 @@ struct NoteScreen: View {
             aiError = "这条笔记还是空的，先写一点再让 AI 处理"
             return
         }
+        // 短内容模型确实无从下手。与其发一次请求再报「没改动」，不如先说清楚。
+        guard !NoteAIQuality.isTooShortFor(action, content: content) else {
+            aiError = "内容太短（\(content.count) 字），「\(action.title)」没有可改的余地。多写两句再试。"
+            logs.info("note.ai.too_short", "内容过短，未发请求", meta: [
+                "id": item.id, "action": action.title, "chars": String(content.count),
+            ])
+            return
+        }
         aiRunning = true
         aiError = nil
         aiPreview = nil
+        // 把模型与长度写进日志：出问题时能一眼看出是「配了哪个模型」和「它回了几字」，
+        // 不用再来回猜。
+        logs.info("note.ai.request", "\(action.title) 请求已发出", meta: [
+            "id": item.id,
+            "model": aiConfig.model,
+            "scope": scopeIsDoc ? "doc" : "selection",
+            "chars": String(content.count),
+        ])
         do {
             let result = try await NoteAssistant(config: aiConfig)
                 .run(action: action, content: content)
             aiRunning = false
+            logs.info("note.ai.reply", "收到回复", meta: [
+                "id": item.id,
+                "model": aiConfig.model,
+                "chars": String(result.markdown.count),
+                "identical": NoteAIQuality.isIdentical(result.markdown, to: content) ? "1" : "0",
+            ])
 
             // 原样返回不等于成功。弹一张和原文一样的预览卡让用户点「采用」，
             // 只会让人以为功能坏了——直接说清楚，并给出下一步怎么改。
             guard !NoteAIQuality.isIdentical(result.markdown, to: content) else {
-                aiError = NoteAIQuality.identicalMessage
+                aiError = NoteAIQuality.identicalMessage(length: content.count)
                 logs.info("note.ai.noop", "模型未改动内容", meta: [
-                    "id": item.id, "action": action.title,
+                    "id": item.id, "action": action.title, "model": aiConfig.model,
                 ])
                 return
             }
@@ -268,15 +290,27 @@ struct NoteScreen: View {
         }
 
         let argument = Self.jsString(preview.markdown)
-        let script = preview.selection.isEmpty
-            ? "window.__replaceAll(\(argument))"
-            : "window.__replaceSelection(\(argument))"
-        _ = try? await web.evaluateJavaScript(script)
+        let name = preview.selection.isEmpty ? "__replaceAll" : "__replaceSelection"
+        let returned = try? await web.evaluateJavaScript("window.\(name)(\(argument))")
+
+        // 之前这里用 `try?` 吞掉了返回值：替换被编辑器拒绝时界面毫无反应，
+        // 用户只会以为「点了没变」。现在必须确认它真的写进去了。
+        guard (returned as? Bool) == true else {
+            aiError = "写入没有生效（编辑器拒绝了这次替换），正文未改动。"
+            logs.error("note.ai.apply_failed", "替换被编辑器拒绝", meta: [
+                "id": item.id, "call": name,
+            ])
+            return
+        }
+
         aiPreview = nil
         aiError = nil
+        let after = ((try? await web.evaluateJavaScript("window.__getMarkdown()")) as? String) ?? ""
         logs.info("note.ai.applied", "\(preview.action.title) 已采用", meta: [
             "id": item.id,
             "scope": preview.selection.isEmpty ? "doc" : "selection",
+            "before": String(preview.markdown.count),
+            "after": String(after.count),
         ])
     }
 

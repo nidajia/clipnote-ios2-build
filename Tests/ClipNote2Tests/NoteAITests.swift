@@ -181,9 +181,16 @@ final class NoteAITests: XCTestCase {
     }
 
     func testNoChangeMessageTellsUserWhatToDo() {
-        let message = NoteAIQuality.identicalMessage
-        XCTAssertTrue(message.contains("没有改动"))
+        let message = NoteAIQuality.identicalMessage(length: 42)
+        XCTAssertTrue(message.contains("42 字"), "要带上长度，用户才知道是不是内容太短")
         XCTAssertTrue(message.contains("按指令改写"))
+    }
+
+    func testTooShortContentIsDetected() {
+        XCTAssertTrue(NoteAIQuality.isTooShortFor(.outline, content: "好"))
+        XCTAssertFalse(NoteAIQuality.isTooShortFor(.outline, content: String(repeating: "字", count: 20)))
+        XCTAssertFalse(NoteAIQuality.isTooShortFor(.tidy, content: "甲乙丙丁"))
+        XCTAssertTrue(NoteAIQuality.isTooShortFor(.summary, content: "短句"))
     }
 
     // MARK: - 请求与错误

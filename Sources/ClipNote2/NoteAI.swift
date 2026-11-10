@@ -208,10 +208,29 @@ enum NoteAIQuality {
         result.count >= source.count
     }
 
-    static let identicalMessage = """
-    模型这次没有改动内容，所以没有可采用的修改。\
-    想指定改法可以用「按指令改写」，例如「把中医相关的几条归到一起」。
-    """
+    /// 这条内容短到模型没法做出有意义的改动。
+    ///
+    /// 短笔记是「原样返回」最常见的原因：一句「好」，精简要点只能还你「好」。
+    /// 与其让用户怀疑功能坏了，不如在发请求之前就说清楚。
+    static func isTooShortFor(_ action: NoteAIAction, content: String) -> Bool {
+        let length = content.trimmingCharacters(in: .whitespacesAndNewlines).count
+        switch action {
+        case .tidy:
+            return length < 4
+        case .outline, .summary, .translate, .complete:
+            return length < 15
+        case .expand, .verify, .custom:
+            return length < 8
+        }
+    }
+
+    static func identicalMessage(length: Int) -> String {
+        """
+        模型这次没有改动内容（原文 \(length) 字），所以没有可采用的修改。\
+        内容偏短时模型通常无从下手；想指定改法可以用「按指令改写」，\
+        例如「把中医相关的几条归到一起」。
+        """
+    }
 }
 
 /// 失败。
