@@ -12,7 +12,7 @@ struct NoteAIBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     chip("整理排版", action: .tidy)
                     chip("补充细节", action: .expand)
                     chip("精简成要点", action: .outline)
@@ -35,20 +35,20 @@ struct NoteAIBar: View {
         }
     }
 
+    /// 不带图标：四个胶囊在 390pt 上刚好排满一行。
+    /// 每加一个 ✨ 就要宽出 14pt，四个就是 56pt——正好把第四个挤出屏幕。
     private func chip(_ title: String, action: NoteAIAction) -> some View {
         Button {
             onAction(action)
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .semibold))
-                Text(title).font(.cnChip)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Color.cnBrandSoft)
-            .foregroundStyle(Color.cnBrand)
-            .clipShape(Capsule())
+            Text(title)
+                .font(.cnChip)
+                .lineLimit(1)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(Color.cnBrandSoft)
+                .foregroundStyle(Color.cnBrand)
+                .clipShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(!configured || running)

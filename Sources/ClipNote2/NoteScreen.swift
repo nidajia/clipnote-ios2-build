@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 我的笔记。独立一页。
 ///
@@ -40,6 +41,9 @@ struct NoteScreen: View {
     @State private var aiDraft = ""
     @State private var showCustomPrompt = false
     @State private var confirmWholeDoc = false
+    /// 键盘弹起时不显示动作条：它和底部格式栏叠在一起会吃掉近 90pt 编辑区，
+    /// 而打字时也用不到 AI。有预览时例外——那是用户正要处理的结果。
+    @State private var keyboardUp = false
 
     init(item: Item) {
         self.item = item
@@ -100,6 +104,12 @@ struct NoteScreen: View {
                 upload(image)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardUp = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardUp = false
+        }
         .alert("按指令改写", isPresented: $showCustomPrompt) {
             TextField("例如：改写成书面语，保留原意", text: $aiDraft)
             Button("取消", role: .cancel) { aiDraft = "" }
@@ -141,13 +151,15 @@ struct NoteScreen: View {
                     onDiscard: { self.aiPreview = nil }
                 )
             }
-            NoteAIBar(configured: aiConfig.isConfigured, running: aiRunning) { action in
-                if case .custom = action {
-                    // 自由指令要先问要改什么，不能拿空指令直接发出去
-                    aiDraft = ""
-                    showCustomPrompt = true
-                } else {
-                    Task { await prepare(action) }
+            if !keyboardUp || aiPreview != nil {
+                NoteAIBar(configured: aiConfig.isConfigured, running: aiRunning) { action in
+                    if case .custom = action {
+                        // 自由指令要先问要改什么，不能拿空指令直接发出去
+                        aiDraft = ""
+                        showCustomPrompt = true
+                    } else {
+                        Task { await prepare(action) }
+                    }
                 }
             }
         }
