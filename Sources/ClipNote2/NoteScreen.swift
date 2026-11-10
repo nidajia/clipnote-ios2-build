@@ -198,9 +198,23 @@ struct NoteScreen: View {
                 .run(action: action, content: content)
             aiRunning = false
 
+            // 原样返回不等于成功。弹一张和原文一样的预览卡让用户点「采用」，
+            // 只会让人以为功能坏了——直接说清楚，并给出下一步怎么改。
+            guard !NoteAIQuality.isIdentical(result.markdown, to: content) else {
+                aiError = NoteAIQuality.identicalMessage
+                logs.info("note.ai.noop", "模型未改动内容", meta: [
+                    "id": item.id, "action": action.title,
+                ])
+                return
+            }
+
             var warning: String?
             if action.mayAddContent {
-                warning = "可能加入原文没有的信息，采用前请过一遍"
+                // 规格原文：这类结果必须在预览卡上标注「模型可能加入不准确的内容」。
+                warning = "模型可能加入不准确的内容，采用前请过一遍"
+            }
+            if action == .outline, NoteAIQuality.didNotCompress(result.markdown, from: content) {
+                warning = "结果没比原文短，可能没有真正压缩，采用前请确认"
             }
             if action.mustKeepText, result.textChanged {
                 // 「整理排版」的定义就是不改字。机器能验，就不该只靠提示词。

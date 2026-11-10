@@ -51,16 +51,54 @@ final class NoteAITests: XCTestCase {
         XCTAssertTrue(text.contains("禁止"), "还要明确列出禁止项，只说不许不够")
     }
 
-    func testExpandPromptWarnsAboutUncertainty() {
+    func testExpandPromptForbidsExternalFacts() {
         let text = NotePrompt.instruction(for: .expand)
-        XCTAssertTrue(text.contains("待核实"), "补充细节可能编内容，必须要求标注不确定")
+        // 规格（产品路线 2.3）：只能基于笔记已有信息，禁止引入外部事实。
+        // 上一版放开了「背景/定义/例子」，等于允许编造，这里钉住回不去。
+        XCTAssertTrue(text.contains("只能用原文已有的信息"))
+        XCTAssertTrue(text.contains("严格禁止"))
+        XCTAssertFalse(text.contains("可以补充：背景"))
+    }
+
+    func testOutlinePromptAsksForRealCompression() {
+        let text = NotePrompt.instruction(for: .outline)
+        XCTAssertTrue(text.contains("六成"), "要给出可衡量的压缩目标，否则模型容易原样返回")
+        XCTAssertTrue(text.contains("25 字"))
+        XCTAssertTrue(text.contains("小标题"), "碎片式笔记要先归类，才有可见变化")
+    }
+
+    func testSummaryPromptProducesOneParagraph() {
+        let text = NotePrompt.instruction(for: .summary)
+        XCTAssertTrue(text.contains("一段话"))
+        XCTAssertTrue(text.contains("120 字"))
+        XCTAssertTrue(text.contains("不用列表"), "总结是段落，不是又一份要点")
     }
 
     func testActionsFlagWhichOnesMayAddContent() {
         XCTAssertFalse(NoteAIAction.tidy.mayAddContent)
         XCTAssertFalse(NoteAIAction.outline.mayAddContent)
+        XCTAssertFalse(NoteAIAction.summary.mayAddContent)
         XCTAssertTrue(NoteAIAction.expand.mayAddContent)
         XCTAssertTrue(NoteAIAction.custom("改写成书面语").mayAddContent)
+    }
+
+    // MARK: - 结果质量
+
+    func testIdenticalResultIsDetected() {
+        XCTAssertTrue(NoteAIQuality.isIdentical("同一段话\n", to: "同一段话"))
+        XCTAssertFalse(NoteAIQuality.isIdentical("同一段话。", to: "同一段话"))
+    }
+
+    func testCompressionCheck() {
+        XCTAssertTrue(NoteAIQuality.didNotCompress("一样长", from: "一样长"))
+        XCTAssertTrue(NoteAIQuality.didNotCompress("更长了更长了", from: "短"))
+        XCTAssertFalse(NoteAIQuality.didNotCompress("短", from: "长一些的原文"))
+    }
+
+    func testNoChangeMessageTellsUserWhatToDo() {
+        let message = NoteAIQuality.identicalMessage
+        XCTAssertTrue(message.contains("没有改动"), "要说清是模型没改，不是功能坏了")
+        XCTAssertTrue(message.contains("按指令改写"), "要给出下一步怎么做")
     }
 
     // MARK: - 回复清洗

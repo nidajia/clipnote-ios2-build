@@ -7,10 +7,12 @@ import Foundation
 enum NoteAIAction: Equatable {
     /// 整理排版。**一个字都不许改**，这是这个动作的定义。
     case tidy
-    /// 补充细节。可能引入原文没有的信息，预览卡上必须提示。
+    /// 补充细节。只能基于笔记已有信息展开，不得引入外部事实。
     case expand
     /// 精简成要点。
     case outline
+    /// 总结成一段。碎片式笔记最缺这个：把散落的条目收成一段能复述的话。
+    case summary
     /// 自由指令。
     case custom(String)
 
@@ -19,6 +21,7 @@ enum NoteAIAction: Equatable {
         case .tidy: return "整理排版"
         case .expand: return "补充细节"
         case .outline: return "精简成要点"
+        case .summary: return "总结成段"
         case .custom: return "按指令改写"
         }
     }
@@ -26,7 +29,7 @@ enum NoteAIAction: Equatable {
     /// 会不会引入原文没有的内容。此类结果必须在预览卡上标明。
     var mayAddContent: Bool {
         switch self {
-        case .tidy, .outline: return false
+        case .tidy, .outline, .summary: return false
         case .expand, .custom: return true
         }
     }
@@ -64,23 +67,34 @@ enum NotePrompt {
             禁止：改写措辞、纠正错别字、补充内容、删除内容、调整标点。
             """
         case .expand:
+            // 规格（产品路线 2.3）：只能基于笔记本身已有的信息展开，禁止引入外部事实。
+            // 上一版写成「可补充背景/定义/例子」，等于放开了编造的口子，已改回。
             return """
-            任务：在**完整保留原文**的前提下补充细节。
-            可以补充：背景、定义、步骤、例子、需要注意的点。
-            对不确定的内容用「（待核实）」标注。
-            不要删除原文的任何句子，也不要改写原有措辞。
+            任务：把原文里没写透的地方展开，但**只能用原文已有的信息**。
+            做法：把零散条目改写成一句完整的话；补出原文已经隐含的因果、条件、指代；
+            合并互相重复的表述。
+            严格禁止：引入原文没有的事实、外部背景、名词解释、书名作者、数据、例子。
+            如果某条目本身已经写完整，就保持原样——不要为了凑长度而加水词。
             """
         case .outline:
             return """
-            任务：把内容压缩成要点。
-            保留：关键结论、数字、专有名词、时间点。
-            丢弃：重复表述、语气词、铺垫。
-            输出为层级列表，最多三层。
+            任务：把原文压成要点，要求**看得出明显变短**。
+            做法：
+            1. 把同一主题的条目归到一个小标题下（原条目本身杂乱时尤其要做）；
+            2. 合并重复表述，每条不超过 25 字；
+            3. 只保留结论、专有名词、数字，不新增任何事实。
+            目标长度：不超过原文的六成。
+            """
+        case .summary:
+            return """
+            任务：把全文归纳成**一段话**，不超过 120 字。
+            要求：覆盖主要主题；不加标题、不用列表、不引用原文长句；
+            不新增原文没有的事实；如果原文本身只有一个主题，就直接写那一件事。
             """
         case .custom(let text):
             return """
             任务：按用户指令改写。指令：\(text)
-            除了指令要求的改动，不要顺手改别的。
+            除了指令要求的改动，不要顺手改别的。不得编造原文没有的事实。
             """
         }
     }
@@ -110,8 +124,31 @@ struct NoteAIResult: Equatable {
     }
 }
 
-enum NoteAIFailure: Error, Equatable {
-    case notConfigured
+/// 结果质量检查。
+///
+/// 为什么需要它：模型经常会「原样返回」。上一版把这种结果当成成功，
+/// 弹出一张和原文一模一样的预览卡，用户点「采用」后什么都没变，
+/// 只会认为功能坏了。没有改动就该说没有改动。
+enum NoteAIQuality {
+    /// 除了首尾空白，和原文逐字相同。
+    static func isIdentical(_ result: String, to source: String) -> Bool {
+        result.trimmingCharacters(in: .whitespacesAndNewlines)
+            == source.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 要求压缩，结果却没比原文短。
+    static func didNotCompress(_ result: String, from source: String) -> Bool {
+        result.count >= source.count
+    }
+
+    static let identicalMessage = """
+    模型这次没有改动内容，所以没有可采用的修改。\
+    这条笔记可能已经很精简了；想指定改法可以用「按指令改写」，\
+    例如「把中医相关的几条归到一起」。
+    """
+}
+
+enum NoteAIFailure: Error, Equatable {    case notConfigured
     case transport(String)
     case http(Int, String)
     case emptyReply
@@ -155,7 +192,11 @@ struct NoteAssistant {
             "temperature": 0.2,
             "messages": [
                 ["role": "system", "content": NotePrompt.system],
-                ["role": "user", "content": NotePrompt.instruction(for: action) + "\n\n---\n\n" + content],
+                // 用 <note> 包住原文，而不是拿 `---` 分隔：
+                // `---` 在 Markdown 里是分隔线，模型容易把后半段当成「要格式化的素材」，
+                // 于是原样吐回来。标签边界对模型更明确。
+                ["role": "user", "content": NotePrompt.instruction(for: action)
+                    + "\n\n<note>\n" + content + "\n</note>"],
             ],
         ]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
