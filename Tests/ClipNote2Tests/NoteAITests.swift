@@ -195,6 +195,35 @@ final class NoteAITests: XCTestCase {
 
     // MARK: - 请求与错误
 
+    func testRetriesOnceWhenModelEchoes() async throws {
+        var calls = 0
+        StubURLProtocol.handler = { [weak self] _ in
+            calls += 1
+            // 第一次原样返回，第二次才真正改写——弱模型的典型表现
+            let body = calls == 1 ? "原文" : "改写的原文"
+            return (200, [:], self?.reply(body) ?? Data())
+        }
+        let result = try await makeAssistant().run(action: .tidy, content: "原文")
+        XCTAssertEqual(calls, 2, "模型照抄时应该自动重试一次")
+        XCTAssertEqual(result.markdown, "改写的原文")
+    }
+
+    func testGivesUpAfterOneRetry() async throws {
+        var calls = 0
+        StubURLProtocol.handler = { [weak self] _ in
+            calls += 1
+            return (200, [:], self?.reply("原文") ?? Data())
+        }
+        let result = try await makeAssistant().run(action: .tidy, content: "原文")
+        XCTAssertEqual(calls, 2, "只重试一次，不要变成死循环")
+        XCTAssertEqual(result.markdown, "原文", "两次都照抄就如实返回，由上层告诉用户")
+    }
+
+    func testEchoedNoteTagsAreStripped() {
+        XCTAssertEqual(NoteAIResult.cleanReply("<note>\n好\n</note>"), "好",
+                       "弱模型会连包裹标签一起吐回来，那不是内容")
+    }
+
     func testRequestShape() async throws {
         var path: String?
         var auth: String?

@@ -166,8 +166,12 @@ struct NoteAIResult: Equatable {
     let textChanged: Bool
 
     /// 模型经常把结果套在 ``` 里返回。留着会直接把笔记首行变成代码块。
+    /// 另外弱模型会连 `<note>` 包裹一起吐回来——那不是用户的内容，必须剥掉。
     static func cleanReply(_ raw: String) -> String {
-        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = raw
+            .replacingOccurrences(of: "<note>", with: "")
+            .replacingOccurrences(of: "</note>", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.hasPrefix("```") else { return text }
         var lines = text.components(separatedBy: "\n")
         if let first = lines.first, first.hasPrefix("```") {
@@ -262,7 +266,24 @@ struct NoteAssistant {
     var session: URLSession = .shared
     var timeout: TimeInterval = 60
 
+    /// 模型原样返回时追加的一句。弱模型第一轮经常「照抄原文」，
+    /// 明确指出它没做事，通常第二次就动起来了。
+    static let retryNudge = "注意：你上一次把原文原样返回了，这次没有完成任务。请务必真正改写，不要复述原文。"
+
     func run(action: NoteAIAction, content: String) async throws -> NoteAIResult {
+        let first = try await send(action: action, content: content, nudge: nil)
+        guard NoteAIQuality.isIdentical(first.markdown, to: content) else {
+            return first
+        }
+        // 不把「没改动」直接甩给用户：先自动重试一次。
+        return try await send(action: action, content: content, nudge: Self.retryNudge)
+    }
+
+    private func send(
+        action: NoteAIAction,
+        content: String,
+        nudge: String?
+    ) async throws -> NoteAIResult {
         guard config.isConfigured, let endpoint = config.endpoint else {
             throw NoteAIFailure.notConfigured
         }
@@ -273,6 +294,9 @@ struct NoteAssistant {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
 
+        var instruction = NotePrompt.instruction(for: action)
+        if let nudge { instruction += "\n\n" + nudge }
+
         let payload: [String: Any] = [
             "model": config.model,
             // 排版与摘要类任务要稳定，不要发挥
@@ -281,7 +305,7 @@ struct NoteAssistant {
                 ["role": "system", "content": NotePrompt.system],
                 // 用 <note> 包住原文，而不是拿 `---` 分隔：
                 // `---` 在 Markdown 里是分隔线，模型容易把后半段当成「要格式化的素材」。
-                ["role": "user", "content": NotePrompt.instruction(for: action)
+                ["role": "user", "content": instruction
                     + "\n\n<note>\n" + content + "\n</note>"],
             ],
         ]
