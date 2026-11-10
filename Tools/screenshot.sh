@@ -104,6 +104,11 @@ shot outline            outline            light
 shot note-editor      note-editor      light
 shot note-probe       note-probe       light
 shot home-selecting     home-selecting     light
+# 6.1 分区：一张验筛选条和行内标记，一张验选择面板本身。
+# 分区归属在 SnapshotRoot 里种好（故意留几条未分区），
+# 否则「未分区」那条筛选在图上永远不出现，等于没验。
+shot home-section       home-section       light
+shot section-picker     section-picker     light
 shot segments           segments           light
 shot infographic        infographic        light
 # 本机转写面板（sheet，只能作为根呈现）。

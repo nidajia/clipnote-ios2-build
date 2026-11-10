@@ -1,13 +1,30 @@
 import SwiftUI
 
-/// 首页筛选。值即展示文案，避免再造一层映射。
-enum HomeFilter: String, CaseIterable, Identifiable {
-    case all = "全部"
-    case video = "视频"
-    case note = "笔记"
-    case downloaded = "已下载"
+/// 首页筛选。
+///
+/// **单选**：同一时刻只有一个筛选生效，点了分区就离开「视频/笔记」那一类。
+/// 和 B 站一致——进来就在某个分区里，不是层层叠加条件。
+///
+/// 不做叠加是有意的：两个条件同时生效之后，「列表空了」就变得没法解释——
+/// 到底是这条不在，还是两个条件互斥？单选只有一种解释。
+enum HomeFilter: Hashable, Identifiable {
+    case all
+    case section(String)
+    case unassigned
+    case video
+    case note
+    case downloaded
 
-    var id: String { rawValue }
+    var id: String {
+        switch self {
+        case .all: return "all"
+        case .section(let id): return "section:" + id
+        case .unassigned: return "unassigned"
+        case .video: return "video"
+        case .note: return "note"
+        case .downloaded: return "downloaded"
+        }
+    }
 }
 
 /// 首页（画布 03 / 10）
@@ -20,6 +37,7 @@ enum HomeFilter: String, CaseIterable, Identifiable {
 struct HomeScreen: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var downloads: DownloadStore
+    @EnvironmentObject private var sections: SectionStore
     @Environment(\.colorScheme) private var scheme
 
     @State private var query = ""
@@ -34,21 +52,25 @@ struct HomeScreen: View {
     @State private var focusTranscriptAt: Int?
     @State private var filter: HomeFilter = .all
     @State private var showImport = false
+    @State private var showBatchSections = false
     @State private var selected: Item?
     @State private var toast: String?
 
     /// `initialSelection` 只给截图用：让详情页以「被 push 进去」的形态出现，
     /// 否则它会是导航栈的根，截图上没有返回按钮。
     /// `detailPrepare` 同理：让「已取到播放地址」这一态能被拍下来。
+    /// `previewFilter` 让分区筛选态能被拍到——`@State` 从外部无法设置。
     init(
         initialSelection: Item? = nil,
         detailPrepare: DetailScreen.PrepareState? = nil,
         showsImport: Bool = false,
-        previewSelecting: Bool = false
+        previewSelecting: Bool = false,
+        previewFilter: HomeFilter? = nil
     ) {
         _selected = State(initialValue: initialSelection)
         _showImport = State(initialValue: showsImport)
         _selecting = State(initialValue: previewSelecting)
+        if let previewFilter { _filter = State(initialValue: previewFilter) }
         self.detailPrepare = detailPrepare
     }
 
@@ -60,6 +82,8 @@ struct HomeScreen: View {
         var list = items
         switch filter {
         case .all: break
+        case .section(let id): list = list.filter { sections.sectionID(for: $0.id) == id }
+        case .unassigned: list = list.filter { sections.sectionID(for: $0.id) == nil }
         case .video: list = list.filter { $0.kind == .video }
         case .note: list = list.filter { $0.kind == .note }
         case .downloaded: list = list.filter { downloads.isDownloaded($0.id) }
@@ -68,10 +92,37 @@ struct HomeScreen: View {
         guard !q.isEmpty else { return list }
         // 交给 LibrarySearch：字段清单和输入框文案必须在一个地方，
         // 分开写就会出现「写着能搜标签，实际搜不到」。
+        // 分区不在 Item 里（它是本地归属），所以由这里递进去。
         return list.filter {
-            LibrarySearch.matches($0, query: q)
+            LibrarySearch.matches($0, query: q,
+                                   extra: [sections.section(for: $0.id)?.name ?? ""])
                 || !TranscriptIndex.hits(in: transcripts[$0.id] ?? [], query: q, limit: 3).isEmpty
         }
+    }
+
+    /// 筛选条上的胶囊。分区在前——「我为什么存它」比「它是什么形态」更常用。
+    private struct FilterChipSpec: Identifiable {
+        var filter: HomeFilter
+        var title: String
+        /// 这一颗前面要插一条分组竖线，把「分区」和「形态」分开
+        var startsGroup = false
+        var id: String { filter.id }
+    }
+
+    private var filterChips: [FilterChipSpec] {
+        var out: [FilterChipSpec] = [.init(filter: .all, title: "全部")]
+        for section in sections.allSections {
+            out.append(.init(filter: .section(section.id), title: section.name))
+        }
+        // 「未分区」只在真有未分区的条目时出现。刚用起来的时候它等于「全部」，
+        // 白占一格；等条目都归好类，它又会自己消失。
+        if !items.isEmpty, items.contains(where: { sections.sectionID(for: $0.id) == nil }) {
+            out.append(.init(filter: .unassigned, title: "未分区"))
+        }
+        out.append(.init(filter: .video, title: "视频", startsGroup: true))
+        out.append(.init(filter: .note, title: "笔记"))
+        out.append(.init(filter: .downloaded, title: "已下载"))
+        return out
     }
 
     /// `selected` 的布尔投影，供 iOS 16 的 navigationDestination(isPresented:) 使用。
@@ -136,6 +187,25 @@ struct HomeScreen: View {
             }
             .sheet(isPresented: $showImport) {
                 ImportSheet()
+            }
+            .sheet(isPresented: $showBatchSections) {
+                NavigationStack {
+                    SectionPickerSheet(
+                        store: sections,
+                        current: pickedCommonSection,
+                        count: picked.count
+                    ) { id in
+                        applyBatchSection(id)
+                    }
+                }
+            }
+            // 分区被删掉时，不能把一个指向不存在分区的筛选留在原地：
+            // 那会显示一个永远空着的列表，看起来像数据丢了。
+            .onChange(of: sections.allSections) { list in
+                if case .section(let id) = filter,
+                   !list.contains(where: { $0.id == id }) {
+                    filter = .all
+                }
             }
             .overlay(alignment: .bottom) { toastView }
     }
@@ -209,7 +279,9 @@ struct HomeScreen: View {
                                     .foregroundStyle(picked.contains(item.id)
                                                      ? Color.cnBrand : Color.cnInk3)
                             }
-                            ItemRow(model: item, isDownloaded: downloads.isDownloaded(item.id))
+                            ItemRow(model: item,
+                                    isDownloaded: downloads.isDownloaded(item.id),
+                                    section: sections.section(for: item.id))
                         }
 
                         // 字幕命中单独一行，是**独立按钮**：点它会直接去那一句，
@@ -249,10 +321,31 @@ struct HomeScreen: View {
                     Button(role: .destructive) {
                         Task {
                             let ok = await library.delete(item)
+                            if ok { sections.forget([item.id]) }
                             showToast(ok ? "已移到回收站" : "删除失败，请重试")
                         }
                     } label: {
                         Label("删除", systemImage: "trash")
+                    }
+                }
+                // 长按归类。批量入口在多选底栏，但「边看边归」是逐条的：
+                // 每归一条都进一次详情页，这件事就没人愿意做了。
+                .contextMenu {
+                    Menu {
+                        Button {
+                            assign(nil, to: [item.id])
+                        } label: {
+                            Label("未分区", systemImage: "tray")
+                        }
+                        ForEach(sections.allSections) { section in
+                            Button {
+                                assign(section.id, to: [item.id])
+                            } label: {
+                                Label(section.name, systemImage: section.symbol)
+                            }
+                        }
+                    } label: {
+                        Label("移到分区", systemImage: "square.grid.2x2")
                     }
                 }
                 .listRowInsets(EdgeInsets(
@@ -298,6 +391,24 @@ struct HomeScreen: View {
 
                 Spacer(minLength: 0)
 
+                // 「导入一多就乱」本来就是个批量问题：一条条点是最慢的路。
+                // 所以分区在多选底栏里，和删除并列。
+                Button {
+                    showBatchSections = true
+                } label: {
+                    Text("分区")
+                        .font(.cnChip)
+                        .foregroundStyle(picked.isEmpty ? Color.cnInk3 : Color.cnBrand)
+                        .padding(.horizontal, Metric.space3)
+                        .padding(.vertical, 8)
+                        .background(
+                            (picked.isEmpty ? Color.cnCard3 : Color.cnBrandSoft),
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(picked.isEmpty || batchWorking)
+
                 Button {
                     confirmBatchDelete = true
                 } label: {
@@ -330,7 +441,39 @@ struct HomeScreen: View {
             showToast("批量删除失败，请重试")
             return
         }
+        // 条目走了，归属也要走：留着会让 sections.json 无限长下去。
+        sections.forget(ids)
         showToast("已把 \(count) 条移到回收站")
+        withAnimation(.easeInOut(duration: 0.18)) {
+            selecting = false
+            picked.removeAll()
+        }
+    }
+
+    // MARK: - 分区
+
+    /// 选中项的共同分区。多选时若各不相同则为 nil——此时面板上不显示勾，
+    /// 免得让人以为「已经被归到某一类了」。
+    private var pickedCommonSection: String? {
+        let ids = Set(picked.map { sections.sectionID(for: $0) ?? "" })
+        guard ids.count == 1, let only = ids.first else { return nil }
+        return only.isEmpty ? nil : only
+    }
+
+    /// 归类并说话。没有改动时也要说——静默是最糟的反馈。
+    private func assign(_ sectionID: String?, to ids: [String]) {
+        let changed = sections.assign(sectionID, to: ids)
+        let name = sectionID.flatMap { sections.section(id: $0)?.name } ?? "未分区"
+        guard changed > 0 else {
+            showToast("这些条目已经在这个分区里")
+            return
+        }
+        showToast(ids.count > 1 ? "已把 \(changed) 条移到「\(name)」" : "已移到「\(name)」")
+    }
+
+    private func applyBatchSection(_ sectionID: String?) {
+        assign(sectionID, to: Array(picked))
+        showBatchSections = false
         withAnimation(.easeInOut(duration: 0.18)) {
             selecting = false
             picked.removeAll()
@@ -374,7 +517,7 @@ struct HomeScreen: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.cnInk3)
 
-            TextField("搜索标题、作者、标签、笔记", text: $query)
+            TextField("搜索标题、作者、标签、分区、笔记", text: $query)
                 .font(.cnBody)
                 .foregroundStyle(Color.cnInk)
                 .textInputAutocapitalization(.never)
@@ -408,15 +551,25 @@ struct HomeScreen: View {
         )
     }
 
-    /// 钉在顶部的筛选条，不随列表滚动
+    /// 钉在顶部的筛选条，不随列表滚动。
+    ///
+    /// 一条横滑里放两组：分区（意图）在前，形态（视频/笔记/已下载）在后，
+    /// 中间一条竖线分开。分区数量会随用户增长，所以这一条必须能横滑——
+    /// 上一版四个固定胶囊不需要滑，加了分区就不成立了。
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: Metric.space2) {
-                ForEach(HomeFilter.allCases) { item in
+                ForEach(filterChips) { spec in
+                    if spec.startsGroup {
+                        Rectangle()
+                            .fill(Color.cnHairline)
+                            .frame(width: 1, height: 18)
+                            .padding(.horizontal, 2)
+                    }
                     Button {
-                        filter = item
+                        filter = spec.filter
                     } label: {
-                        FilterChip(title: item.rawValue, isSelected: item == filter)
+                        FilterChip(title: spec.title, isSelected: spec.filter == filter)
                     }
                     .buttonStyle(.plain)
                 }

@@ -39,11 +39,13 @@ enum LibrarySearch {
             .filter { !$0.isEmpty }
     }
 
-    static func matches(_ item: Item, query: String) -> Bool {
+    static func matches(_ item: Item, query: String, extra: [String] = []) -> Bool {
         let terms = terms(query)
         guard !terms.isEmpty else { return true }
 
-        let fields = haystacks(item)
+        // `extra` 给分区用：分区是本地归属（`SectionStore`），不在 `Item` 里。
+        // 但它确实会被用户拿去搜——「学习」这个词他在输入框里打得出来。
+        let fields = haystacks(item) + extra
         return terms.allSatisfy { term in
             fields.contains { $0.localizedCaseInsensitiveContains(term) }
         }

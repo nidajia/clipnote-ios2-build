@@ -19,6 +19,7 @@ struct SnapshotRoot: View {
     @StateObject private var downloads: DownloadStore
     @StateObject private var library: LibraryStore
     @StateObject private var logs: LogStore
+    @StateObject private var sections: SectionStore
 
     init(state: String, appearance: ColorScheme?) {
         self.state = state
@@ -169,6 +170,21 @@ struct SnapshotRoot: View {
         _downloads = StateObject(wrappedValue: store)
         _library = StateObject(wrappedValue: lib)
         _logs = StateObject(wrappedValue: logStore)
+
+        // 分区：给前几条归类。故意留几条没归——全归好了就看不出「未分区」
+        // 那一条筛选，而那正是用户第一次用时会看到的形态。
+        let sectionStore = SectionStore(directory: sandbox, log: logStore)
+        if state == "home-list" || state == "home-section"
+            || state.hasPrefix("detail") || state == "section-picker" {
+            let ids = lib.items.map(\.id)
+            var plan: [String: String] = [:]
+            for (index, id) in ["study", "study", "info", "fun", "know"].enumerated()
+            where index < ids.count {
+                plan[ids[index]] = id
+            }
+            sectionStore.seed(assignment: plan)
+        }
+        _sections = StateObject(wrappedValue: sectionStore)
     }
 
     var body: some View {
@@ -240,6 +256,12 @@ struct SnapshotRoot: View {
                 }
             } else if state == "tags" {
                 NavigationStack { TagsScreen() }
+            } else if state == "section-picker" {
+                // 选择器是 sheet，只能作为根呈现。分区归属已在 init 里种好，
+                // 所以这张图能看出「当前在哪一类」的勾选态。
+                NavigationStack {
+                    SectionPickerSheet(store: sections, current: "study") { _ in }
+                }
             } else if state.hasPrefix("onboarding") {
                 // 引导是首启才出现的，截图靠 previewPhase 直接停到某一帧。
                 // 真机上这条路径由 RootView 的 AppStorage 判定，与这里同一套视图。
@@ -262,6 +284,7 @@ struct SnapshotRoot: View {
         .environmentObject(downloads)
         .environmentObject(library)
         .environmentObject(logs)
+        .environmentObject(sections)
     }
 
     private var tabs: some View {
@@ -273,7 +296,9 @@ struct SnapshotRoot: View {
                     showsImport: state == "import",
                     // 多选那张图要能证明「选择」按钮和底部操作条真的在，
                     // 光靠代码读一遍不算数——上一轮就是这么漏掉的。
-                    previewSelecting: state == "home-selecting"
+                    previewSelecting: state == "home-selecting",
+                    // 分区筛选态：`@State` 从外部设不了，只能从 init 进来
+                    previewFilter: state == "home-section" ? .section("study") : nil
                 )
             }
             .tabItem { Label("首页", systemImage: "house.fill") }

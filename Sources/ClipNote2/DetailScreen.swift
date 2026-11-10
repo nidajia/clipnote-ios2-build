@@ -33,6 +33,7 @@ struct DetailScreen: View {
     @EnvironmentObject private var downloads: DownloadStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var logs: LogStore
+    @EnvironmentObject private var sections: SectionStore
 
     @State private var player: AVPlayer?
     @State private var playing = false
@@ -66,6 +67,7 @@ struct DetailScreen: View {
     @State private var showExport = false
     @State private var showInfographic = false
     @State private var showTranscribe = false
+    @State private var showSectionPicker = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
     @State private var prepare: PrepareState = .idle
@@ -149,6 +151,8 @@ struct DetailScreen: View {
                         .foregroundStyle(Color.cnInk3)
 
                     videoLinkRow
+
+                    sectionRow
 
                     // 笔记放在摘要**之前**：首屏能看见。
                     // 原来放在「简介」后面，而那时屏幕已经被播放器、标题、
@@ -277,6 +281,19 @@ struct DetailScreen: View {
         }
         .sheet(isPresented: $showAISettings) {
             NavigationStack { AISettingsScreen() }
+        }
+        // 分区：本地归属，选完立即生效。面板里的「新建」建完直接采用，
+        // 不再让用户回来点第二次。
+        .sheet(isPresented: $showSectionPicker) {
+            NavigationStack {
+                SectionPickerSheet(
+                    store: sections,
+                    current: sections.sectionID(for: current.id)
+                ) { id in
+                    sections.assign(id, to: [current.id])
+                    showSectionPicker = false
+                }
+            }
         }
         // 长图的入口在摘要卡里（见 `infographicButton`），这里只负责呈现。
         .sheet(isPresented: $showInfographic) {
@@ -1665,6 +1682,41 @@ struct DetailScreen: View {
     ///
     /// 预览刻意只放三行：详情页已经有简介和摘要，笔记再展开就把下载按钮推下去了。
     @ViewBuilder
+    /// 「我为什么存它」。位置放在作者链接之后、笔记之前：
+    /// 这两行都是「我给的属性」，连着读才顺；放进摘要卡会被当成 AI 产物。
+    private var sectionRow: some View {
+        let assigned = sections.section(for: current.id)
+        return Button {
+            showSectionPicker = true
+        } label: {
+            HStack(spacing: Metric.space2) {
+                Image(systemName: assigned?.symbol ?? "square.grid.2x2")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(assigned == nil ? Color.cnInk3 : Color.cnBrand)
+                    .frame(width: 18)
+                Text("分区")
+                    .font(.cnChip)
+                    .foregroundStyle(Color.cnInk3)
+                if let assigned {
+                    Text(assigned.name)
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk)
+                } else {
+                    Text("未分区 · 点这里归类")
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk3)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.cnInk3)
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+    }
+
     private var noteRow: some View {
         Button {
             showNote = true

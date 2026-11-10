@@ -77,6 +77,9 @@ struct ItemRow: View {
     /// 由 `DownloadStore` 传入，行内不自己判断。
     /// 上一版这里读的是 `Item.isDownloaded`（演示数据），和详情页各说各话。
     var isDownloaded: Bool = false
+    /// 已分区时显示标记。`nil` 不画任何东西：未分区不该占一个「无」字的位置，
+    /// 找未分区的条目请用筛选条上那一条。
+    var section: LibrarySection? = nil
 
     var body: some View {
         HStack(spacing: Metric.space3) {
@@ -104,6 +107,12 @@ struct ItemRow: View {
 
                     if isDownloaded {
                         DownloadBadge()
+                    }
+
+                    // 分区放最后：它是「我把它放哪了」，不是内容属性，
+                    // 排在作者、时长后面读起来才顺。
+                    if let section {
+                        SectionBadge(section: section)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
