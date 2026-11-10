@@ -2,7 +2,8 @@
 //
 // 桥协议与旧版完全一致（ready / change / error / trace + __INITIAL_MARKDOWN__），
 // 所以 Swift 侧不需要跟着改——换的是引擎，不是接口。
-import { EditorState, Plugin } from "prosemirror-state";
+import { EditorState, Plugin, TextSelection } from "prosemirror-state";
+import { Slice } from "prosemirror-model";
 import { EditorView } from "prosemirror-view";
 import { keymap } from "prosemirror-keymap";
 import { baseKeymap, exitCode } from "prosemirror-commands";
@@ -21,7 +22,7 @@ const PLACEHOLDER = "写点什么：这条视频对你有什么用、哪句话�
 
 /// 页面标识。改动 DOM 结构或节点模型时改这里的版本号，
 /// 这样线上日志能直接看出「装的是哪一版页面」。
-const EDITOR_ID = "cn-editor/4";
+const EDITOR_ID = "cn-editor/5";
 
 function post(payload) {
   try {
@@ -87,6 +88,22 @@ export function mount(root) {
   let lastSent = "";
   let timer = null;
 
+  /// 最后一次非空选区。
+  ///
+  /// 为什么需要它：AI 的动作条在原生一侧，点它会让 WebView 失焦，
+  /// 而失焦时 ProseMirror 的选区可能被清空。清空之后 `__scope()` 只能
+  /// 返回空串，原生端就判定成「整篇」——这就是「选了一段却全改了」的成因。
+  /// 记住当时那一段，等原生端来问时还回去。
+  let savedScope = null;
+
+  function rememberScope(state) {
+    const { from, to, empty } = state.selection;
+    if (empty || to <= from) return;
+    const text = sliceToMarkdown(state.doc, from, to);
+    if (!text.trim()) return;
+    savedScope = { from, to, text };
+  }
+
   const view = new EditorView(editorHost, {
     state: buildState(window.__INITIAL_MARKDOWN__ || ""),
     attributes: { "data-placeholder": PLACEHOLDER, spellcheck: "false" },
@@ -113,6 +130,7 @@ export function mount(root) {
     dispatchTransaction(tr) {
       const next = view.state.apply(tr);
       view.updateState(next);
+      rememberScope(next);
       if (toolbar) toolbar.sync(next);
       scheduleChange(next);
     },
@@ -186,10 +204,154 @@ export function mount(root) {
   };
 
   /// 取选区的 Markdown。没选中返回空串——「全文还是选区」由原生端决定。
+  /// 保留这个旧接口是因为别的路径（粘贴、工具栏）还在用它。
   window.__getSelection = () => {
     const { from, to, empty } = view.state.selection;
     if (empty) return "";
     return sliceToMarkdown(view.state.doc, from, to);
+  };
+
+  /// 取「这次要处理的范围」，带位置。
+  ///
+  /// 返回 `{ text, from, to, kind }`：
+  /// - `kind: "live"`  当前就有选区
+  /// - `kind: "saved"` 焦点已离开编辑器，用的是最后一次记住的选区
+  /// - `kind: "doc"`   确实没有选区，处理整篇
+  ///
+  /// 原生端必须按 `kind` 决定作用域，不能再靠「text 是不是空」猜——
+  /// 之前正是靠猜，才会有「选了一段却改全篇」。
+  window.__scope = () => {
+    const state = view.state;
+    const { from, to, empty } = state.selection;
+    if (!empty && to > from) {
+      const text = sliceToMarkdown(state.doc, from, to);
+      if (text.trim()) {
+        savedScope = { from, to, text };
+        return { text, from, to, kind: "live" };
+      }
+    }
+    if (!view.hasFocus() && savedScope && savedScope.to <= state.doc.content.size) {
+      const now = sliceToMarkdown(state.doc, savedScope.from, savedScope.to);
+      // 位置上的文字必须还是当初那段，否则这个位置已经被别人占了
+      if (now === savedScope.text) {
+        return { text: now, from: savedScope.from, to: savedScope.to, kind: "saved" };
+      }
+    }
+    return { text: "", from: 0, to: 0, kind: "doc" };
+  };
+
+  window.__clearScope = () => {
+    savedScope = null;
+    return true;
+  };
+
+  /// 选中某个位置区间。给原生端与自检用：
+  /// 自检要在没有真实触摸的情况下复现「选了一段」这个前提。
+  window.__selectRange = (from, to) => {
+    const max = view.state.doc.content.size;
+    const a = Math.max(0, Math.min(Math.round(Number(from) || 0), max));
+    const b = Math.max(a, Math.min(Math.round(Number(to) || 0), max));
+    try {
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, a, b)));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  /// 把一段 Markdown 写回指定位置。
+  ///
+  /// 两件事都要做对，缺一个就会出问题：
+  /// 1. **按位置写**，不按「当前选区」写——生成到采用之间用户可能点过正文，
+  ///    当前选区已经不是当初那段了；
+  /// 2. **解析成节点再写**，不能用 insertText 当纯文本插进去。
+  ///    后者会把 `## 标题` 变成正文里的字面井号（这个 bug 之前一直在）。
+  window.__applyScope = (md, from, to, expect) => {
+    const state = view.state;
+    if (typeof from !== "number" || typeof to !== "number" || to <= from) {
+      return { ok: false, reason: "no_range" };
+    }
+    if (to > state.doc.content.size) {
+      return { ok: false, reason: "range_changed" };
+    }
+    if (sliceToMarkdown(state.doc, from, to) !== expect) {
+      return { ok: false, reason: "range_changed" };
+    }
+    let singleBlock = false;
+    try {
+      singleBlock = state.doc.resolve(from).parent === state.doc.resolve(to).parent;
+    } catch (error) {
+      singleBlock = false;
+    }
+    let slice;
+    try {
+      const parsed = markdownToDoc(md || "");
+      slice = new Slice(parsed.content, 0, 0);
+      // 只有一段、而且选区没跨块时，按**行内**内容插入。
+      // 否则「把一句里的三个字换成另一句」会把原段落切成两段——
+      // 用户看到的是句子被拆开，而不是替换了三个字。
+      if (slice.content.childCount === 1 && singleBlock) {
+        const only = slice.content.firstChild;
+        if (only && only.type === nodes.paragraph) {
+          slice = new Slice(only.content, 0, 0);
+        }
+      }
+    } catch (error) {
+      return { ok: false, reason: "parse_failed" };
+    }
+    // 块级内容（标题、列表、表格）要插进段落时，先把范围对齐到块边界。
+    //
+    // 不对齐的话，ProseMirror 会把原段落切开、留下一个空段落：
+    // 用户在正文里看到「莫名多了一个空行」，它还会一路存进 Markdown。
+    // 只在「选区本来就贴着块的首尾」时才扩，所以不会多吃掉一个字。
+    let start = from;
+    let end = to;
+    const first = slice.content.firstChild;
+    if (first && !first.isInline) {
+      try {
+        const $from = state.doc.resolve(from);
+        if ($from.parent.isTextblock && $from.parentOffset === 0 && $from.depth > 0) {
+          start = $from.before();
+        }
+        const $to = state.doc.resolve(to);
+        if ($to.parent.isTextblock
+            && $to.parentOffset === $to.parent.content.size
+            && $to.depth > 0) {
+          end = $to.after();
+        }
+      } catch (error) {
+        start = from;
+        end = to;
+      }
+    }
+    try {
+      view.dispatch(state.tr.replace(start, end, slice).scrollIntoView());
+    } catch (error) {
+      return { ok: false, reason: "apply_failed" };
+    }
+    return { ok: true, reason: "" };
+  };
+
+  /// 删掉紧贴插入点两侧的空段落。
+  ///
+  /// 把一段块级内容（比如 `## 标题`）插进段落中间时，ProseMirror 会把原段落
+  /// 一分为二，剩下的那半截如果本来就是空的，就会多出一个空行。
+  /// 用户在正文里看到的是「莫名多了个空行」，而它会被一路存进 Markdown。
+
+
+  /// 光标放到文末。新建笔记时用：模板已经铺好，用户从最后一行接着写。
+  window.__focusEnd = () => {
+    const size = view.state.doc.content.size;
+    try {
+      const tr = view.state.tr.setSelection(
+        TextSelection.near(view.state.doc.resolve(Math.max(0, size - 1)), -1)
+      );
+      view.dispatch(tr);
+    } catch (error) {
+      /* 空文档也可能解析失败，忽略即可：光标本来就是唯一的落点 */
+    }
+    view.focus();
+    return true;
   };
 
   window.__replaceAll = (md) => {

@@ -3,6 +3,9 @@
    与 App 的 Metric.pagePad 对齐。这里不引入任何第三方 CSS。 */
 
 :root {
+  /* 让滚动条、输入框、原生控件跟着系统走 */
+  color-scheme: light dark;
+
   --ink: #1a1c20;
   --ink-2: #4a5060;
   --ink-3: #9aa1ad;
@@ -13,6 +16,64 @@
   --brand: #2f6fed;
   --brand-soft: #e8eefc;
   --code-bg: #f7f8fa;
+
+  /* 除了上面的语义色，下面这些以前是散落在各处的写死色值。
+     深色下它们必须一起变，所以在同一处收口。 */
+  --btn-active: #e9edf4;
+  --tb-divider: #e1e3e9;
+  --tb-fade-from: rgba(247, 249, 252, 0);
+  --popup-bg: #ffffff;
+  --popup-shadow: 0 8px 28px rgba(20, 26, 40, 0.16), 0 0 0 1px rgba(20, 26, 40, 0.06);
+  --item-active: #f2f4f8;
+  --border-strong: #dfe3ea;
+  --on-brand: #ffffff;
+  --secondary-bg: #eef1f6;
+  --selection: rgba(47, 111, 237, 0.16);
+  --selection-soft: rgba(47, 111, 237, 0.12);
+  --check-border: #c6ccd8;
+  --code-inline-bg: #f2f4f7;
+  --thead-bg: #f7f8fa;
+  --swatch-border: rgba(20, 26, 40, 0.14);
+  /* 高亮块里的字色。深色下高亮仍是浅色块，字必须压回深色，否则白字压浅黄看不见。 */
+  --mark-ink: #1a1c20;
+}
+
+/* ── 深色 ──────────────────────────────────────────────────────
+   深色下最刺眼的不是文字，是**底色仍是纯白**：编辑区一大片白，
+   而 App 其余部分是黑的。这里把底色、工具栏、弹层、输入框、表格、
+   引用、行内代码全部跟着 #0b0b0d / #16161a / #1e1e23 一档档抬起来
+   （和 Assets 里的 bg / card / card2 是同一组值）。 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f6f4ef;
+    --ink-2: #beb9af;
+    --ink-3: #918b80;
+    --line: #2a2a31;
+    --line-soft: #33333a;
+    --bg: #0b0b0d;
+    --toolbar-bg: #16161a;
+    --brand: #6b8cff;
+    --brand-soft: rgba(107, 140, 255, 0.18);
+    --code-bg: #16161a;
+
+    --btn-active: #28282e;
+    --tb-divider: #33333a;
+    --tb-fade-from: rgba(22, 22, 26, 0);
+    --popup-bg: #1e1e23;
+    --popup-shadow: 0 8px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.07);
+    --item-active: #28282e;
+    --border-strong: #33333a;
+    /* 深色下 brand 是亮蓝，白字对比不足，必须换深色字 */
+    --on-brand: #0b0b0d;
+    --secondary-bg: #28282e;
+    --selection: rgba(107, 140, 255, 0.28);
+    --selection-soft: rgba(107, 140, 255, 0.20);
+    --check-border: #4a4a52;
+    --code-inline-bg: #1e1e23;
+    --thead-bg: #1e1e23;
+    --swatch-border: rgba(255, 255, 255, 0.18);
+    --mark-ink: #131210;
+  }
 }
 
 html,
@@ -88,7 +149,7 @@ body {
 }
 
 .cn-tb-btn:active {
-  background: #e9edf4;
+  background: var(--btn-active);
 }
 
 .cn-tb-btn.is-on {
@@ -105,7 +166,7 @@ body {
   width: 1px;
   height: 18px;
   margin: 0 6px;
-  background: #e1e3e9;
+  background: var(--tb-divider);
 }
 
 /* 右缘渐隐：只渐到工具栏自己的底色。渐到纯白会变成一条白杠，比没有更糟。 */
@@ -118,7 +179,7 @@ body {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.18s ease;
-  background: linear-gradient(to right, rgba(247, 249, 252, 0), var(--toolbar-bg) 58%);
+  background: linear-gradient(to right, var(--tb-fade-from), var(--toolbar-bg) 58%);
 }
 
 .cn-tb-fade.on {
@@ -152,8 +213,8 @@ body {
   max-width: calc(100vw - 16px);
   padding: 6px;
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 8px 28px rgba(20, 26, 40, 0.16), 0 0 0 1px rgba(20, 26, 40, 0.06);
+  background: var(--popup-bg);
+  box-shadow: var(--popup-shadow);
   opacity: 0;
   transform: translateY(4px);
   transition: opacity 0.14s ease, transform 0.14s ease;
@@ -178,7 +239,7 @@ body {
 }
 
 .cn-tb-item:active {
-  background: #f2f4f8;
+  background: var(--item-active);
 }
 
 .cn-tb-grid-label {
@@ -197,9 +258,9 @@ body {
   width: 22px;
   height: 22px;
   padding: 0;
-  border: 1px solid #dfe3ea;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
-  background: #fff;
+  background: var(--popup-bg);
 }
 
 .cn-tb-grid-cell.on {
@@ -214,7 +275,7 @@ body {
   max-width: 100%;
   margin: 4px 4px 8px;
   padding: 8px 10px;
-  border: 1px solid #dfe3ea;
+  border: 1px solid var(--border-strong);
   border-radius: 7px;
   font: inherit;
   font-size: 14px;
@@ -244,11 +305,11 @@ body {
 
 .cn-tb-primary {
   background: var(--brand);
-  color: #fff;
+  color: var(--on-brand);
 }
 
 .cn-tb-secondary {
-  background: #eef1f6;
+  background: var(--secondary-bg);
   color: var(--ink-2);
 }
 
@@ -282,7 +343,7 @@ body {
 }
 
 .ProseMirror ::selection {
-  background: rgba(47, 111, 237, 0.16);
+  background: var(--selection);
 }
 
 /* ── 正文排版 ────────────────────────────────────────────────── */
@@ -345,7 +406,7 @@ body {
   top: 3px;
   width: 16px;
   height: 16px;
-  border: 1.5px solid #c6ccd8;
+  border: 1.5px solid var(--check-border);
   border-radius: 4px;
   box-sizing: border-box;
 }
@@ -362,8 +423,8 @@ body {
   top: 6px;
   width: 4px;
   height: 8px;
-  border-right: 2px solid #fff;
-  border-bottom: 2px solid #fff;
+  border-right: 2px solid var(--on-brand);
+  border-bottom: 2px solid var(--on-brand);
   transform: rotate(40deg);
 }
 
@@ -376,7 +437,7 @@ body {
 .ProseMirror blockquote {
   margin: 0 0 12px;
   padding: 2px 0 2px 12px;
-  border-left: 3px solid #dfe3ea;
+  border-left: 3px solid var(--border-strong);
   color: var(--ink-2);
 }
 
@@ -389,7 +450,7 @@ body {
 .ProseMirror code {
   padding: 1px 5px;
   border-radius: 4px;
-  background: #f2f4f7;
+  background: var(--code-inline-bg);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 13px;
 }
@@ -434,7 +495,7 @@ body {
   padding: 0 1px;
   border-radius: 3px;
   background: #ffe58f;
-  color: inherit;
+  color: var(--mark-ink);
 }
 
 .ProseMirror mark[data-c="g"] { background: #c3eda8; }
@@ -454,7 +515,7 @@ body {
   width: 27px;
   height: 27px;
   padding: 0;
-  border: 1px solid rgba(20, 26, 40, 0.14);
+  border: 1px solid var(--swatch-border);
   border-radius: 8px;
   -webkit-tap-highlight-color: transparent;
 }
@@ -483,7 +544,7 @@ body {
 }
 
 .ProseMirror th {
-  background: #f7f8fa;
+  background: var(--thead-bg);
   font-weight: 600;
   text-align: left;
 }
@@ -498,7 +559,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  background: rgba(47, 111, 237, 0.12);
+  background: var(--selection-soft);
   pointer-events: none;
 }
 

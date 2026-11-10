@@ -80,6 +80,9 @@ struct ItemRow: View {
     /// 已分区时显示标记。`nil` 不画任何东西：未分区不该占一个「无」字的位置，
     /// 找未分区的条目请用筛选条上那一条。
     var section: LibrarySection? = nil
+    /// 覆盖 `metaLine`。笔记要在这里带上「修改 11-10 23:40」，
+    /// 而时间不该塞进 `Item`——它是展示细节，不是数据。
+    var subtitle: String? = nil
 
     var body: some View {
         HStack(spacing: Metric.space3) {
@@ -100,7 +103,7 @@ struct ItemRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: Metric.space2) {
-                    Text(model.metaLine)
+                    Text(subtitle ?? model.metaLine)
                         .font(.cnMeta)
                         .foregroundStyle(Color.cnInk3)
                         .lineLimit(1)

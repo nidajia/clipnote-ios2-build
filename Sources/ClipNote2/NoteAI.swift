@@ -86,8 +86,17 @@ enum NotePrompt {
         case .tidy:
             return """
             任务：只整理排版，**一个字都不许增删改**。
-            允许：调整标题层级、拆分或合并段落、加列表符号、加分隔线、把并列信息整理成表格。
-            禁止：改写措辞、纠正错别字、补充内容、删除内容、调整标点。
+            允许（只在原文本身具备这种关系时才做）：
+            - 原文用「、」或分行罗列了并列信息 → 整理成 `- ` 列表
+            - 原文有一行明显是标题的短句 → 加 `## `
+            - 原文已经有分隔线 → 保留
+            严禁：
+            - 改写、增删、纠正任何字词与标点（包括错别字）
+            - **把一句话拆成一个独立段落**。一个自然段里有几句话，就仍然是一个自然段
+            - 为了「看起来整齐」给句子之间加换行或空行
+            - 加原文没有的标题、列表、分隔线来「凑结构」
+            判断标准：整理后的 Markdown，去掉标记符号后必须与原文逐字相同。
+            段落数最多比原文多 2 个；多出来的部分只能用列表或标题解释。
             """
 
         case .expand(let external):
@@ -111,16 +120,20 @@ enum NotePrompt {
             return """
             任务：把原文压成要点，要求**看得出明显变短**。
             做法：
-            1. 把同一主题的条目归到一个小标题下（原条目本身杂乱时尤其要做）；
-            2. 合并重复表述，每条不超过 25 字；
-            3. 只保留结论、专有名词、数字，不新增任何事实。
+            1. 通读全文再动笔，覆盖每一段，不能只取开头的几行；
+            2. 把同一主题的条目归到一个小标题下（原条目本身杂乱时尤其要做）；
+            3. 合并重复表述，每条不超过 25 字；
+            4. 只保留结论、专有名词、数字，不新增任何事实。
             目标长度：不超过原文的六成。
             """
 
         case .summary:
             return """
-            任务：把全文归纳成**一段话**，不超过 120 字。
-            要求：覆盖主要主题；不加标题、不用列表、不引用原文长句；不新增原文没有的事实。
+            任务：把全文归纳成**一段话**，100–160 字。
+            必须覆盖全文每一段的核心，**尤其是最后一段**——观点和结论通常在那里，
+            而它们最容易被漏掉。
+            禁止：只复述开头第一句；罗列细节；加标题；用列表；引用原文长句；编造原文没有的事实。
+            写完自检一次：如果读这段话只能知道开头讲了什么，就重写。
             """
 
         case .translate:
@@ -228,6 +241,46 @@ enum NoteAIQuality {
         }
     }
 
+    /// 「段落」= 被空行分开的普通正文块。列表项、标题、表格不算——
+    /// 整理排版把一坨并列信息变成列表是**对的**，不该被这条判成拆碎。
+    static func paragraphCount(_ text: String) -> Int {
+        text.split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { line in
+                guard !line.isEmpty else { return false }
+                let heads: [Character] = ["#", "-", "*", ">", "|", "`"]
+                guard let first = line.first, !heads.contains(first) else { return false }
+                // 有序列表 "1. " 也算列表
+                if let dot = line.firstIndex(of: "."), line[line.startIndex..<dot].allSatisfy(\.isNumber) {
+                    return false
+                }
+                return true
+            }
+            .count
+    }
+
+    /// 排版被「一刀一段」了。
+    ///
+    /// 用户的原话是「相当于把每句话打个回车就结束了」。这种输出的特征是
+    /// **普通段落数暴涨**：原文 1 段变 6 段，而列表和标题并没有增加。
+    /// 提示词写得再严也会漏，所以这里用机器判一次。
+    static func didOverSplit(_ result: String, from source: String) -> Bool {
+        let after = paragraphCount(result)
+        let before = paragraphCount(source)
+        // 给两段的余量：拆一个长段成两段是合理的排版动作
+        return after > before + 2
+    }
+
+    /// 总结太短，多半只覆盖了开头。
+    ///
+    /// 原文两三百字、总结只有二十来字，基本就是「只总结了第一句」。
+    /// 这不是长度洁癖：纪要的价值在于把全文的主线说出来。
+    static func summaryTooThin(_ result: String, from source: String) -> Bool {
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard source.count >= 200 else { return false }
+        return trimmed.count < 40
+    }
+
     static func identicalMessage(length: Int) -> String {
         """
         模型这次没有改动内容（原文 \(length) 字），所以没有可采用的修改。\
@@ -235,6 +288,17 @@ enum NoteAIQuality {
         例如「把中医相关的几条归到一起」。
         """
     }
+}
+
+/// 这次处理的位置范围。`nil` 表示整篇。
+///
+/// 为什么要把位置一路带到「采用」：生成要几十秒，这期间用户可能点过正文、
+/// 改过字。采用时若按「当前选区」写，结果会落到别的地方——而且不会报错。
+struct NoteAIRange: Equatable {
+    var from: Int
+    var to: Int
+    /// 生成时这个位置上的原文。回写前用它核对，对不上就不写。
+    var text: String
 }
 
 /// 失败。

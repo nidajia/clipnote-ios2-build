@@ -133,6 +133,17 @@ struct SnapshotRoot: View {
                            note: "")
         }
 
+        // 笔记筛选：给前两条写上笔记，并让其中一条是「笔记条目」本身。
+        // 这样截图能同时验证三件事：笔记筛选只收有内容的、行内带修改时间、
+        // 点进去是编辑器而不是视频页。
+        if state == "home-notes" {
+            let ids = lib.items.map(\.id)
+            if ids.count > 1 {
+                lib.seedNote(id: ids[0], note: "# 存储架构评审\n\n## 背景\n\n三组对照实验可以直接套到下季度容量评估。")
+                lib.seedNote(id: ids[1], note: "## 要点\n\n- 利息覆盖倍数在下降\n- 资本开支前置")
+            }
+        }
+
         // 作者行：详情页截图要能看到头像、名字、备注入口
         if state.hasPrefix("detail"), let id = detail?.id {
             // 故意把 author/videoId 留空，模拟线上那 4 条存量数据：
@@ -209,6 +220,12 @@ struct SnapshotRoot: View {
                         selected: .constant("Qwen/Qwen2.5-7B-Instruct"),
                         initialModels: SnapshotRoot.sampleModels
                     )
+                }
+            } else if state == "note-new" {
+                // 新建笔记的默认形态：大标题 + 三个小标题，光标在文末。
+                // 这张图要能证明「点进来就有结构」，而不是一张白纸。
+                NavigationStack {
+                    NoteScreen(item: SnapshotRoot.templateNote, beginAtEnd: true)
                 }
             } else if state == "note-probe" {
                 // 排障页：WebView 能不能执行内联 JS
@@ -302,7 +319,8 @@ struct SnapshotRoot: View {
                     // 光靠代码读一遍不算数——上一轮就是这么漏掉的。
                     previewSelecting: state == "home-selecting",
                     // 分区筛选态：`@State` 从外部设不了，只能从 init 进来
-                    previewFilter: state == "home-section" ? .section("study") : nil
+                    previewFilter: state == "home-section" ? .section("study")
+                        : (state == "home-notes" ? .note : nil)
                 )
             }
             .tabItem { Label("首页", systemImage: "house.fill") }
@@ -314,6 +332,21 @@ struct SnapshotRoot: View {
             .tabItem { Label("我", systemImage: "person.fill") }
             .tag(1)
         }
+    }
+
+    /// 新建笔记时的条目形态。用真模板生成，不手抄一份——
+    /// 否则改了模板，这张截图会继续展示旧结构。
+    static var templateNote: Item {
+        Item(
+            id: "note-preview",
+            kind: .note,
+            title: "周二复盘",
+            metaLine: "笔记",
+            durationText: "",
+            note: NoteTemplate.body(title: "周二复盘"),
+            createdAt: Date(),
+            updatedAt: Date()
+        )
     }
 
     /// 引导截图停在的那一帧。`.welcome` 用 nil 表示（init 默认值）。

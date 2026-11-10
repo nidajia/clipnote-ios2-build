@@ -10,6 +10,9 @@ import UIKit
 /// 但**不能有死路**：富文本起不来时自动退回纯文本，并且说清为什么。
 struct NoteScreen: View {
     var item: Item
+    /// 新建的笔记：模板已经铺好，光标直接落在文末，用户接着写。
+    /// 不这么做的话，新建完光标停在标题前面，第一下打字会插进「# 标题」里。
+    var beginAtEnd: Bool = false
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: LibraryStore
@@ -48,12 +51,15 @@ struct NoteScreen: View {
     /// 而打字时也用不到 AI。有预览时例外——那是用户正要处理的结果。
     @State private var keyboardUp = false
 
-    init(item: Item) {
+    init(item: Item, beginAtEnd: Bool = false) {
         self.item = item
+        self.beginAtEnd = beginAtEnd
         _text = State(initialValue: item.note)
     }
 
     private var dirty: Bool { text != item.note }
+    /// 库里最新的那条。保存之后 `updatedAt` 会变，而 `item` 是进页面那一刻的副本。
+    private var current: Item { library.items.first { $0.id == item.id } ?? item }
     private var useFallback: Bool { editorError != nil || gaveUp }
 
     var body: some View {
@@ -90,6 +96,17 @@ struct NoteScreen: View {
         .navigationTitle("我的笔记")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // 从视频进来写笔记时，要能回去看那条视频——否则笔记页是个死路。
+            // 笔记条目本身没有视频，就不显示这个入口。
+            ToolbarItem(placement: .navigationBarLeading) {
+                if item.kind == .video {
+                    NavigationLink {
+                        DetailScreen(item: item)
+                    } label: {
+                        Text("视频").font(.cnChip)
+                    }
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("保存") { Task { await save() } }
                     .font(.cnChip)
@@ -177,19 +194,43 @@ struct NoteScreen: View {
     /// 选哪些文字、处理全文还是选区，都在这一步定下来，后续不再变。
     private func prepare(_ action: NoteAIAction) async {
         guard let web = webBox.web else { return }
-        let raw = try? await web.evaluateJavaScript("window.__getSelection()")
-        let selection = (raw as? String) ?? ""
-        await run(action, selection: selection)
+        // 用 `__scope()` 而不是 `__getSelection()`：
+        // 后者在 WebView 失焦（点了原生按钮）之后只能返回空串，
+        // 于是「选了一段」会被判成「整篇」——这正是那段对话里最刺眼的问题。
+        let raw = try? await web.evaluateJavaScript("window.__scope()")
+        let scope = Self.parseScope(raw)
+        logs.info("note.ai.scope", "作用域已确定", meta: [
+            "id": item.id,
+            "kind": scope.kind,
+            "chars": String(scope.text.count),
+        ])
+        await run(action, selection: scope.text, range: scope.range)
     }
 
-    private func run(_ action: NoteAIAction, selection: String) async {
+    /// 解析 `__scope()` 的返回。
+    ///
+    /// `kind` 是唯一的作用域判据：`doc` 才处理整篇。
+    /// 不再用「text 是不是空」猜——空串有两种含义（真没选、选区丢了），
+    /// 而这两种必须区分。
+    static func parseScope(_ raw: Any?) -> (text: String, range: NoteAIRange?, kind: String) {
+        guard let dict = raw as? [String: Any] else { return ("", nil, "doc") }
+        let kind = (dict["kind"] as? String) ?? "doc"
+        let text = (dict["text"] as? String) ?? ""
+        let from = (dict["from"] as? Int) ?? 0
+        let to = (dict["to"] as? Int) ?? 0
+        guard kind != "doc", !text.isEmpty, to > from else { return ("", nil, "doc") }
+        return (text, NoteAIRange(from: from, to: to, text: text), kind)
+    }
+
+    private func run(_ action: NoteAIAction, selection: String, range: NoteAIRange?) async {
         // 全文优先问编辑器要最新内容：`text` 是走 350ms 防抖回传的，
         // 用户刚打完字就去点 AI 时它可能还差一个字。
         var content = selection
         if content.isEmpty, let web = webBox.web {
             content = ((try? await web.evaluateJavaScript("window.__getMarkdown()")) as? String) ?? text
         }
-        let scopeIsDoc = selection.isEmpty
+        // 判据是「有没有范围」，不是「内容空不空」
+        let scopeIsDoc = range == nil
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             aiError = "这条笔记还是空的，先写一点再让 AI 处理"
             return
@@ -243,14 +284,24 @@ struct NoteScreen: View {
             if action == .outline, NoteAIQuality.didNotCompress(result.markdown, from: content) {
                 warning = "结果没比原文短，可能没有真正压缩，采用前请确认"
             }
+            if action == .tidy, NoteAIQuality.didOverSplit(result.markdown, from: content) {
+                // 用户的原话：「相当于把每句话打个回车就结束了」。
+                // 提示词已经写明禁止，但模型仍可能这么干，所以机器再判一次。
+                warning = "段落被拆得比原文多不少，可能只是给每句加了回车，采用前请对比"
+            }
+            if action == .summary, NoteAIQuality.summaryTooThin(result.markdown, from: content) {
+                warning = "总结偏短，可能只覆盖了开头，建议放弃后重试"
+            }
             if action.mustKeepText, result.textChanged {
                 // 「整理排版」的定义就是不改字。机器能验，就不该只靠提示词。
                 warning = "文字有改动——「整理排版」不应该改字，建议放弃后重试"
             }
             aiPreview = NoteAIPreview(
                 action: action,
-                scope: scopeIsDoc ? "全文" : "选区",
+                // 把字数写进范围里：用户要能一眼看出「这次动的是 42 字还是 383 字」
+                scope: scopeIsDoc ? "全文 · \(content.count) 字" : "选区 · \(content.count) 字",
                 selection: selection,
+                range: range,
                 markdown: result.markdown,
                 diff: TextDiff.segments(from: content, to: result.markdown),
                 basis: result.basis,
@@ -278,29 +329,32 @@ struct NoteScreen: View {
             return
         }
 
-        // 针对选区生成的结果，必须先确认选区还是原来那段：
-        // 用户在这期间点了一下正文，替换就会落到别的地方，而且不报错。
-        if !preview.selection.isEmpty {
-            let now = (try? await web.evaluateJavaScript("window.__getSelection()")) as? String ?? ""
-            guard now == preview.selection else {
-                aiError = "选区已经变了，这条结果没有采用。重新选中后再试一次。"
+        // 选区结果按**当时的位置**写，不按「当前选区」写。
+        // 生成要几十秒，这期间用户点一下正文，当前选区就已经不是那段了。
+        // 位置核对在 JS 里做：那里的文字必须还是当初那段，否则拒绝。
+        let argument = Self.jsString(preview.markdown)
+        var call = "window.__replaceAll(\(argument))"
+        if let range = preview.range {
+            call = "window.__applyScope(\(argument), \(range.from), \(range.to), \(Self.jsString(range.text)))"
+        }
+        let returned = try? await web.evaluateJavaScript(call)
+        if preview.range == nil {
+            guard (returned as? Bool) == true else {
+                aiError = "写入没有生效（编辑器拒绝了这次替换），正文未改动。"
+                logs.error("note.ai.apply_failed", "整篇替换被拒绝", meta: ["id": item.id])
+                return
+            }
+        } else {
+            let result = returned as? [String: Any]
+            guard (result?["ok"] as? Bool) == true else {
+                let reason = (result?["reason"] as? String) ?? "apply_failed"
+                aiError = reason == "range_changed"
+                    ? "那段文字已经变了，这条结果没有采用。重新选中后再试一次。"
+                    : "写入没有生效，正文未改动。"
+                logs.error("note.ai.apply_failed", "范围回写被拒绝：\(reason)", meta: ["id": item.id])
                 aiPreview = nil
                 return
             }
-        }
-
-        let argument = Self.jsString(preview.markdown)
-        let name = preview.selection.isEmpty ? "__replaceAll" : "__replaceSelection"
-        let returned = try? await web.evaluateJavaScript("window.\(name)(\(argument))")
-
-        // 之前这里用 `try?` 吞掉了返回值：替换被编辑器拒绝时界面毫无反应，
-        // 用户只会以为「点了没变」。现在必须确认它真的写进去了。
-        guard (returned as? Bool) == true else {
-            aiError = "写入没有生效（编辑器拒绝了这次替换），正文未改动。"
-            logs.error("note.ai.apply_failed", "替换被编辑器拒绝", meta: [
-                "id": item.id, "call": name,
-            ])
-            return
         }
 
         aiPreview = nil
@@ -308,7 +362,7 @@ struct NoteScreen: View {
         let after = ((try? await web.evaluateJavaScript("window.__getMarkdown()")) as? String) ?? ""
         logs.info("note.ai.applied", "\(preview.action.title) 已采用", meta: [
             "id": item.id,
-            "scope": preview.selection.isEmpty ? "doc" : "selection",
+            "scope": preview.range == nil ? "doc" : "selection",
             "before": String(preview.markdown.count),
             "after": String(after.count),
         ])
@@ -390,6 +444,9 @@ struct NoteScreen: View {
                 onReady: {
                     editorReady = true
                     logs.info("editor.ready", "编辑器就绪", meta: ["id": item.id])
+                    if beginAtEnd {
+                        webBox.web?.evaluateJavaScript("window.__focusEnd()") { _, _ in }
+                    }
                 },
                 onError: { message in
                     editorError = message
@@ -451,6 +508,13 @@ struct NoteScreen: View {
             Text("\(text.count) 字")
                 .font(.cnCaption)
                 .foregroundStyle(Color.cnInk3)
+            if let stamp = timeStamp {
+                Text("·").font(.cnCaption).foregroundStyle(Color.cnInk3)
+                Text(stamp)
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+                    .lineLimit(1)
+            }
             Spacer()
             if failed {
                 Text("没存上，检查网络")
@@ -464,6 +528,16 @@ struct NoteScreen: View {
         }
         .padding(.horizontal, Metric.pagePad)
         .padding(.vertical, Metric.space2)
+    }
+
+    /// 「修改 11-11 00:10」，新建的写成「创建 …」。
+    ///
+    /// 用户的原话是「笔记也不显示啥时候创建和修改的」。
+    /// 这里只放一个时间，不给两行字：状态栏是给人扫一眼的，不是档案页。
+    private var timeStamp: String? {
+        guard let date = current.updatedAt ?? current.createdAt else { return nil }
+        let label = current.updatedAt == nil ? "创建" : "修改"
+        return "\(label) \(HomeScreen.stamp(date))"
     }
 
     private func save() async {

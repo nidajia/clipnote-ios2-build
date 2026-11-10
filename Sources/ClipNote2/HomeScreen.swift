@@ -54,6 +54,13 @@ struct HomeScreen: View {
     @State private var showImport = false
     @State private var showBatchSections = false
     @State private var selected: Item?
+    /// 正在看哪条笔记。笔记是**直接进编辑器**的，不经过视频详情页——
+    /// 之前点一条笔记要先落到视频页，再点「笔记」才能写，两步都是多余的。
+    @State private var openedNote: Item?
+    @State private var showNewNote = false
+    @State private var newNoteTitle = ""
+    /// 刚从模板建出来的笔记：进编辑器后光标落到文末。
+    @State private var autoFocusNote = false
     @State private var toast: String?
 
     /// `initialSelection` 只给截图用：让详情页以「被 push 进去」的形态出现，
@@ -85,7 +92,11 @@ struct HomeScreen: View {
         case .section(let id): list = list.filter { sections.sectionID(for: $0.id) == id }
         case .unassigned: list = list.filter { sections.sectionID(for: $0.id) == nil }
         case .video: list = list.filter { $0.kind == .video }
-        case .note: list = list.filter { $0.kind == .note }
+        case .note:
+            // 「笔记」不是指 kind，而是**真的有笔记内容**。
+            // 之前按 kind 过滤，把建了条目还没写字的也算进来，
+            // 于是列表里全是空笔记，点进去什么都没有。
+            list = list.filter { !$0.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         case .downloaded: list = list.filter { downloads.isDownloaded($0.id) }
         }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -125,6 +136,14 @@ struct HomeScreen: View {
         return out
     }
 
+    /// 笔记直达编辑器的布尔投影。
+    private var notePushed: Binding<Bool> {
+        Binding(
+            get: { openedNote != nil },
+            set: { if !$0 { openedNote = nil; autoFocusNote = false } }
+        )
+    }
+
     /// `selected` 的布尔投影，供 iOS 16 的 navigationDestination(isPresented:) 使用。
     private var detailPushed: Binding<Bool> {
         Binding(
@@ -145,6 +164,11 @@ struct HomeScreen: View {
             .safeAreaInset(edge: .top, spacing: 0) { pinnedHeader }
             // `navigationDestination(item:)` 是 iOS 17 才有的；16 上要用 isPresented
             // 自己包一层。包出来的行为一致：selected 有值时推入，返回时置空。
+            .navigationDestination(isPresented: notePushed) {
+                if let openedNote {
+                    NoteScreen(item: openedNote, beginAtEnd: autoFocusNote)
+                }
+            }
             .navigationDestination(isPresented: detailPushed) {
                 if let selected {
                     DetailScreen(item: selected,
@@ -186,7 +210,21 @@ struct HomeScreen: View {
                 Text("选中的 \(picked.count) 条会进回收站，30 天内可以恢复。")
             }
             .sheet(isPresented: $showImport) {
-                ImportSheet()
+                ImportSheet { title in
+                    Task { await createNote(title: title) }
+                }
+            }
+            .alert("新建笔记", isPresented: $showNewNote) {
+                TextField("标题", text: $newNoteTitle)
+                Button("取消", role: .cancel) {}
+                Button("创建") {
+                    let title = newNoteTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    newNoteTitle = ""
+                    guard !title.isEmpty else { return }
+                    Task { await createNote(title: title) }
+                }
+            } message: {
+                Text("会带好大标题和三个小标题，直接往里填就行。")
             }
             .sheet(isPresented: $showBatchSections) {
                 NavigationStack {
@@ -254,7 +292,11 @@ struct HomeScreen: View {
 
     @ViewBuilder
     private var listOrNoResults: some View {
-        if filtered.isEmpty {
+        // 「一条笔记都没有」和「筛选没命中」是两件事。
+        // 前者要请用户写一条，后者只要换个条件。
+        if filter == .note, filtered.isEmpty {
+            NotesEmptyView { showNewNote = true }
+        } else if filtered.isEmpty {
             // 有数据但筛不出来，不能复用「还没有条目」的文案
             NoResultsView {
                 query = ""
@@ -267,7 +309,7 @@ struct HomeScreen: View {
                         if picked.contains(item.id) { picked.remove(item.id) }
                         else { picked.insert(item.id) }
                     } else {
-                        selected = item
+                        open(item)
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 0) {
@@ -281,7 +323,8 @@ struct HomeScreen: View {
                             }
                             ItemRow(model: item,
                                     isDownloaded: downloads.isDownloaded(item.id),
-                                    section: sections.section(for: item.id))
+                                    section: sections.section(for: item.id),
+                                    subtitle: subtitle(for: item))
                         }
 
                         // 字幕命中单独一行，是**独立按钮**：点它会直接去那一句，
@@ -448,6 +491,51 @@ struct HomeScreen: View {
             selecting = false
             picked.removeAll()
         }
+    }
+
+    /// 点一条内容。
+    ///
+    /// 笔记（以及「笔记」筛选下的任何条目）直接进编辑器；
+    /// 其它进详情页——那里才是播放器和 AI 摘要。
+    private func open(_ item: Item) {
+        let isNote = item.kind == .note
+            || (filter == .note && !item.note.isEmpty)
+        if isNote {
+            openedNote = item
+        } else {
+            selected = item
+        }
+    }
+
+    private func createNote(title: String) async {
+        switch await library.createNote(title: title) {
+        case .success(let item):
+            autoFocusNote = true
+            openedNote = item
+            filter = .note
+        case .failure(let message):
+            showToast("新建失败：\(message)")
+        }
+    }
+
+    /// 笔记行的副标题：带上最后修改时间。
+    /// 其余条目沿用服务端给的 `metaLine`（平台 · 作者）。
+    private func subtitle(for item: Item) -> String? {
+        guard item.kind == .note else { return nil }
+        let base = item.metaLine.isEmpty ? "笔记" : item.metaLine
+        guard let date = item.updatedAt ?? item.createdAt else { return base }
+        return "\(base) · 修改 \(Self.stamp(date))"
+    }
+
+    /// 「11-10 23:40」。跨年才带年份——列表里不需要每年都写一次。
+    static func stamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        let calendar = Calendar.current
+        formatter.dateFormat = calendar.component(.year, from: date) == calendar.component(.year, from: Date())
+            ? "MM-dd HH:mm"
+            : "yyyy-MM-dd HH:mm"
+        return formatter.string(from: date)
     }
 
     // MARK: - 分区
@@ -692,6 +780,45 @@ struct NoResultsView: View {
             Button("清除筛选", action: onReset)
                 .font(.cnChip)
                 .foregroundStyle(Color.cnBrand)
+                .padding(.top, Metric.space1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, Metric.pagePad)
+    }
+}
+
+// MARK: - 笔记空态
+
+/// 「一条笔记都没有」。
+///
+/// 不复用 `EmptyStateView`（那是「库里什么都没有，去导入」）：
+/// 这里用户已经有内容了，缺的只是笔记这一种，所以按钮是「写一条」而不是「导入」。
+struct NotesEmptyView: View {
+    var onCreate: () -> Void
+
+    var body: some View {
+        VStack(spacing: Metric.space4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.cnCard2)
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundStyle(Color.cnInk3)
+            }
+            .frame(width: 64, height: 64)
+
+            Text("还没有笔记")
+                .font(.cnTitle)
+                .foregroundStyle(Color.cnInk)
+
+            Text("笔记独立于视频：想到什么就写一条，不用先有链接。")
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk3)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 280)
+
+            PrimaryButton(title: "写一条", action: onCreate)
+                .frame(width: 180)
                 .padding(.top, Metric.space1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

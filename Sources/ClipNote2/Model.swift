@@ -45,6 +45,10 @@ struct Item: Identifiable, Hashable {
     var authorAvatar: String = ""
     /// 我的笔记。
     var note: String = ""
+    /// 创建时间。笔记条目由用户新建，这个时间就是「我什么时候写的它」。
+    var createdAt: Date?
+    /// 最后修改时间。服务端每次写入都会更新，笔记页显示的是它。
+    var updatedAt: Date?
     /// AI 脑图。
     var outline: [OutlineNode] = []
     /// 对某几句的批注。
@@ -81,6 +85,12 @@ struct Item: Identifiable, Hashable {
         self.authorNote = api.authorNote
         self.authorAvatar = api.authorAvatar
         self.note = api.note
+        self.createdAt = api.createdAt > 0
+            ? Date(timeIntervalSince1970: TimeInterval(api.createdAt) / 1000)
+            : nil
+        self.updatedAt = api.updatedAt > 0
+            ? Date(timeIntervalSince1970: TimeInterval(api.updatedAt) / 1000)
+            : nil
         self.outline = api.outline
         self.annotations = api.annotations
         self.platform = api.platform
@@ -126,7 +136,9 @@ struct Item: Identifiable, Hashable {
         platform: String = "",
         coverURL: URL? = nil,
         playbackAvailable: Bool = true,
-        publishedAt: Date? = nil
+        publishedAt: Date? = nil,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -153,6 +165,8 @@ struct Item: Identifiable, Hashable {
         self.coverURL = coverURL
         self.playbackAvailable = playbackAvailable
         self.publishedAt = publishedAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
         let colors = Item.placeholderColors(for: id)
         self.coverTop = colors.top
         self.coverBottom = colors.bottom

@@ -189,6 +189,9 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     /// 我的笔记。详情页只露预览，编辑在独立页。
     var note: String = ""
     var noteAt: Int = 0
+    /// 创建与最后修改时间（毫秒，服务端时钟）。
+    var createdAt: Int = 0
+    var updatedAt: Int = 0
     /// AI 脑图。树形，服务端限 3 层 / 40 节点。
     var outline: [OutlineNode] = []
     var outlineAt: Int = 0
@@ -206,6 +209,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case bookmarks, bookmarksAt
         case author, authorId, videoId, sourceURL, authorNote, authorNoteAt
         case authorAvatar, note, noteAt, outline, outlineAt
+        case createdAt, updatedAt
         case annotations, annotationsAt
     }
 
@@ -273,6 +277,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         outline = try c.decodeIfPresent([OutlineNode].self, forKey: .outline) ?? []
         annotations = (try? c.decodeIfPresent([APIAnnotation].self, forKey: .annotations)) ?? []
         noteAt = try c.decodeIfPresent(Int.self, forKey: .noteAt) ?? 0
+        createdAt = try c.decodeIfPresent(Int.self, forKey: .createdAt) ?? 0
+        updatedAt = try c.decodeIfPresent(Int.self, forKey: .updatedAt) ?? 0
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
@@ -628,6 +634,12 @@ struct ClipNoteClient {
     func saveNote(id: String, note: String) async throws -> APILibraryItem {
         try await post("/api/v2/items/\(encode(id))/note",
                        body: ["note": note], as: APILibraryItem.self)
+    }
+
+    /// 新建一条笔记。服务端只开放 note 这一种 kind。
+    func createNote(title: String, note: String) async throws -> APILibraryItem {
+        try await post("/api/v2/items", body: ["title": title, "note": note],
+                       as: APILibraryItem.self)
     }
 
     /// 上传一张笔记配图，返回可直接写进 Markdown 的绝对地址。
@@ -1255,6 +1267,31 @@ final class LibraryStore: ObservableObject {
         } catch {
             log?.error("note.failed", "笔记保存失败", meta: ["id": id])
             return false
+        }
+    }
+
+    /// 新建笔记并立刻插到本地列表最前面。
+    ///
+    /// 返回建好的条目：调用方要马上 push 到编辑器。等 `reload()` 再去找的话，
+    /// 网络慢的时候用户会先看到一个空状态，然后才出现「刚建的那条」。
+    func createNote(title: String) async -> Result<Item, String> {
+        guard let client else { return .failure("没有配置服务地址") }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure("标题不能为空") }
+        do {
+            let api = try await client.createNote(title: trimmed,
+                                                  note: NoteTemplate.body(title: trimmed))
+            let fresh = Item(api: api)
+            items.insert(fresh, at: 0)
+            log?.info("note.created", "新建笔记", meta: [
+                "id": api.id, "chars": String(api.note.count),
+            ])
+            await reload()
+            return .success(fresh)
+        } catch {
+            let readable = (error as? ClipNoteClient.Failure)?.displayMessage ?? "\(error)"
+            log?.error("note.create_failed", readable)
+            return .failure(readable)
         }
     }
 

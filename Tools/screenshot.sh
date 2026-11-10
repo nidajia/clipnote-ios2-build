@@ -102,6 +102,10 @@ shot detail-segments    detail-segments    light
 shot detail-bookmarks   detail-bookmarks   light
 shot outline            outline            light
 shot note-editor      note-editor      light
+# 深色：编辑器在深色下的底色/工具栏/弹层（之前一直是白的）
+shot note-dark        note-editor      dark
+# 新建笔记的默认形态：大标题 + 三个小标题
+shot note-new         note-new         light
 shot note-probe       note-probe       light
 shot home-selecting     home-selecting     light
 # 6.1 分区：一张验筛选条和行内标记，一张验选择面板本身。
@@ -109,6 +113,8 @@ shot home-selecting     home-selecting     light
 # 否则「未分区」那条筛选在图上永远不出现，等于没验。
 shot home-section       home-section       light
 shot section-picker     section-picker     light
+# 笔记筛选：只收真有内容的，行内带修改时间
+shot home-notes         home-notes         light
 shot segments           segments           light
 shot infographic        infographic        light
 # 本机转写面板（sheet，只能作为根呈现）。

@@ -15,6 +15,11 @@ struct ImportSheet: View {
     @State private var link = ""
     @State private var phase: Phase = .idle
     @State private var clipboardHasText = false
+    /// 新建笔记：标题在这里问，建和跳由首页做——
+    /// 面板只负责「拿到一个标题」，不承担导航。
+    @State private var showNewNote = false
+    @State private var newTitle = ""
+    var onCreateNote: (String) -> Void = { _ in }
 
     private enum Phase: Equatable {
         case idle
@@ -93,6 +98,13 @@ struct ImportSheet: View {
                 .frame(maxWidth: .infinity)
 
             optionRow(
+                symbol: "square.and.pencil",
+                title: "新建一条笔记",
+                isEnabled: true,
+                action: { showNewNote = true }
+            )
+
+            optionRow(
                 symbol: "doc.on.clipboard",
                 title: "从剪贴板读取链接",
                 isEnabled: clipboardHasText,
@@ -104,7 +116,7 @@ struct ImportSheet: View {
         .padding(.horizontal, Metric.pagePad)
         .padding(.top, Metric.space2)
         .padding(.bottom, Metric.space6)
-        .presentationDetents([.height(340)])
+        .presentationDetents([.height(400)])
         .presentationDragIndicator(.visible)
         // `.presentationBackground` 要 iOS 16.4。部署目标是 16.0，所以改成
         // 自己铺底色——效果一样，只是不再依赖那个修饰符。
@@ -114,6 +126,19 @@ struct ImportSheet: View {
                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         // 输入变了就把上一次的错误清掉，否则红字会挂在一条新链接下面
+        .alert("新建笔记", isPresented: $showNewNote) {
+            TextField("标题", text: $newTitle)
+            Button("取消", role: .cancel) {}
+            Button("创建") {
+                let title = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty else { return }
+                newTitle = ""
+                dismiss()
+                onCreateNote(title)
+            }
+        } message: {
+            Text("会带好大标题和三个小标题，直接往里填就行。")
+        }
         .onChange(of: link) { _ in
             if case .failed = phase { phase = .idle }
             if phase == .duplicate { phase = .idle }

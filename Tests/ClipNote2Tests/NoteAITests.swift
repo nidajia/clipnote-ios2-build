@@ -299,4 +299,84 @@ final class NoteAITests: XCTestCase {
             XCTFail("错误类型不对：\(error)")
         }
     }
+
+    // MARK: - 作用域：选了一段就不能动整篇
+
+    func testScopeParsesSavedSelection() {
+        // 用户在点按钮前选了一段，点按钮时 WebView 失焦，
+        // `__scope()` 用记住的位置返回 kind=saved。原生端必须认它。
+        let raw: [String: Any] = ["kind": "saved", "text": "第一段话", "from": 1, "to": 5]
+        let scope = NoteScreen.parseScope(raw)
+        XCTAssertEqual(scope.kind, "saved")
+        XCTAssertEqual(scope.text, "第一段话")
+        XCTAssertEqual(scope.range?.from, 1)
+        XCTAssertEqual(scope.range?.to, 5)
+        XCTAssertEqual(scope.range?.text, "第一段话", "范围要带上原文，回写前要用它核对")
+    }
+
+    func testScopeFallsBackToDocOnlyWhenKindSaysSo() {
+        // kind=doc 才是整篇。空 text 不能当作判据——
+        // 空串有兩種含义（真没选、选区丢了），混为一谈正是原来的 bug。
+        let raw: [String: Any] = ["kind": "doc", "text": "", "from": 0, "to": 0]
+        let scope = NoteScreen.parseScope(raw)
+        XCTAssertEqual(scope.kind, "doc")
+        XCTAssertNil(scope.range)
+    }
+
+    func testScopeIgnoresBrokenPayload() {
+        XCTAssertNil(NoteScreen.parseScope(nil).range)
+        XCTAssertNil(NoteScreen.parseScope("不是字典").range)
+        // 位置不合法时按整篇处理，不能拿 (0,0) 去回写
+        let raw: [String: Any] = ["kind": "live", "text": "x", "from": 5, "to": 5]
+        XCTAssertNil(NoteScreen.parseScope(raw).range)
+    }
+
+    // MARK: - 排版被「一刀一段」
+
+    func testParagraphCountIgnoresStructure() {
+        // 列表、标题、引用、表格不算普通段落：
+        // 把一坨并列信息整理成列表是**对的**，不该被当成拆碎。
+        let text = "# 标题\n\n- 一\n- 二\n\n> 引用\n\n| a | b |\n\n正文一段。"
+        XCTAssertEqual(NoteAIQuality.paragraphCount(text), 1)
+    }
+
+    func testOverSplitIsDetected() {
+        let before = "泡沫不在估值，而在现金流。利润是纸面的，利息是现金的。资本开支前置，回收周期被拉长。"
+        // 「每句话打个回车」的典型产物
+        let after = "泡沫不在估值，而在现金流。\n\n利润是纸面的，利息是现金的。\n\n资本开支前置，回收周期被拉长。"
+        XCTAssertTrue(NoteAIQuality.didOverSplit(after, from: before))
+    }
+
+    func testNormalTidyIsNotFlagged() {
+        let before = "血酬定律\n水型相 去长江以北发展\n遇事不决桂枝汤"
+        let after = "## 要点\n\n- 血酬定律\n- 水型相：去长江以北发展\n- 遇事不决桂枝汤"
+        XCTAssertFalse(NoteAIQuality.didOverSplit(after, from: before))
+    }
+
+    func testThinSummaryIsDetected() {
+        let source = String(repeating: "这是一段比较长的笔记内容，讲现金流和估值的关系。", count: 12)
+        XCTAssertTrue(NoteAIQuality.summaryTooThin("这篇讲的是泡沫。", from: source))
+        let good = String(repeating: "作者认为泡沫的核心在现金流而不是估值。", count: 6)
+        XCTAssertFalse(NoteAIQuality.summaryTooThin(good, from: source))
+    }
+
+    func testShortSourceDoesNotTriggerThinSummary() {
+        // 短笔记本来就只能总结出一句，不该报「只覆盖了开头」
+        XCTAssertFalse(NoteAIQuality.summaryTooThin("一句话。", from: "很短的一段。"))
+    }
+
+    // MARK: - 新笔记模板
+
+    func testTemplateHasTitleAndHeadings() {
+        let body = NoteTemplate.body(title: "周二复盘")
+        XCTAssertTrue(body.hasPrefix("# 周二复盘"), "大标题要用用户输入的标题")
+        for heading in NoteTemplate.headings {
+            XCTAssertTrue(body.contains("## \(heading)"), "缺少小标题：\(heading)")
+        }
+    }
+
+    func testTemplateTitleCanBeReadBack() {
+        XCTAssertEqual(NoteTemplate.title(in: NoteTemplate.body(title: "预算评审")), "预算评审")
+        XCTAssertNil(NoteTemplate.title(in: "没有大标题的一段"))
+    }
 }

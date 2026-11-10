@@ -163,6 +163,8 @@ struct NoteAIPreview: Equatable {
     var action: NoteAIAction
     var scope: String
     var selection: String
+    /// 选区范围。`nil` = 整篇。采用时必须按它写回，不能按「当前选区」。
+    var range: NoteAIRange?
     var markdown: String
     var diff: [DiffSegment]
     var basis: String?

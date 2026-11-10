@@ -116,6 +116,45 @@ setTimeout(() => {
   ok(back.includes("| a | b |"), "表格往返保留", back.split("\n").find((l) => l.startsWith("|")) || "无");
   ok(back.includes("```js"), "代码块语言保留");
 
+  // ── AI 作用域：选了一段就不能动整篇 ──────────────────────────
+  // 这组用例对应「选了一段却全改了」。成因是 WebView 失焦后
+  // ProseMirror 的选区被清空，而原生端把「空」当成了「整篇」。
+  w.__replaceAll("第一段话，讲的是泡沫。\n\n第二段话，讲的是现金流。");
+  ok(w.__scope().kind === "doc", "没有选区时作用域是整篇");
+  w.__selectRange(1, 9);
+  const sel = w.__scope();
+  ok(sel.kind === "live" && sel.text === "第一段话，讲的是", "有选区时返回选中的那段",
+    JSON.stringify(sel.text));
+  // 模拟「点原生按钮 → WebView 失焦 → 选区被清空」
+  w.__selectRange(0, 0);
+  d.querySelector(".ProseMirror").blur();
+  const kept = w.__scope();
+  ok(kept.kind === "saved" && kept.text === sel.text, "失焦后用记住的选区，而不是整篇",
+    JSON.stringify(kept));
+  ok(kept.from === sel.from && kept.to === sel.to, "位置也要一起记住");
+
+  // 回写必须解析成节点：标题不能变成正文里的井号
+  const applied = w.__applyScope("## 新小标题", kept.from, kept.to, kept.text);
+  ok(applied.ok === true, "按范围回写成功", JSON.stringify(applied));
+  ok(!!d.querySelector(".ProseMirror h2"), "回写结果是一个真标题节点");
+  ok(!d.querySelector(".ProseMirror").textContent.includes("##"),
+    "正文里没有字面井号", d.querySelector(".ProseMirror").textContent);
+  ok(!w.__getMarkdown().startsWith("\n"), "没有留下空段落", JSON.stringify(w.__getMarkdown()));
+  const broken = w.__applyScope("x", 1, 5, "完全不是这段");
+  ok(broken.ok === false && broken.reason === "range_changed", "位置对不上就拒绝写入",
+    JSON.stringify(broken));
+
+  // 行内替换不能把句子拆成两段
+  w.__replaceAll("原句在这一行。");
+  w.__selectRange(1, 3);
+  const inline = w.__scope();
+  w.__applyScope("改过的", inline.from, inline.to, inline.text);
+  ok(w.__getMarkdown() === "改过的在这一行。", "行内替换不切段", JSON.stringify(w.__getMarkdown()));
+
+  // 新建笔记的光标落位
+  w.__replaceAll("# 标题\n\n## 背景\n");
+  ok(w.__focusEnd() === true, "光标落位接口可用");
+
   // 图片：往返要逐字一致；插入接口只认 http(s)
   const imgMd = "看图：![截图](https://example.com/a.png) 就是这样";
   w.__replaceAll(imgMd);
