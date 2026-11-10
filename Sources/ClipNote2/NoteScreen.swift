@@ -536,7 +536,12 @@ struct NoteScreen: View {
     /// 这里只放一个时间，不给两行字：状态栏是给人扫一眼的，不是档案页。
     private var timeStamp: String? {
         guard let date = current.updatedAt ?? current.createdAt else { return nil }
-        let label = current.updatedAt == nil ? "创建" : "修改"
+        // 刚建出来的笔记两个时间几乎相同，说「修改」会让人以为被别人动过。
+        let justCreated: Bool = {
+            guard let made = current.createdAt, let edited = current.updatedAt else { return false }
+            return abs(edited.timeIntervalSince(made)) < 60
+        }()
+        let label = (current.updatedAt == nil || justCreated) ? "创建" : "修改"
         return "\(label) \(HomeScreen.stamp(date))"
     }
 

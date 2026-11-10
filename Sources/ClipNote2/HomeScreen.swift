@@ -521,10 +521,16 @@ struct HomeScreen: View {
     /// 笔记行的副标题：带上最后修改时间。
     /// 其余条目沿用服务端给的 `metaLine`（平台 · 作者）。
     private func subtitle(for item: Item) -> String? {
-        guard item.kind == .note else { return nil }
-        let base = item.metaLine.isEmpty ? "笔记" : item.metaLine
-        guard let date = item.updatedAt ?? item.createdAt else { return base }
-        return "\(base) · 修改 \(Self.stamp(date))"
+        let stamp = (item.updatedAt ?? item.createdAt).map(Self.stamp)
+        if item.kind == .note {
+            let base = item.metaLine.isEmpty ? "笔记" : item.metaLine
+            return stamp.map { "\(base) · 修改 \($0)" } ?? base
+        }
+        // 视频条目也能写笔记。在「笔记」筛选下列出来的就是这些，
+        // 没有时间的话，「什么时候写的」还得点进去才知道。
+        let hasNote = !item.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasNote else { return nil }
+        return stamp.map { "\(item.metaLine) · 笔记 \($0)" } ?? item.metaLine
     }
 
     /// 「11-10 23:40」。跨年才带年份——列表里不需要每年都写一次。
@@ -645,25 +651,39 @@ struct HomeScreen: View {
     /// 中间一条竖线分开。分区数量会随用户增长，所以这一条必须能横滑——
     /// 上一版四个固定胶囊不需要滑，加了分区就不成立了。
     private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Metric.space2) {
-                ForEach(filterChips) { spec in
-                    if spec.startsGroup {
-                        Rectangle()
-                            .fill(Color.cnHairline)
-                            .frame(width: 1, height: 18)
-                            .padding(.horizontal, 2)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Metric.space2) {
+                    ForEach(filterChips) { spec in
+                        if spec.startsGroup {
+                            Rectangle()
+                                .fill(Color.cnHairline)
+                                .frame(width: 1, height: 18)
+                                .padding(.horizontal, 2)
+                        }
+                        Button {
+                            filter = spec.filter
+                        } label: {
+                            FilterChip(title: spec.title, isSelected: spec.filter == filter)
+                        }
+                        .buttonStyle(.plain)
+                        .id(spec.id)
                     }
-                    Button {
-                        filter = spec.filter
-                    } label: {
-                        FilterChip(title: spec.title, isSelected: spec.filter == filter)
-                    }
-                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, Metric.pagePad)
+                .padding(.vertical, Metric.space2)
+            }
+            // 选中的那一颗可能在屏幕外（分区一多就会），必须滚过去。
+            // 否则用户切到「笔记」之后，条上看不到任何选中态——
+            // 截图里就发生过：列表已经筛过了，但看上去像没生效。
+            .onChange(of: filter) { value in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(value.id, anchor: .center)
                 }
             }
-            .padding(.horizontal, Metric.pagePad)
-            .padding(.vertical, Metric.space2)
+            .onAppear {
+                proxy.scrollTo(filter.id, anchor: .center)
+            }
         }
         .background(Color.cnBg)
         // 右边缘渐隐：分区会越加越多，这一条一定得横滑。
