@@ -7,6 +7,19 @@ import Foundation
 /// Obsidian / Notion 的新页面也有标题位，我们把它显式化成大标题 + 三个小标题。
 ///
 /// 三个小标题是**可删的占位**，不是强制字段：它们是提示，不是表单。
+/// 新建笔记失败的原因。
+///
+/// 用 `Result<Item, String>` 编译不过：`Result` 的 Failure 必须实现 `Error`，
+/// 而 String 不实现。包一层比在调用处到处判 nil 干净。
+enum NoteCreateFailure: Error, Equatable {
+    case message(String)
+
+    var displayMessage: String {
+        if case .message(let text) = self { return text }
+        return "新建失败"
+    }
+}
+
 enum NoteTemplate {
 
     static let headings = ["背景", "要点", "结论"]

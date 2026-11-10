@@ -513,8 +513,8 @@ struct HomeScreen: View {
             autoFocusNote = true
             openedNote = item
             filter = .note
-        case .failure(let message):
-            showToast("新建失败：\(message)")
+        case .failure(let failure):
+            showToast("新建失败：\(failure.displayMessage)")
         }
     }
 

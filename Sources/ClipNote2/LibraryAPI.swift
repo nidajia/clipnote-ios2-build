@@ -1274,10 +1274,10 @@ final class LibraryStore: ObservableObject {
     ///
     /// 返回建好的条目：调用方要马上 push 到编辑器。等 `reload()` 再去找的话，
     /// 网络慢的时候用户会先看到一个空状态，然后才出现「刚建的那条」。
-    func createNote(title: String) async -> Result<Item, String> {
-        guard let client else { return .failure("没有配置服务地址") }
+    func createNote(title: String) async -> Result<Item, NoteCreateFailure> {
+        guard let client else { return .failure(.message("没有配置服务地址")) }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .failure("标题不能为空") }
+        guard !trimmed.isEmpty else { return .failure(.message("标题不能为空")) }
         do {
             let api = try await client.createNote(title: trimmed,
                                                   note: NoteTemplate.body(title: trimmed))
@@ -1291,7 +1291,7 @@ final class LibraryStore: ObservableObject {
         } catch {
             let readable = (error as? ClipNoteClient.Failure)?.displayMessage ?? "\(error)"
             log?.error("note.create_failed", readable)
-            return .failure(readable)
+            return .failure(.message(readable))
         }
     }
 
