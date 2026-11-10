@@ -535,7 +535,7 @@ struct NoteScreen: View {
     /// 用户的原话是「笔记也不显示啥时候创建和修改的」。
     /// 这里只放一个时间，不给两行字：状态栏是给人扫一眼的，不是档案页。
     private var timeStamp: String? {
-        guard let date = current.updatedAt ?? current.createdAt else { return nil }
+        guard let date = current.noteTouchedAt else { return nil }
         // 刚建出来的笔记两个时间几乎相同，说「修改」会让人以为被别人动过。
         let justCreated: Bool = {
             guard let made = current.createdAt, let edited = current.updatedAt else { return false }

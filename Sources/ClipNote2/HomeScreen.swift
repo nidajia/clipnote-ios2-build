@@ -521,7 +521,7 @@ struct HomeScreen: View {
     /// 笔记行的副标题：带上最后修改时间。
     /// 其余条目沿用服务端给的 `metaLine`（平台 · 作者）。
     private func subtitle(for item: Item) -> String? {
-        let stamp = (item.updatedAt ?? item.createdAt).map(Self.stamp)
+        let stamp = item.noteTouchedAt.map(Self.stamp)
         if item.kind == .note {
             let base = item.metaLine.isEmpty ? "笔记" : item.metaLine
             return stamp.map { "\(base) · 修改 \($0)" } ?? base

@@ -16,6 +16,14 @@ enum ItemKind: String {
 /// 上一版这里留了一个演示用的布尔，和 DownloadStore 各说各话，
 /// 正是要根除的那类问题。
 struct Item: Identifiable, Hashable {
+    /// 这条笔记最后一次被写的时间。
+    ///
+    /// 依次回退：`updatedAt`（新字段）→ `noteAt`（笔记专属，存量也有）→
+    /// 创建时间 → 发布时间（更老的条目只有它）。都没有就返回 nil，界面不画时间。
+    var noteTouchedAt: Date? {
+        updatedAt ?? noteAt ?? createdAt ?? publishedAt
+    }
+
     /// 服务端 id，字符串。不是 UUID——用 UUID 会让「已下载」状态在重装、
     /// 换设备、重新同步之后全部对不上。
     let id: String
@@ -49,6 +57,11 @@ struct Item: Identifiable, Hashable {
     var createdAt: Date?
     /// 最后修改时间。服务端每次写入都会更新，笔记页显示的是它。
     var updatedAt: Date?
+    /// 笔记本身的最后写入时间。
+    ///
+    /// 为什么还要它：`updatedAt` 是这次新加的字段，**存量条目上都是 0**。
+    /// 只认 updatedAt 的话，用户以前写的笔记永远不显示时间——那正是他抱怨的点。
+    var noteAt: Date?
     /// AI 脑图。
     var outline: [OutlineNode] = []
     /// 对某几句的批注。
@@ -90,6 +103,9 @@ struct Item: Identifiable, Hashable {
             : nil
         self.updatedAt = api.updatedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.updatedAt) / 1000)
+            : nil
+        self.noteAt = api.noteAt > 0
+            ? Date(timeIntervalSince1970: TimeInterval(api.noteAt) / 1000)
             : nil
         self.outline = api.outline
         self.annotations = api.annotations
@@ -138,7 +154,8 @@ struct Item: Identifiable, Hashable {
         playbackAvailable: Bool = true,
         publishedAt: Date? = nil,
         createdAt: Date? = nil,
-        updatedAt: Date? = nil
+        updatedAt: Date? = nil,
+        noteAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -167,6 +184,7 @@ struct Item: Identifiable, Hashable {
         self.publishedAt = publishedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.noteAt = noteAt
         let colors = Item.placeholderColors(for: id)
         self.coverTop = colors.top
         self.coverBottom = colors.bottom

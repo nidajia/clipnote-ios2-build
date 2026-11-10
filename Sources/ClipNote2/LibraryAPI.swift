@@ -1190,9 +1190,13 @@ final class LibraryStore: ObservableObject {
     }
 
     /// 截图/预览用：塞笔记。
-    func seedNote(id: String, note: String) {
+    func seedNote(id: String, note: String, at: Date = Date()) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].note = note
+        // 时间一起种：写笔记本来就会更新它，截图里也要能看出「什么时候改的」
+        items[index].noteAt = at
+        items[index].updatedAt = at
+        if items[index].createdAt == nil { items[index].createdAt = at }
     }
 
     /// 截图/预览用：塞书签。
