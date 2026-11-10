@@ -111,8 +111,12 @@ final class SectionStore: ObservableObject {
         sectionID(for: itemID).flatMap { section(id: $0) }
     }
 
-    func count(in sectionID: String?, items: [Item]) -> Int {
-        items.filter { self.sectionID(for: $0.id) == sectionID }.count
+    /// 这个分区里有几条。
+    ///
+    /// 参数叫 `target` 而不是 `sectionID`：后者会**遮住同名方法** `sectionID(for:)`，
+    /// 于是 `sectionID(for: id)` 被当成「对 String? 的调用」而编译失败（已踩）。
+    func count(in target: String?, items: [Item]) -> Int {
+        items.filter { sectionID(for: $0.id) == target }.count
     }
 
     var assignedCount: Int { assignment.count }
@@ -122,18 +126,18 @@ final class SectionStore: ObservableObject {
     /// 把若干条移进某个分区。`nil` = 移出分区（回到未分区）。
     /// 返回真正被改动的条数，供界面说「已移入 3 条」。
     @discardableResult
-    func assign(_ sectionID: String?, to itemIDs: [String]) -> Int {
-        if let sectionID, section(id: sectionID) == nil { return 0 }
+    func assign(_ target: String?, to itemIDs: [String]) -> Int {
+        if let target, section(id: target) == nil { return 0 }
         var changed = 0
-        for id in itemIDs where sectionID(for: id) != sectionID {
+        for id in itemIDs where sectionID(for: id) != target {
             // 移出分区要真删键，而不是写一个空串——
             // 空串会让 `assignment.count` 越滚越大，也无法区分「没分过」。
-            if let sectionID { assignment[id] = sectionID } else { assignment.removeValue(forKey: id) }
+            if let target { assignment[id] = target } else { assignment.removeValue(forKey: id) }
             changed += 1
         }
         guard changed > 0 else { return 0 }
         save()
-        let name = sectionID.flatMap { section(id: $0)?.name } ?? "未分区"
+        let name = target.flatMap { section(id: $0)?.name } ?? "未分区"
         let logger = log
         Task { @MainActor in
             logger?.info("section.assigned", "移入分区", meta: [
