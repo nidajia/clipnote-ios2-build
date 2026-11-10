@@ -31,6 +31,16 @@ struct NoteScreen: View {
     @State private var uploadingImage = false
     @State private var imageError: String?
 
+    /// 笔记内 AI。
+    @StateObject private var webBox = WebViewBox()
+    @State private var aiConfig = AIConfigStore.load()
+    @State private var aiRunning = false
+    @State private var aiPreview: NoteAIPreview?
+    @State private var aiError: String?
+    @State private var aiDraft = ""
+    @State private var showCustomPrompt = false
+    @State private var confirmWholeDoc = false
+
     init(item: Item) {
         self.item = item
         _text = State(initialValue: item.note)
@@ -64,6 +74,8 @@ struct NoteScreen: View {
                 editorArea
             }
 
+            aiBlock
+
             Divider().overlay(Color.cnHairline)
             statusBar
         }
@@ -88,6 +100,151 @@ struct NoteScreen: View {
                 upload(image)
             }
         }
+        .alert("按指令改写", isPresented: $showCustomPrompt) {
+            TextField("例如：改写成书面语，保留原意", text: $aiDraft)
+            Button("取消", role: .cancel) { aiDraft = "" }
+            Button("执行") {
+                let instruction = aiDraft
+                aiDraft = ""
+                Task { await prepare(.custom(instruction)) }
+            }
+        } message: {
+            Text("模型只会按这条指令改，不会顺手改别的。")
+        }
+        .alert("将处理全文", isPresented: $confirmWholeDoc) {
+            Button("取消", role: .cancel) {}
+            Button("继续") { Task { await run(.expand, selection: "") } }
+        } message: {
+            Text("没有选中文字，「补充细节」会把整条笔记交给模型。可能加入原文没有的信息。")
+        }
+    }
+
+    // MARK: - 笔记内 AI
+
+    @ViewBuilder
+    private var aiBlock: some View {
+        if useFallback {
+            EmptyView()
+        } else {
+            if let aiError {
+                Text(aiError)
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnRed)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Metric.pagePad)
+                    .padding(.bottom, 6)
+            }
+            if let aiPreview {
+                NoteAICard(
+                    preview: aiPreview,
+                    onApply: { Task { await applyPreview() } },
+                    onDiscard: { self.aiPreview = nil }
+                )
+            }
+            NoteAIBar(configured: aiConfig.isConfigured, running: aiRunning) { action in
+                if case .custom = action {
+                    // 自由指令要先问要改什么，不能拿空指令直接发出去
+                    aiDraft = ""
+                    showCustomPrompt = true
+                } else {
+                    Task { await prepare(action) }
+                }
+            }
+        }
+    }
+
+    /// 先取选区，再决定处理范围。
+    /// 只有在「没有选区」时才有例外：补充细节要确认整篇，其余直接跑。
+    private func prepare(_ action: NoteAIAction) async {
+        guard let web = webBox.web else { return }
+        let raw = try? await web.evaluateJavaScript("window.__getSelection()")
+        let selection = (raw as? String) ?? ""
+        if selection.isEmpty, action == .expand {
+            confirmWholeDoc = true
+            return
+        }
+        await run(action, selection: selection)
+    }
+
+    private func run(_ action: NoteAIAction, selection: String) async {
+        // 全文优先问编辑器要最新内容：`text` 是走 350ms 防抖回传的，
+        // 用户刚打完字就去点 AI 时它可能还差一个字。
+        var content = selection
+        if content.isEmpty, let web = webBox.web {
+            content = ((try? await web.evaluateJavaScript("window.__getMarkdown()")) as? String) ?? text
+        }
+        let scopeIsDoc = selection.isEmpty
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            aiError = "这条笔记还是空的，先写一点再让 AI 处理"
+            return
+        }
+        aiRunning = true
+        aiError = nil
+        aiPreview = nil
+        do {
+            let result = try await NoteAssistant(config: aiConfig)
+                .run(action: action, content: content)
+            aiRunning = false
+
+            var warning: String?
+            if action.mayAddContent {
+                warning = "可能加入原文没有的信息，采用前请过一遍"
+            }
+            if action.mustKeepText, result.textChanged {
+                // 「整理排版」的定义就是不改字。机器能验，就不该只靠提示词。
+                warning = "文字有改动——「整理排版」不应该改字，建议放弃后重试"
+            }
+            aiPreview = NoteAIPreview(
+                action: action,
+                scope: scopeIsDoc ? "全文" : "选区",
+                selection: selection,
+                markdown: result.markdown,
+                warning: warning
+            )
+            logs.info("note.ai.preview", "\(action.title) 已生成", meta: [
+                "id": item.id,
+                "scope": scopeIsDoc ? "doc" : "selection",
+                "chars": String(result.markdown.count),
+            ])
+        } catch {
+            aiRunning = false
+            let readable = (error as? NoteAIFailure)?.displayMessage ?? "\(error)"
+            aiError = readable
+            logs.error("note.ai.failed", readable, meta: ["id": item.id])
+        }
+    }
+
+    /// 采用。走编辑器事务，所以**按一次撤销就能回来**。
+    private func applyPreview() async {
+        guard let web = webBox.web, let preview = aiPreview else { return }
+
+        // 针对选区生成的结果，必须先确认选区还是原来那段：
+        // 用户在这期间点了一下正文，替换就会落到别的地方，而且不报错。
+        if !preview.selection.isEmpty {
+            let now = (try? await web.evaluateJavaScript("window.__getSelection()")) as? String ?? ""
+            guard now == preview.selection else {
+                aiError = "选区已经变了，这条结果没有采用。重新选中后再试一次。"
+                aiPreview = nil
+                return
+            }
+        }
+
+        let argument = Self.jsString(preview.markdown)
+        let script = preview.selection.isEmpty
+            ? "window.__replaceAll(\(argument))"
+            : "window.__replaceSelection(\(argument))"
+        _ = try? await web.evaluateJavaScript(script)
+        aiPreview = nil
+        aiError = nil
+        logs.info("note.ai.applied", "\(preview.action.title) 已采用", meta: [
+            "id": item.id,
+            "scope": preview.selection.isEmpty ? "doc" : "selection",
+        ])
+    }
+
+    private static func jsString(_ value: String) -> String {
+        let data = (try? JSONEncoder().encode(value)) ?? Data("\"\"".utf8)
+        return String(data: data, encoding: .utf8) ?? "\"\""
     }
 
     private func banner(_ message: String, canRetry: Bool = false) -> some View {
@@ -173,6 +330,9 @@ struct NoteScreen: View {
                 onTrace: { step in
                     // 每一步都进日志：用户上报后能直接看到卡在哪一步
                     logs.info("editor.trace", step, meta: ["id": item.id])
+                },
+                onWebView: { web in
+                    webBox.web = web
                 }
             )
             // 换掉 id 才会真正重建 WebView

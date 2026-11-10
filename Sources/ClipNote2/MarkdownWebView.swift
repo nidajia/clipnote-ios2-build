@@ -1,6 +1,12 @@
 import SwiftUI
 import WebKit
 
+/// 让上层能对 WebView 发指令（读选区、替换内容）。
+/// 用弱引用：WebView 由视图层级持有，这里只是借个门牌号。
+final class WebViewBox: ObservableObject {
+    weak var web: WKWebView?
+}
+
 /// Markdown 编辑区（自研编辑器，单文件内联）。
 ///
 /// 两次"一直转圈"之后定的规矩：**每一步都要留痕**。
@@ -18,6 +24,8 @@ struct MarkdownWebView: UIViewRepresentable {
     var onPickImage: () -> Void
     /// 每一步的状态回调，供上层写日志。
     var onTrace: (String) -> Void
+    /// 把建好的 WebView 交出去，让上层能主动发指令（读选区、替换内容）。
+    var onWebView: (WKWebView) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -42,6 +50,7 @@ struct MarkdownWebView: UIViewRepresentable {
         web.backgroundColor = .clear
         web.scrollView.backgroundColor = .clear
         web.scrollView.keyboardDismissMode = .interactive
+        onWebView(web)
 
         guard let url = Self.bundleURL() else {
             onTrace("包里没有 editor-bundle.html")
