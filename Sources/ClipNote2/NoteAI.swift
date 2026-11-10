@@ -268,7 +268,11 @@ enum NoteAIQuality {
         let after = paragraphCount(result)
         let before = paragraphCount(source)
         // 给两段的余量：拆一个长段成两段是合理的排版动作
-        return after > before + 2
+        if after > before + 2 { return true }
+        // 「一段长文变成三段以上」几乎一定是给了每句一个回车。
+        // 阈值用 after > before + 2 判断不到这个最常见的形态：
+        // 原文 1 段、结果 3 段时刚好卡在边界上，而那正是用户说的「纯糊弄」。
+        return before <= 2 && after >= 3
     }
 
     /// 总结太短，多半只覆盖了开头。

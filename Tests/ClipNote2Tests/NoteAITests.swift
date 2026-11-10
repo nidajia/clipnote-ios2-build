@@ -48,7 +48,10 @@ final class NoteAITests: XCTestCase {
     func testTidyPromptForbidsChangingText() {
         let text = NotePrompt.instruction(for: .tidy)
         XCTAssertTrue(text.contains("一个字都不许"))
-        XCTAssertTrue(text.contains("禁止"))
+        XCTAssertTrue(text.contains("严禁"))
+        // 「相当于把每句话打个回车」——这条必须写死在提示词里，
+        // 否则模型会把「整理排版」理解成给每句加空行。
+        XCTAssertTrue(text.contains("把一句话拆成一个独立段落"))
     }
 
     func testExpandModesDiffer() {
@@ -73,8 +76,10 @@ final class NoteAITests: XCTestCase {
     func testSummaryPromptProducesOneParagraph() {
         let text = NotePrompt.instruction(for: .summary)
         XCTAssertTrue(text.contains("一段话"))
-        XCTAssertTrue(text.contains("120 字"))
-        XCTAssertTrue(text.contains("不用列表"))
+        XCTAssertTrue(text.contains("100–160"))
+        // 用户实测「只总结第一句」：覆盖范围必须写进提示词
+        XCTAssertTrue(text.contains("最后一段"))
+        XCTAssertTrue(text.contains("不许列表") || text.contains("不用列表") || text.contains("用列表"))
     }
 
     func testTranslateKeepsStructure() {
