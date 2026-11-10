@@ -40,7 +40,10 @@ struct NoteScreen: View {
     @State private var aiError: String?
     @State private var aiDraft = ""
     @State private var showCustomPrompt = false
-    @State private var confirmWholeDoc = false
+    /// 「补充细节」的两种模式：只用原文 / 允许查资料。
+    /// 用对话框而不是两个按钮：多一个按钮就多一个常驻入口，
+    /// 而「要不要查资料」是每次都可能变的判断，不适合钉死成一个开关。
+    @State private var showExpandMode = false
     /// 键盘弹起时不显示动作条：它和底部格式栏叠在一起会吃掉近 90pt 编辑区，
     /// 而打字时也用不到 AI。有预览时例外——那是用户正要处理的结果。
     @State private var keyboardUp = false
@@ -121,11 +124,12 @@ struct NoteScreen: View {
         } message: {
             Text("模型只会按这条指令改，不会顺手改别的。")
         }
-        .alert("将处理全文", isPresented: $confirmWholeDoc) {
+        .confirmationDialog("补充细节", isPresented: $showExpandMode, titleVisibility: .visible) {
+            Button("只用原文的信息") { Task { await prepare(.expand(external: false)) } }
+            Button("允许查外部资料（会标注）") { Task { await prepare(.expand(external: true)) } }
             Button("取消", role: .cancel) {}
-            Button("继续") { Task { await run(.expand, selection: "") } }
         } message: {
-            Text("没有选中文字，「补充细节」会把整条笔记交给模型。可能加入原文没有的信息。")
+            Text("没有选中文字时会处理全文。两种模式都不会改动你写的句子；查资料的补充会标「（外部）」。")
         }
     }
 
@@ -153,11 +157,15 @@ struct NoteScreen: View {
             }
             if !keyboardUp || aiPreview != nil {
                 NoteAIBar(configured: aiConfig.isConfigured, running: aiRunning) { action in
-                    if case .custom = action {
+                    switch action {
+                    case .custom:
                         // 自由指令要先问要改什么，不能拿空指令直接发出去
                         aiDraft = ""
                         showCustomPrompt = true
-                    } else {
+                    case .expand:
+                        // 两种模式由用户当场选，不替他决定要不要查资料
+                        showExpandMode = true
+                    default:
                         Task { await prepare(action) }
                     }
                 }
@@ -166,15 +174,11 @@ struct NoteScreen: View {
     }
 
     /// 先取选区，再决定处理范围。
-    /// 只有在「没有选区」时才有例外：补充细节要确认整篇，其余直接跑。
+    /// 选哪些文字、处理全文还是选区，都在这一步定下来，后续不再变。
     private func prepare(_ action: NoteAIAction) async {
         guard let web = webBox.web else { return }
         let raw = try? await web.evaluateJavaScript("window.__getSelection()")
         let selection = (raw as? String) ?? ""
-        if selection.isEmpty, action == .expand {
-            confirmWholeDoc = true
-            return
-        }
         await run(action, selection: selection)
     }
 
@@ -210,8 +214,9 @@ struct NoteScreen: View {
 
             var warning: String?
             if action.mayAddContent {
-                // 规格原文：这类结果必须在预览卡上标注「模型可能加入不准确的内容」。
-                warning = "模型可能加入不准确的内容，采用前请过一遍"
+                warning = action.isReport
+                    ? nil
+                    : "模型可能加入不准确的内容，采用前请过一遍"
             }
             if action == .outline, NoteAIQuality.didNotCompress(result.markdown, from: content) {
                 warning = "结果没比原文短，可能没有真正压缩，采用前请确认"
@@ -225,6 +230,8 @@ struct NoteScreen: View {
                 scope: scopeIsDoc ? "全文" : "选区",
                 selection: selection,
                 markdown: result.markdown,
+                diff: TextDiff.segments(from: content, to: result.markdown),
+                basis: result.basis,
                 warning: warning
             )
             logs.info("note.ai.preview", "\(action.title) 已生成", meta: [
@@ -243,6 +250,11 @@ struct NoteScreen: View {
     /// 采用。走编辑器事务，所以**按一次撤销就能回来**。
     private func applyPreview() async {
         guard let web = webBox.web, let preview = aiPreview else { return }
+        // 核实结果是一份报告，写回正文没有意义——卡片上也只有「知道了」。
+        guard !preview.isReport else {
+            aiPreview = nil
+            return
+        }
 
         // 针对选区生成的结果，必须先确认选区还是原来那段：
         // 用户在这期间点了一下正文，替换就会落到别的地方，而且不报错。

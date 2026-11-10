@@ -1,36 +1,52 @@
 import Foundation
 
-/// 笔记内的 AI 动作：三个固定动作 + 自由指令。
+/// 笔记内的 AI 动作。
 ///
-/// 为什么固定三个：用户面对空白输入框时，最常要的就是这三件事。
-/// 自由指令是兜底，不是主要入口——把它放第一位会让多数人不知道写什么。
+/// 「补充细节」带一个 Bool 而不是拆成两个枚举：模式是同一个动作的参数，
+/// 拆开会让人以为它们是两件事。
 enum NoteAIAction: Equatable {
     /// 整理排版。**一个字都不许改**，这是这个动作的定义。
     case tidy
-    /// 补充细节。只能基于笔记已有信息展开，不得引入外部事实。
-    case expand
+    /// 补充细节。`external` 为假时只依据原文；为真时允许查外部资料并标注。
+    case expand(external: Bool)
     /// 精简成要点。
     case outline
-    /// 总结成一段。碎片式笔记最缺这个：把散落的条目收成一段能复述的话。
+    /// 总结成一段。
     case summary
+    /// 翻译（中↔英互换）。
+    case translate
+    /// 补全续写：只记得前半句、半截谚语时用。
+    case complete
+    /// 说法核实：只出报告，不改正文。
+    case verify
     /// 自由指令。
     case custom(String)
 
     var title: String {
         switch self {
         case .tidy: return "整理排版"
-        case .expand: return "补充细节"
-        case .outline: return "精简成要点"
+        case .expand(let external): return external ? "补充细节（查资料）" : "补充细节"
+        case .outline: return "精简要点"
         case .summary: return "总结成段"
+        case .translate: return "翻译"
+        case .complete: return "补全续写"
+        case .verify: return "说法核实"
         case .custom: return "按指令改写"
         }
+    }
+
+    /// 只出报告、不写回正文。核实类结果写回笔记没有意义——
+    /// 用户要的是「我理解得对不对」，不是把评判混进自己的笔记。
+    var isReport: Bool {
+        if case .verify = self { return true }
+        return false
     }
 
     /// 会不会引入原文没有的内容。此类结果必须在预览卡上标明。
     var mayAddContent: Bool {
         switch self {
-        case .tidy, .outline, .summary: return false
-        case .expand, .custom: return true
+        case .tidy, .outline, .summary, .translate: return false
+        case .expand, .complete, .verify, .custom: return true
         }
     }
 
@@ -39,21 +55,28 @@ enum NoteAIAction: Equatable {
         if case .tidy = self { return true }
         return false
     }
+
+    /// 结果里是否可能带「依据」段落。
+    var wantsBasis: Bool {
+        switch self {
+        case .complete, .verify: return true
+        default: return false
+        }
+    }
 }
 
 // MARK: - 提示词
 
 enum NotePrompt {
+    static let basisMarker = "<!--依据-->"
+
     /// 所有动作共用的系统提示。
-    ///
-    /// 里面写死了两件我们自己的约定：高亮的 `=={x}` 语法，以及「只输出正文」。
-    /// 模型很爱把整段内容套进 ``` 里，那会直接毁掉笔记的首行结构。
     static let system = """
     你是一名中文笔记编辑。只输出 Markdown 正文本身。
-    不要任何解释、前言、结语，不要给整段内容套代码围栏。
+    不要解释、不要前言、不要给整段内容套代码围栏。
 
     格式约定（必须遵守）：
-    - 高亮写成 ==文字==（默认黄）或 =={g}文字==（可用 y/g/b/p/o/u 六色），不要写成 HTML 或 <mark>。
+    - 高亮写成 ==文字==（默认黄）或 =={g}文字==（可用 y/g/b/p/o/u 六色），不要写成 HTML。
     - 只用这些结构：# 标题、- 或 1. 列表、- [ ] 任务项、> 引用、| 表格 |、``` 代码块 ```。
     - 原样保留链接 [文字](url)、图片 ![](url)、已有高亮。
     """
@@ -66,9 +89,16 @@ enum NotePrompt {
             允许：调整标题层级、拆分或合并段落、加列表符号、加分隔线、把并列信息整理成表格。
             禁止：改写措辞、纠正错别字、补充内容、删除内容、调整标点。
             """
-        case .expand:
-            // 规格（产品路线 2.3）：只能基于笔记本身已有的信息展开，禁止引入外部事实。
-            // 上一版写成「可补充背景/定义/例子」，等于放开了编造的口子，已改回。
+
+        case .expand(let external):
+            if external {
+                return """
+                任务：把原文里没写透的地方展开。
+                允许查阅你已有的知识补充背景、定义、出处、数据，但**每一处外部补充后面**
+                必须紧跟一个「（外部）」标记，方便用户识别和删除。
+                原文已有的句子不得改写或删除。如果某条已经写完整，就保持原样。
+                """
+            }
             return """
             任务：把原文里没写透的地方展开，但**只能用原文已有的信息**。
             做法：把零散条目改写成一句完整的话；补出原文已经隐含的因果、条件、指代；
@@ -76,6 +106,7 @@ enum NotePrompt {
             严格禁止：引入原文没有的事实、外部背景、名词解释、书名作者、数据、例子。
             如果某条目本身已经写完整，就保持原样——不要为了凑长度而加水词。
             """
+
         case .outline:
             return """
             任务：把原文压成要点，要求**看得出明显变短**。
@@ -85,12 +116,37 @@ enum NotePrompt {
             3. 只保留结论、专有名词、数字，不新增任何事实。
             目标长度：不超过原文的六成。
             """
+
         case .summary:
             return """
             任务：把全文归纳成**一段话**，不超过 120 字。
-            要求：覆盖主要主题；不加标题、不用列表、不引用原文长句；
-            不新增原文没有的事实；如果原文本身只有一个主题，就直接写那一件事。
+            要求：覆盖主要主题；不加标题、不用列表、不引用原文长句；不新增原文没有的事实。
             """
+
+        case .translate:
+            return """
+            任务：把内容翻成另一种语言——原文主要是中文就译成英文，主要是英文就译成中文。
+            要求：逐句对应，不增删内容，不做解释；
+            保留原有的 Markdown 结构（标题、列表、引用、表格）与高亮 ==…== 语法；
+            专有名词、书名、代码保持原样。
+            """
+
+        case .complete:
+            return """
+            任务：用户只写出了前半句或半截谚语/术语，请补全成完整的一句。
+            做法：保留用户已经写出的部分（可修正明显的错别字），补上缺失的后半段。
+            如果对出处或原句没有把握，就在正文后用单独一行写 \(basisMarker)，
+            再写一句说明你的依据与把握程度。正文里不要夹解释。
+            """
+
+        case .verify:
+            return """
+            任务：逐条检查里面的说法、术语、谚语理解得对不对。
+            **不要改写原文**，只输出一份报告：
+            每条占一行，格式为「✓ 正确 — 理由」「✗ 错误 — 错在哪」或「? 不确定 — 为什么」。
+            最多 8 条，按重要程度排。报告不要用表格。
+            """
+
         case .custom(let text):
             return """
             任务：按用户指令改写。指令：\(text)
@@ -104,7 +160,9 @@ enum NotePrompt {
 
 struct NoteAIResult: Equatable {
     let markdown: String
-    /// 与原文相比，可见文字是否被改动过。只对「整理排版」有意义，但所有动作都算。
+    /// 模型附带的依据说明（见 `NotePrompt.basisMarker`）。
+    let basis: String?
+    /// 与原文相比，可见文字是否被改动过。
     let textChanged: Bool
 
     /// 模型经常把结果套在 ``` 里返回。留着会直接把笔记首行变成代码块。
@@ -122,33 +180,43 @@ struct NoteAIResult: Equatable {
         text = lines.joined(separator: "\n")
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// 拆出「依据」段。没有标记时原样返回正文。
+    static func splitBasis(_ text: String) -> (body: String, basis: String?) {
+        guard let range = text.range(of: NotePrompt.basisMarker) else {
+            return (text, nil)
+        }
+        let body = String(text[text.startIndex..<range.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let basis = String(text[range.upperBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (body, basis.isEmpty ? nil : basis)
+    }
 }
 
 /// 结果质量检查。
 ///
-/// 为什么需要它：模型经常会「原样返回」。上一版把这种结果当成成功，
-/// 弹出一张和原文一模一样的预览卡，用户点「采用」后什么都没变，
-/// 只会认为功能坏了。没有改动就该说没有改动。
+/// 模型经常「原样返回」。上一版把这种结果当成成功，弹一张和原文一样的预览卡，
+/// 用户点「采用」后什么都没变，只会认为功能坏了。
 enum NoteAIQuality {
-    /// 除了首尾空白，和原文逐字相同。
     static func isIdentical(_ result: String, to source: String) -> Bool {
         result.trimmingCharacters(in: .whitespacesAndNewlines)
             == source.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 要求压缩，结果却没比原文短。
     static func didNotCompress(_ result: String, from source: String) -> Bool {
         result.count >= source.count
     }
 
     static let identicalMessage = """
     模型这次没有改动内容，所以没有可采用的修改。\
-    这条笔记可能已经很精简了；想指定改法可以用「按指令改写」，\
-    例如「把中医相关的几条归到一起」。
+    想指定改法可以用「按指令改写」，例如「把中医相关的几条归到一起」。
     """
 }
 
-enum NoteAIFailure: Error, Equatable {    case notConfigured
+/// 失败。
+enum NoteAIFailure: Error, Equatable {
+    case notConfigured
     case transport(String)
     case http(Int, String)
     case emptyReply
@@ -193,8 +261,7 @@ struct NoteAssistant {
             "messages": [
                 ["role": "system", "content": NotePrompt.system],
                 // 用 <note> 包住原文，而不是拿 `---` 分隔：
-                // `---` 在 Markdown 里是分隔线，模型容易把后半段当成「要格式化的素材」，
-                // 于是原样吐回来。标签边界对模型更明确。
+                // `---` 在 Markdown 里是分隔线，模型容易把后半段当成「要格式化的素材」。
                 ["role": "user", "content": NotePrompt.instruction(for: action)
                     + "\n\n<note>\n" + content + "\n</note>"],
             ],
@@ -225,11 +292,13 @@ struct NoteAssistant {
             throw NoteAIFailure.emptyReply
         }
 
-        let markdown = NoteAIResult.cleanReply(text)
+        let cleaned = NoteAIResult.cleanReply(text)
+        let (markdown, basis) = NoteAIResult.splitBasis(cleaned)
         guard !markdown.isEmpty else { throw NoteAIFailure.emptyReply }
 
         return NoteAIResult(
             markdown: markdown,
+            basis: basis,
             textChanged: MarkdownPlainText.extract(markdown) != MarkdownPlainText.extract(content)
         )
     }
@@ -239,13 +308,12 @@ struct NoteAssistant {
 
 /// 从 Markdown 里抽出「人眼看到的字」，用来判断一次改写有没有偷偷改字。
 ///
-/// 只覆盖我们自己会产出的语法，不追求通用 Markdown 完备性——
-/// 它的唯一用途是给「整理排版」做机器校验，覆盖范围与产出范围一致才可靠。
+/// 只覆盖我们自己会产出的语法——它的用途是给「整理排版」做机器校验，
+/// 覆盖范围与产出范围一致才可靠。
 enum MarkdownPlainText {
     static func extract(_ markdown: String) -> String {
         var text = markdown.replacingOccurrences(of: "\r\n", with: "\n")
 
-        // 表格分隔行整行丢掉（| --- | --- |）
         text = text
             .components(separatedBy: "\n")
             .filter { line in
@@ -256,31 +324,22 @@ enum MarkdownPlainText {
             }
             .joined(separator: "\n")
 
-        // 代码围栏本身不是文字，内容留着
         text = text.replacingOccurrences(of: "```", with: "")
-
-        // 图片没有可见文字
         text = replacing(#"!\[[^\]]*\]\([^\)]*\)"#, in: text, with: "")
-        // 链接保留文字
         text = replacing(#"\[([^\]]*)\]\([^\)]*\)"#, in: text, with: "$1")
-        // 高亮只留文字
         text = replacing(#"==\{[a-z]\}"#, in: text, with: "")
         text = text.replacingOccurrences(of: "==", with: "")
-        // 行内标记
         for token in ["**", "__", "~~", "`", "*", "_"] {
             text = text.replacingOccurrences(of: token, with: "")
         }
-        // 表格竖线
         text = text.replacingOccurrences(of: "|", with: " ")
 
-        // 行首标记
         text = replacing(#"(?m)^\s{0,3}#{1,6}\s+"#, in: text, with: "")
         text = replacing(#"(?m)^\s{0,3}>\s?"#, in: text, with: "")
         text = replacing(#"(?m)^\s*[-*+]\s+(\[[ xX]\]\s+)?"#, in: text, with: "")
         text = replacing(#"(?m)^\s*\d+\.\s+"#, in: text, with: "")
         text = replacing(#"(?m)^\s*(-{3,}|\*{3,}|_{3,})\s*$"#, in: text, with: "")
 
-        // 空白不影响「是不是同一段文字」：换行位置变了不算改字
         return text
             .components(separatedBy: .whitespacesAndNewlines)
             .joined()

@@ -1241,6 +1241,12 @@ final class LibraryStore: ObservableObject {
         guard let client else { return false }
         do {
             _ = try await client.saveNote(id: id, note: note)
+            // 先本地回写，再拉全库。
+            // reload() 失败时会保留旧数据——那样「刚保存的笔记」在首页搜索里
+            // 根本查不到，用户只会认为没存上。本地先落一份，搜索立刻可用。
+            if let index = items.firstIndex(where: { $0.id == id }) {
+                items[index].note = note
+            }
             await reload()
             log?.info("note.saved", "笔记已保存", meta: [
                 "id": id, "chars": String(note.count),

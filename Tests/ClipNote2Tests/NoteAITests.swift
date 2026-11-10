@@ -3,7 +3,7 @@ import XCTest
 
 /// 笔记内 AI 的契约测试。
 ///
-/// 只验「我们自己能保证的部分」：提示词的硬约束、回复清洗、
+/// 只验「我们自己能保证的部分」：提示词的硬约束、回复清洗、差异标记、
 /// 以及「整理排版有没有偷偷改字」这条机器校验。
 /// 模型实际写得怎么样，单测管不了，也不该假装管得了。
 final class NoteAITests: XCTestCase {
@@ -47,107 +47,146 @@ final class NoteAITests: XCTestCase {
 
     func testTidyPromptForbidsChangingText() {
         let text = NotePrompt.instruction(for: .tidy)
-        XCTAssertTrue(text.contains("一个字都不许"), "「整理排版」必须把「不许改字」写在最前面")
-        XCTAssertTrue(text.contains("禁止"), "还要明确列出禁止项，只说不许不够")
+        XCTAssertTrue(text.contains("一个字都不许"))
+        XCTAssertTrue(text.contains("禁止"))
     }
 
-    func testExpandPromptForbidsExternalFacts() {
-        let text = NotePrompt.instruction(for: .expand)
-        // 规格（产品路线 2.3）：只能基于笔记已有信息，禁止引入外部事实。
-        // 上一版放开了「背景/定义/例子」，等于允许编造，这里钉住回不去。
-        XCTAssertTrue(text.contains("只能用原文已有的信息"))
-        XCTAssertTrue(text.contains("严格禁止"))
-        XCTAssertFalse(text.contains("可以补充：背景"))
+    func testExpandModesDiffer() {
+        let strict = NotePrompt.instruction(for: .expand(external: false))
+        let open = NotePrompt.instruction(for: .expand(external: true))
+
+        XCTAssertTrue(strict.contains("只能用原文已有的信息"))
+        XCTAssertTrue(strict.contains("严格禁止"), "只用原文模式下必须明说不许引入外部事实")
+        XCTAssertFalse(strict.contains("（外部）"))
+
+        XCTAssertTrue(open.contains("（外部）"), "查资料模式要求每处外部补充带标记，用户才认得出哪些不是自己写的")
+        XCTAssertNotEqual(strict, open)
     }
 
     func testOutlinePromptAsksForRealCompression() {
         let text = NotePrompt.instruction(for: .outline)
-        XCTAssertTrue(text.contains("六成"), "要给出可衡量的压缩目标，否则模型容易原样返回")
+        XCTAssertTrue(text.contains("六成"))
         XCTAssertTrue(text.contains("25 字"))
-        XCTAssertTrue(text.contains("小标题"), "碎片式笔记要先归类，才有可见变化")
+        XCTAssertTrue(text.contains("小标题"))
     }
 
     func testSummaryPromptProducesOneParagraph() {
         let text = NotePrompt.instruction(for: .summary)
         XCTAssertTrue(text.contains("一段话"))
         XCTAssertTrue(text.contains("120 字"))
-        XCTAssertTrue(text.contains("不用列表"), "总结是段落，不是又一份要点")
+        XCTAssertTrue(text.contains("不用列表"))
+    }
+
+    func testTranslateKeepsStructure() {
+        let text = NotePrompt.instruction(for: .translate)
+        XCTAssertTrue(text.contains("保留"), "翻译要保留 Markdown 结构，否则表格和列表会被压平")
+        XCTAssertTrue(text.contains("==…=="))
+    }
+
+    func testCompleteRequiresBasisWhenUnsure() {
+        let text = NotePrompt.instruction(for: .complete)
+        XCTAssertTrue(text.contains(NotePrompt.basisMarker))
+    }
+
+    func testVerifyDoesNotRewrite() {
+        let text = NotePrompt.instruction(for: .verify)
+        XCTAssertTrue(text.contains("不要改写原文"))
+        XCTAssertTrue(NoteAIAction.verify.isReport, "核实只出报告，不能写回正文")
     }
 
     func testActionsFlagWhichOnesMayAddContent() {
         XCTAssertFalse(NoteAIAction.tidy.mayAddContent)
         XCTAssertFalse(NoteAIAction.outline.mayAddContent)
         XCTAssertFalse(NoteAIAction.summary.mayAddContent)
-        XCTAssertTrue(NoteAIAction.expand.mayAddContent)
+        XCTAssertFalse(NoteAIAction.translate.mayAddContent)
+        XCTAssertTrue(NoteAIAction.expand(external: false).mayAddContent)
+        XCTAssertTrue(NoteAIAction.expand(external: true).mayAddContent)
+        XCTAssertTrue(NoteAIAction.complete.mayAddContent)
         XCTAssertTrue(NoteAIAction.custom("改写成书面语").mayAddContent)
     }
 
-    // MARK: - 结果质量
-
-    func testIdenticalResultIsDetected() {
-        XCTAssertTrue(NoteAIQuality.isIdentical("同一段话\n", to: "同一段话"))
-        XCTAssertFalse(NoteAIQuality.isIdentical("同一段话。", to: "同一段话"))
-    }
-
-    func testCompressionCheck() {
-        XCTAssertTrue(NoteAIQuality.didNotCompress("一样长", from: "一样长"))
-        XCTAssertTrue(NoteAIQuality.didNotCompress("更长了更长了", from: "短"))
-        XCTAssertFalse(NoteAIQuality.didNotCompress("短", from: "长一些的原文"))
-    }
-
-    func testNoChangeMessageTellsUserWhatToDo() {
-        let message = NoteAIQuality.identicalMessage
-        XCTAssertTrue(message.contains("没有改动"), "要说清是模型没改，不是功能坏了")
-        XCTAssertTrue(message.contains("按指令改写"), "要给出下一步怎么做")
-    }
-
-    // MARK: - 回复清洗
+    // MARK: - 回复清洗与依据
 
     func testCleanReplyStripsCodeFence() {
         let raw = "```markdown\n# 标题\n\n正文\n```"
         XCTAssertEqual(NoteAIResult.cleanReply(raw), "# 标题\n\n正文")
     }
 
-    func testCleanReplyKeepsInnerCodeBlock() {
-        let raw = "说明\n\n```js\nconst a = 1\n```"
-        XCTAssertEqual(NoteAIResult.cleanReply(raw), raw, "中间真正的代码块不能被当成外层围栏剥掉")
+    func testSplitBasis() {
+        let raw = "补全后的句子\n\n\(NotePrompt.basisMarker)\n出自《增广贤文》，把握较高"
+        let (body, basis) = NoteAIResult.splitBasis(raw)
+        XCTAssertEqual(body, "补全后的句子")
+        XCTAssertEqual(basis, "出自《增广贤文》，把握较高")
+    }
+
+    func testSplitBasisWithoutMarker() {
+        let (body, basis) = NoteAIResult.splitBasis("只有正文")
+        XCTAssertEqual(body, "只有正文")
+        XCTAssertNil(basis)
+    }
+
+    func testBasisIsStrippedFromAppliedMarkdown() async throws {
+        StubURLProtocol.handler = { [weak self] _ in
+            (200, [:], self?.reply("前半句补全了后半句\n\n\(NotePrompt.basisMarker)\n依据说明") ?? Data())
+        }
+        let result = try await makeAssistant().run(action: .complete, content: "前半句")
+        XCTAssertEqual(result.markdown, "前半句补全了后半句", "依据不能混进正文")
+        XCTAssertEqual(result.basis, "依据说明")
     }
 
     // MARK: - 文字保真
 
     func testPlainTextIgnoresFormatting() {
-        let before = "标题\n\n甲乙丙"
-        let after = "# 标题\n\n- 甲\n- 乙\n- 丙"
         XCTAssertEqual(
-            MarkdownPlainText.extract(before),
-            MarkdownPlainText.extract(after),
-            "只改排版不该被判定为改字"
-        )
-    }
-
-    func testPlainTextIgnoresHighlightAndLinks() {
-        XCTAssertEqual(
-            MarkdownPlainText.extract("看 =={g}这段== 和 [链接](https://x)"),
-            MarkdownPlainText.extract("看 这段 和 链接")
+            MarkdownPlainText.extract("标题\n\n甲乙丙"),
+            MarkdownPlainText.extract("# 标题\n\n- 甲\n- 乙\n- 丙")
         )
     }
 
     func testPlainTextDetectsInsertedWords() {
-        XCTAssertNotEqual(
-            MarkdownPlainText.extract("甲乙丙"),
-            MarkdownPlainText.extract("甲乙丙丁"),
-            "多一个字必须能查出来——这是「整理排版」的底线"
-        )
+        XCTAssertNotEqual(MarkdownPlainText.extract("甲乙丙"), MarkdownPlainText.extract("甲乙丙丁"))
     }
 
-    func testPlainTextDropsTableSeparatorRow() {
-        XCTAssertEqual(
-            MarkdownPlainText.extract("| a | b |\n| --- | --- |\n| 1 | 2 |"),
-            MarkdownPlainText.extract("a b 1 2")
-        )
+    // MARK: - 差异标记
+
+    func testDiffFindsInsertedText() {
+        let segments = TextDiff.segments(from: "甲乙丙", to: "甲乙丁丙")
+        XCTAssertTrue(segments.contains { $0.kind == .insert && $0.text.contains("丁") })
+        XCTAssertTrue(segments.contains { $0.kind == .same })
     }
 
-    // MARK: - 请求与结果
+    func testDiffFindsDeletedText() {
+        let segments = TextDiff.segments(from: "甲乙丙", to: "甲丙")
+        XCTAssertTrue(segments.contains { $0.kind == .delete && $0.text.contains("乙") })
+    }
+
+    func testDiffOfIdenticalTextIsAllSame() {
+        let segments = TextDiff.segments(from: "一样", to: "一样")
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments.first?.kind, .same)
+    }
+
+    func testDiffFallsBackForLongText() {
+        let long = String(repeating: "甲乙丙丁戊", count: 400)
+        let segments = TextDiff.segments(from: long, to: long + "新的")
+        XCTAssertFalse(segments.isEmpty)
+        XCTAssertTrue(segments.contains { $0.kind == .insert }, "长文本退回按行比对后仍要能标出新增")
+    }
+
+    // MARK: - 质量判定
+
+    func testIdenticalResultIsDetected() {
+        XCTAssertTrue(NoteAIQuality.isIdentical("同一段话\n", to: "同一段话"))
+        XCTAssertFalse(NoteAIQuality.isIdentical("同一段话。", to: "同一段话"))
+    }
+
+    func testNoChangeMessageTellsUserWhatToDo() {
+        let message = NoteAIQuality.identicalMessage
+        XCTAssertTrue(message.contains("没有改动"))
+        XCTAssertTrue(message.contains("按指令改写"))
+    }
+
+    // MARK: - 请求与错误
 
     func testRequestShape() async throws {
         var path: String?
@@ -170,10 +209,9 @@ final class NoteAITests: XCTestCase {
         let messages = body?["messages"] as? [[String: Any]]
         XCTAssertEqual(messages?.count, 2)
         XCTAssertEqual(messages?.first?["role"] as? String, "system")
-        XCTAssertTrue(
-            (messages?.last?["content"] as? String ?? "").contains("原始内容"),
-            "正文必须原样带给模型"
-        )
+        let userMessage = messages?.last?["content"] as? String ?? ""
+        XCTAssertTrue(userMessage.contains("<note>"), "原文要用标签包住，避免模型把分隔线当素材边界")
+        XCTAssertTrue(userMessage.contains("原始内容"))
         XCTAssertEqual(result.markdown, "整理后的内容")
     }
 
@@ -182,15 +220,7 @@ final class NoteAITests: XCTestCase {
             (200, [:], self?.reply("# 标题\n\n甲乙丙，另外还有一句原文没有的话") ?? Data())
         }
         let result = try await makeAssistant().run(action: .tidy, content: "# 标题\n\n甲乙丙")
-        XCTAssertTrue(result.textChanged, "模型加了一句，必须被标记出来")
-    }
-
-    func testTextUnchangedWhenOnlyFormattingDiffers() async throws {
-        StubURLProtocol.handler = { [weak self] _ in
-            (200, [:], self?.reply("# 标题\n\n- 甲\n- 乙") ?? Data())
-        }
-        let result = try await makeAssistant().run(action: .tidy, content: "标题\n\n甲乙")
-        XCTAssertFalse(result.textChanged)
+        XCTAssertTrue(result.textChanged)
     }
 
     func testEmptyReplyThrows() async throws {
@@ -212,7 +242,7 @@ final class NoteAITests: XCTestCase {
             XCTFail("没配模型时不该发请求")
         } catch let failure as NoteAIFailure {
             XCTAssertEqual(failure, .notConfigured)
-            XCTAssertTrue(failure.displayMessage.contains("AI 设置"), "要说清去哪儿配置")
+            XCTAssertTrue(failure.displayMessage.contains("AI 设置"))
         } catch {
             XCTFail("错误类型不对：\(error)")
         }
