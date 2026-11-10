@@ -578,6 +578,18 @@ struct HomeScreen: View {
             .padding(.vertical, Metric.space2)
         }
         .background(Color.cnBg)
+        // 右边缘渐隐：分区会越加越多，这一条一定得横滑。
+        // 没有这个提示，看到「知识科普」就以为到头了——后面还有「视频/笔记/已下载」，
+        // 那三个是上一版就有的筛选，不能被新功能挤到看不见的地方。
+        .overlay(alignment: .trailing) {
+            LinearGradient(
+                colors: [Color.cnBg.opacity(0), Color.cnBg],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 24)
+            .allowsHitTesting(false)
+        }
     }
 
     /// 导航栏里的导入按钮：实心品牌底 + 高对比文字

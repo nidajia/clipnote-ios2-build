@@ -173,8 +173,12 @@ struct SnapshotRoot: View {
 
         // 分区：给前几条归类。故意留几条没归——全归好了就看不出「未分区」
         // 那一条筛选，而那正是用户第一次用时会看到的形态。
+        //
+        // 注意 `list` 而不是 `home-list`：截图的**文件名**叫 home-list，
+        // 但传给 App 的场景名是 `list`（见 screenshot.sh）。写错这一处不会报错，
+        // 只会得到一张「分区一个都没分」的图，看起来像功能没生效——已踩。
         let sectionStore = SectionStore(directory: sandbox, log: logStore)
-        if state == "home-list" || state == "home-section"
+        if state == "list" || state == "home-list" || state == "home-section"
             || state.hasPrefix("detail") || state == "section-picker" {
             let ids = lib.items.map(\.id)
             var plan: [String: String] = [:]

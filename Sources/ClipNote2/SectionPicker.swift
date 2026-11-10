@@ -54,10 +54,6 @@ struct SectionPickerSheet: View {
                 row(title: "未分区", symbol: "tray", selected: current == nil) {
                     onPick(nil)
                 }
-            } footer: {
-                Text("分区只存在这台设备上。换设备或重装不会带过去——服务端没有这个字段。")
-                    .font(.cnCaption)
-                    .foregroundStyle(Color.cnInk3)
             }
 
             Section {
@@ -77,6 +73,12 @@ struct SectionPickerSheet: View {
                         }
                     }
                 }
+            } footer: {
+                // 脚注挂在分区这一组下面，不是挂在「未分区」下面：
+                // 它说的是分区是什么、存在哪，属于这一组。
+                Text("分区只存在这台设备上。换设备或重装不会带过去——服务端没有这个字段。")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
             }
         }
         .listStyle(.insetGrouped)
