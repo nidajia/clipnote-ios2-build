@@ -225,7 +225,11 @@ struct SnapshotRoot: View {
                 // 新建笔记的默认形态：大标题 + 三个小标题，光标在文末。
                 // 这张图要能证明「点进来就有结构」，而不是一张白纸。
                 NavigationStack {
-                    NoteScreen(item: SnapshotRoot.templateNote, beginAtEnd: true)
+                    // 这里**不**自动聚焦：模拟器第一次弹键盘会盖一层
+                    // 「滑动输入」教学弹窗，把整块编辑区挡住，图就白拍了。
+                    // 真实路径是 `beginAtEnd: true`（见 HomeScreen.createNote），
+                    // 光标落位由 check-form 的 __focusEnd 与真机 N10 覆盖。
+                    NoteScreen(item: SnapshotRoot.templateNote)
                 }
             } else if state == "note-probe" {
                 // 排障页：WebView 能不能执行内联 JS

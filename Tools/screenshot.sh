@@ -37,7 +37,10 @@ shot() {
 
   # 关掉模拟器键盘的「滑动输入」教学弹窗：它会在第一次弹键盘时盖住整个编辑区，
 # 拍出来的图看不出编辑器长什么样（V79 的 note-new 就被它盖了）。
-xcrun simctl spawn "$UDID" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true >/dev/null 2>&1 || true
+for domain in com.apple.keyboard.preferences com.apple.Preferences; do
+  xcrun simctl spawn "$UDID" defaults write "$domain" DidShowContinuousPathIntroduction -bool true >/dev/null 2>&1 || true
+  xcrun simctl spawn "$UDID" defaults write "$domain" KeyboardContinuousPathEnabled -bool false >/dev/null 2>&1 || true
+done
 xcrun simctl ui "$UDID" appearance "$appearance" >/dev/null 2>&1 || true
   xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
   xcrun simctl launch "$UDID" "$BUNDLE_ID" \
