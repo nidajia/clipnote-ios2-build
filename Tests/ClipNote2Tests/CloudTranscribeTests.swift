@@ -178,7 +178,7 @@ final class CloudTranscribeTests: XCTestCase {
                 return AIJobSnapshot(id: "j1", kind: "asr", status: "done",
                                      text: "一段话", segments: [])
             },
-            status: { _ in AIJobFailure.timeout }
+            status: { _ in throw AIJobFailure.timeout }
         )
 
         let config = CloudASRConfig(base: "https://example.test/v1",

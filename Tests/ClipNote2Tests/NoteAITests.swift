@@ -34,7 +34,7 @@ final class NoteAITests: XCTestCase {
                 }
             },
             status: { _ in
-                AIJobFailure.timeout
+                throw AIJobFailure.timeout
             }
         )
         return NoteAssistant(config: config, jobs: jobs)

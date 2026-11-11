@@ -160,7 +160,7 @@ final class AIJobClientTests: XCTestCase {
                               error: AIJobErrorBody(code: "UPSTREAM_401",
                                                     message: "模型服务拒绝了 Key（401）"))
             },
-            status: { _ in AIJobFailure.timeout }
+            status: { _ in throw AIJobFailure.timeout }
         )
         do {
             _ = try await client.runChat(
