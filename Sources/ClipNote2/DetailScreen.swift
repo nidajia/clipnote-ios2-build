@@ -1294,7 +1294,7 @@ struct DetailScreen: View {
                     .foregroundStyle(Color.cnBrand)
                     .buttonStyle(.plain)
 
-                    Button("本机转写") {
+                    Button("转写这条") {
                         showTranscribe = true
                     }
                     .font(.cnCaption)
@@ -1339,7 +1339,7 @@ struct DetailScreen: View {
 
                 // 抖音/小红书本来就可能没字幕。等失败一次再给入口等于让用户先撞墙，
                 // 所以第一次进来就把这条路摆出来，用弱化的样式，不抢主按钮。
-                Button("没有字幕？用本机转写") {
+                Button("没有字幕？转写这条") {
                     showTranscribe = true
                 }
                 .font(.cnCaption)

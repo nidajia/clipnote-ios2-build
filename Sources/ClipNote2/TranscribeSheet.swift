@@ -37,6 +37,42 @@ struct TranscribeSheet: View {
     /// 每秒跳一次的看守。失去焦点就停，免得后台空转。
     @State private var monitor: Task<Void, Never>?
 
+    /// 转写引擎与模型。放在 AppStorage：用户选过一次就别每回都问。
+    @AppStorage("clipnote.transcribeEngine") private var enginePreference = TranscribeEngine.auto.rawValue
+    @AppStorage("clipnote.transcribeModel") private var transcribeModelOverride = ""
+    @State private var aiConfig = AIConfigStore.load()
+    /// 这次实际跑的引擎。和偏好分开：偏好是「我想用哪个」，这里是「这次真用了哪个」。
+    @State private var runningEngine: TranscribeEngine = .onDevice
+    /// 云端的分段进度，例如「第 3/30 段」。
+    @State private var progressNote = ""
+
+    private var cloudConfig: CloudASRConfig {
+        let model = TranscribeModel.resolve(base: aiConfig.base, override: transcribeModelOverride)
+        return CloudASRConfig(base: aiConfig.base, key: aiConfig.key, model: model)
+    }
+
+    private var enginePreferenceValue: TranscribeEngine {
+        TranscribeEngine(rawValue: enginePreference) ?? .auto
+    }
+
+    private var engineLabel: String {
+        activeEngine == .cloud ? "云端" : "本机"
+    }
+
+    /// 界面上该显示哪个引擎。
+    ///
+    /// 还没开跑时（`.checking`）用偏好算出来的那个，否则第一帧会闪一下「本机」，
+    /// 紧跟着又变成「云端」——看起来像点错了。
+    private var activeEngine: TranscribeEngine {
+        if case .checking = stage {
+            return TranscribeEngineDecision.resolve(
+                preference: enginePreferenceValue,
+                cloudReady: cloudConfig.isReady
+            )
+        }
+        return runningEngine
+    }
+
     enum Stage: Equatable {
         case checking
         /// 本机跑不了，或某一步明确不成立。文案里写清楚「为什么」和「怎么办」。
@@ -57,6 +93,9 @@ struct TranscribeSheet: View {
         item: Item,
         preview: Stage? = nil,
         previewElapsed: Int = 0,
+        /// 只给截图用：模拟器上没有 Keychain 配置，云端永远「未配置」，
+        /// 那张「云端转写中」的图就拍不出来。真机路径不经过这个参数。
+        previewEngine: TranscribeEngine? = nil,
         onDone: @escaping (LocalTranscript) -> Void = { _ in }
     ) {
         self.item = item
@@ -64,6 +103,7 @@ struct TranscribeSheet: View {
         self.onDone = onDone
         _stage = State(initialValue: preview ?? .checking)
         _elapsed = State(initialValue: previewElapsed)
+        _runningEngine = State(initialValue: previewEngine ?? .onDevice)
     }
 
     var body: some View {
@@ -73,6 +113,7 @@ struct TranscribeSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Metric.space4) {
                     intro
+                    engineRow
                     stageBlock
                     privacyNote
                 }
@@ -85,6 +126,7 @@ struct TranscribeSheet: View {
         .background(Color.cnBg)
         // 截图态不自动跑：`preview` 给的是终态，再跑一遍会把它盖掉。
         .task {
+            aiConfig = AIConfigStore.load()
             if preview == nil { await start() }
         }
         // 面板关掉后看守没有意义，留着只是每秒醒一次。
@@ -96,7 +138,7 @@ struct TranscribeSheet: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("本机转写")
+                Text("转写")
                     .font(.cnTitle)
                     .foregroundStyle(Color.cnInk)
                 Text(item.title)
@@ -149,6 +191,17 @@ struct TranscribeSheet: View {
                 PrimaryButton(title: "重试") {
                     Task { await start() }
                 }
+                // 转写失败最常见的原因就是「这条路不适合这条片子」：
+                // 云端 401/限流，或本机太慢被判停住。给一条换路的出口，
+                // 比让用户退出去找设置要直接。
+                if cloudConfig.isReady {
+                    Button(runningEngine == .cloud ? "改用本机转写" : "改用云端转写（更快更准）") {
+                        Task { await switchEngine() }
+                    }
+                    .font(.cnChip)
+                    .foregroundStyle(Color.cnInk3)
+                    .buttonStyle(.plain)
+                }
 
             case .stalled:
                 // 停住时给两个出口：再跑一次（多数情况能接上），或者收工。
@@ -195,12 +248,50 @@ struct TranscribeSheet: View {
     // MARK: - 说明
 
     private var intro: some View {
-        Text("这条内容没有字幕。这里用系统听写把音轨转成文字，再交给 AI 切段落。"
-             + "整个过程在本机完成，音频不会上传。")
+        Text(activeEngine == .cloud
+             ? "这条内容没有字幕。这里把音轨切成两分钟一段，交给转写模型出文字，再让 AI 切段落。"
+             : "这条内容没有字幕。这里用系统听写把音轨转成文字，再交给 AI 切段落。整个过程在本机完成，音频不会上传。")
             .font(.cnChip)
             .foregroundStyle(Color.cnInk2)
             .lineSpacing(5)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// 引擎开关。
+    ///
+    /// 默认是云端：本机识别在长视频上慢到不能用，准确率也明显不如云端
+    /// （用户原话）。但**必须留一个本机出口**——音频要不要离开设备，
+    /// 是用户自己的决定，不该替他定死。
+    private var engineRow: some View {
+        HStack(spacing: Metric.space2) {
+            Image(systemName: activeEngine == .cloud ? "cloud" : "iphone")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.cnBrand)
+            Text(activeEngine == .cloud ? "云端转写 · 更快更准" : "本机转写 · 音频不上传")
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnInk2)
+            Spacer(minLength: 0)
+            if cloudConfig.isReady {
+                Button(activeEngine == .cloud ? "改用本机" : "改用云端") {
+                    Task { await switchEngine() }
+                }
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnBrand)
+                .buttonStyle(.plain)
+            } else if activeEngine == .onDevice {
+                Text("未配置模型，云端不可用")
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+            }
+        }
+    }
+
+    /// 换引擎并立刻重跑。切换这件事本身说明用户想换结果，不该让他再点一次重试。
+    private func switchEngine() async {
+        let next: TranscribeEngine = runningEngine == .cloud ? .onDevice : .cloud
+        enginePreference = next.rawValue
+        progressNote = ""
+        await start(force: true)
     }
 
     private var privacyNote: some View {
@@ -208,7 +299,9 @@ struct TranscribeSheet: View {
             Image(systemName: "lock")
                 .font(.system(size: 10, weight: .semibold))
                 .padding(.top, 1)
-            Text("转写出的文字会存在本机，下次进这条不用再跑一次。")
+            Text(activeEngine == .cloud
+                 ? "音频会分段发给你的模型服务；转写出的文字存在本机，下次进这条不用再跑一次。"
+                 : "转写出的文字会存在本机，下次进这条不用再跑一次。")
                 .font(.cnMeta)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -223,7 +316,7 @@ struct TranscribeSheet: View {
         case .checking:
             HStack(spacing: Metric.space3) {
                 ActivitySpinner(style: .medium)
-                Text("正在检查本机识别能力…")
+                Text(activeEngine == .cloud ? "正在检查云端转写…" : "正在检查本机识别能力…")
                     .font(.cnChip)
                     .foregroundStyle(Color.cnInk3)
                 Spacer(minLength: 0)
@@ -275,7 +368,9 @@ struct TranscribeSheet: View {
             VStack(alignment: .leading, spacing: Metric.space3) {
                 HStack(spacing: Metric.space3) {
                     ActivitySpinner(style: .medium)
-                    Text("正在本机识别 · 已认出 \(chars) 字")
+                    Text(progressNote.isEmpty
+                         ? "正在\(engineLabel)识别 · 已认出 \(chars) 字"
+                         : "\(progressNote) · 已认出 \(chars) 字")
                         .font(.cnChip)
                         .foregroundStyle(Color.cnInk2)
                     Spacer(minLength: 0)
@@ -427,6 +522,34 @@ struct TranscribeSheet: View {
     // MARK: - 流程
 
     @MainActor
+    /// 云端转写。
+    ///
+    /// 进度按「段」而不是按百分比：段数就是真实的分母，而且每一段回来都是一次
+    /// 确定的进展——比一个不知道怎么算出来的百分比可信。
+    private func runCloud(audio: (url: URL, durationSeconds: Int), itemId: String) async throws -> LocalTranscript {
+        guard audio.durationSeconds > 0 else {
+            throw CloudASRError.badReply("取不到音频时长，没法切片")
+        }
+        stage = .transcribing(tail: "", chars: 0)
+        progressNote = "云端转写 · 准备上传"
+        lastProgress = Date()
+
+        return try await CloudTranscriber().transcribe(
+            audio: audio.url,
+            durationSeconds: audio.durationSeconds,
+            itemId: itemId,
+            config: cloudConfig
+        ) { done, total, chars in
+            Task { @MainActor in
+                progressNote = "云端转写 · 第 \(done)/\(total) 段"
+                if case .transcribing = stage {
+                    stage = .transcribing(tail: "", chars: chars)
+                }
+                lastProgress = Date()
+            }
+        }
+    }
+
     private func start(force: Bool = false) async {
         stopMonitor()
         stage = .checking
@@ -442,21 +565,39 @@ struct TranscribeSheet: View {
             return
         }
 
-        let support = OnDeviceSpeech.support()
-        guard support == .ready else {
-            stage = .blocked(support.message)
-            logs.warn("transcribe.unsupported", "本机识别不可用", meta: ["id": item.id])
-            return
-        }
+        // 先定引擎。云端不碰系统听写，所以不该在云端路径上要语音识别权限——
+        // 之前那条路必须先授权才能往下走，等于把一个「本机才需要」的门槛
+        // 放在了所有人面前。
+        let engine = TranscribeEngineDecision.resolve(
+            preference: enginePreferenceValue,
+            cloudReady: cloudConfig.isReady
+        )
+        runningEngine = engine
+        progressNote = ""
+        logs.info("transcribe.engine", "引擎：\(engine.title)", meta: [
+            "id": item.id,
+            "engine": engine.rawValue,
+            "model": engine == .cloud ? cloudConfig.model : "-",
+            "preference": enginePreferenceValue.rawValue,
+        ])
 
-        var status = OnDeviceSpeech.authorization
-        if status == .notDetermined {
-            status = await OnDeviceSpeech.requestAuthorization()
-        }
-        guard status == .authorized else {
-            stage = .needsPermission
-            logs.warn("transcribe.denied", "语音识别权限未给", meta: ["id": item.id])
-            return
+        if engine == .onDevice {
+            let support = OnDeviceSpeech.support()
+            guard support == .ready else {
+                stage = .blocked(support.message)
+                logs.warn("transcribe.unsupported", "本机识别不可用", meta: ["id": item.id])
+                return
+            }
+
+            var status = OnDeviceSpeech.authorization
+            if status == .notDetermined {
+                status = await OnDeviceSpeech.requestAuthorization()
+            }
+            guard status == .authorized else {
+                stage = .needsPermission
+                logs.warn("transcribe.denied", "语音识别权限未给", meta: ["id": item.id])
+                return
+            }
         }
 
         // 转写要在本地折腾两份文件：为取音源临时下的 mp4（抖音十来兆，B 站
@@ -491,15 +632,20 @@ struct TranscribeSheet: View {
             stage = .transcribing(tail: "", chars: 0)
             lastProgress = Date()
             let started = Date()
-            let transcript = try await transcriber.transcribe(
-                file: audio.url,
-                durationSeconds: audio.durationSeconds,
-                itemId: item.id
-            ) { tail, chars in
-                Task { @MainActor in
-                    if case .transcribing = stage {
-                        stage = .transcribing(tail: tail, chars: chars)
-                        lastProgress = Date()
+            let transcript: LocalTranscript
+            if engine == .cloud {
+                transcript = try await runCloud(audio: audio, itemId: item.id)
+            } else {
+                transcript = try await transcriber.transcribe(
+                    file: audio.url,
+                    durationSeconds: audio.durationSeconds,
+                    itemId: item.id
+                ) { tail, chars in
+                    Task { @MainActor in
+                        if case .transcribing = stage {
+                            stage = .transcribing(tail: tail, chars: chars)
+                            lastProgress = Date()
+                        }
                     }
                 }
             }
@@ -522,6 +668,13 @@ struct TranscribeSheet: View {
             stage = .failed(failure.errorDescription ?? "转写失败。")
             logs.error("transcribe.failed", failure.errorDescription ?? "转写失败", meta: [
                 "id": item.id,
+            ])
+        } catch let failure as CloudASRError {
+            guard !isResolved else { return }
+            stage = .failed(failure.errorDescription ?? "云端转写失败。")
+            logs.error("transcribe.cloud_failed", failure.errorDescription ?? "云端转写失败", meta: [
+                "id": item.id,
+                "model": cloudConfig.model,
             ])
         } catch let failure as ClipNoteClient.Failure {
             guard !isResolved else { return }

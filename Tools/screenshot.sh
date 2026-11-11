@@ -129,6 +129,8 @@ shot infographic        infographic        light
 # （权限被拒、系统听写停住），要么根本复现不了，只能在这里把文案看一遍。
 shot transcribe            transcribe            light
 shot transcribe-running    transcribe-running    light
+# 云端转写（默认路径）：验引擎行文案与分段进度
+shot transcribe-cloud      transcribe-cloud      light
 shot transcribe-blocked    transcribe-blocked    light
 shot transcribe-permission transcribe-permission light
 shot transcribe-stalled    transcribe-stalled    light

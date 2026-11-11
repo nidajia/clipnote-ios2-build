@@ -274,7 +274,8 @@ struct SnapshotRoot: View {
                         preview: transcribePreview(item),
                         // 转写中那一张要给一个非零计时，否则「右边那个计时器」
                         // 在截图里根本不存在，等于没验。
-                        previewElapsed: state == "transcribe-running" ? 134 : 0
+                        previewElapsed: state == "transcribe-running" ? 134 : 0,
+                        previewEngine: state == "transcribe-cloud" ? .cloud : nil
                     )
                 } else {
                     Color.cnBg
@@ -400,6 +401,9 @@ struct SnapshotRoot: View {
     /// 都不会自然出现），只能靠 preview 把它们摆出来，让文案被看见一次。
     private func transcribePreview(_ item: Item) -> TranscribeSheet.Stage {
         switch state {
+        case "transcribe-cloud":
+            // 云端那条路：进度按「第 n/N 段」，不是百分比。
+            return .transcribing(tail: "", chars: 1240)
         case "transcribe-running":
             return .transcribing(
                 tail: "…所以你看这个缺口，它不是一年形成的，是一轮一轮融资把它推上去的",
