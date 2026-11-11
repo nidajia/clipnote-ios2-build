@@ -104,6 +104,10 @@ struct TranscribeSheet: View {
         _stage = State(initialValue: preview ?? .checking)
         _elapsed = State(initialValue: previewElapsed)
         _runningEngine = State(initialValue: previewEngine ?? .onDevice)
+        if previewEngine == .cloud {
+            // 截图要给真实形态：云端的进度就是「第 n/N 段」。
+            _progressNote = State(initialValue: "云端转写 · 第 3/30 段")
+        }
     }
 
     var body: some View {
@@ -271,14 +275,17 @@ struct TranscribeSheet: View {
                 .font(.cnMeta)
                 .foregroundStyle(Color.cnInk2)
             Spacer(minLength: 0)
-            if cloudConfig.isReady {
+            // 条件是「云端可用」**或**「当前正跑在云端」：
+            // 只看可用性的话，没配置时的云端预览态会既没有按钮也没有说明，
+            // 看起来像坏了。
+            if cloudConfig.isReady || activeEngine == .cloud {
                 Button(activeEngine == .cloud ? "改用本机" : "改用云端") {
                     Task { await switchEngine() }
                 }
                 .font(.cnMeta)
                 .foregroundStyle(Color.cnBrand)
                 .buttonStyle(.plain)
-            } else if activeEngine == .onDevice {
+            } else {
                 Text("未配置模型，云端不可用")
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
@@ -395,7 +402,9 @@ struct TranscribeSheet: View {
                         )
                 }
 
-                Text("这一步没有总进度：系统只回文字，不回百分比。长片子按 1:8 左右估时间。")
+                Text(activeEngine == .cloud
+                     ? "按 2 分钟一段上传，段数就是进度。1 小时的片子大约 30 段。"
+                     : "这一步没有总进度：系统只回文字，不回百分比。长片子按 1:8 左右估时间。")
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
                     .fixedSize(horizontal: false, vertical: true)

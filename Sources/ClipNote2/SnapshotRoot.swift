@@ -274,7 +274,8 @@ struct SnapshotRoot: View {
                         preview: transcribePreview(item),
                         // 转写中那一张要给一个非零计时，否则「右边那个计时器」
                         // 在截图里根本不存在，等于没验。
-                        previewElapsed: state == "transcribe-running" ? 134 : 0,
+                        previewElapsed: state == "transcribe-running" ? 134
+                            : (state == "transcribe-cloud" ? 42 : 0),
                         previewEngine: state == "transcribe-cloud" ? .cloud : nil
                     )
                 } else {
