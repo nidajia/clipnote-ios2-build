@@ -539,28 +539,44 @@ struct HomeScreen: View {
     }
 
     /// 笔记行的副标题：带上最后修改时间。
-    /// 其余条目沿用服务端给的 `metaLine`（平台 · 作者）。
+    ///
+    /// 为什么只留平台、不留作者：这一行还要放状态与分区两个徽章，
+    /// 而「11-11 07:20」这种完整时间会被挤成「11-1…」——日期缺一半，
+    /// 等于没显示。改成相对时间（3 小时前 / 昨天 / 10-26），既短又够用。
     private func subtitle(for item: Item) -> String? {
         let stamp = item.noteTouchedAt.map(Self.stamp)
         if item.kind == .note {
-            let base = item.metaLine.isEmpty ? "笔记" : item.metaLine
-            return stamp.map { "\(base) · 修改 \($0)" } ?? base
+            // 笔记条目的 metaLine 就是「笔记」，不用再占字
+            return stamp.map { "笔记 · \($0)" } ?? "笔记"
         }
         // 视频条目也能写笔记。在「笔记」筛选下列出来的就是这些，
         // 没有时间的话，「什么时候写的」还得点进去才知道。
         let hasNote = !item.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard hasNote else { return nil }
-        return stamp.map { "\(item.metaLine) · 笔记 \($0)" } ?? item.metaLine
+        // 只要平台，不要作者：作者名往往很长，而这一行已经有徽章要放
+        let platform = item.metaLine.components(separatedBy: " · ").first ?? item.metaLine
+        return stamp.map { "\(platform) · \($0)" } ?? item.metaLine
     }
 
-    /// 「11-10 23:40」。跨年才带年份——列表里不需要每年都写一次。
+    /// 紧凑时间：今天给「3 小时前」，昨天给「昨天」，再往前给日期。
+    ///
+    /// 列表行只有一行位置，而完整时间会被徽章挤掉后半截。
+    /// 精确到分钟对「什么时候写的」没有帮助——「上周三」比「11-04 23:40」更好判断。
     static func stamp(_ date: Date) -> String {
+        let now = Date()
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 { return "刚刚" }
+        if seconds < 3600 { return "\(Int(seconds / 60)) 分钟前" }
+
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "\(Int(seconds / 3600)) 小时前" }
+        if calendar.isDateInYesterday(date) { return "昨天" }
+
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
-        let calendar = Calendar.current
-        formatter.dateFormat = calendar.component(.year, from: date) == calendar.component(.year, from: Date())
-            ? "MM-dd HH:mm"
-            : "yyyy-MM-dd HH:mm"
+        formatter.dateFormat = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+            ? "MM-dd"
+            : "yyyy-MM-dd"
         return formatter.string(from: date)
     }
 
