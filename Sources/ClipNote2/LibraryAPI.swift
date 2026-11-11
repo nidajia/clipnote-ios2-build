@@ -28,6 +28,14 @@ struct APISource: Decodable, Equatable {
     var platform: String?
 }
 
+/// 背景音乐（BGM）。抖音作品才有。
+/// 歌名/歌手第三方不一定回，可能只有 `url`——客户端按「有什么显示什么」处理。
+struct APIMusic: Decodable, Equatable {
+    var title: String = ""
+    var author: String = ""
+    var url: String = ""
+}
+
 /// 一段总结。`t` 是这段开始的时间（秒），用来和播放器对齐。
 /// 对某一句话的批注。
 ///
@@ -195,6 +203,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     /// 图集。抖音图文作品才有；视频条目是空数组。
     /// 有它就意味着「这条内容没有视频流」，详情页要走图片浏览而不是播放器。
     var images: [String] = []
+    /// 背景音乐。抖音视频才有；图文/笔记没有。
+    var music: APIMusic?
     /// AI 脑图。树形，服务端限 3 层 / 40 节点。
     var outline: [OutlineNode] = []
     var outlineAt: Int = 0
@@ -214,7 +224,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case authorAvatar, note, noteAt, outline, outlineAt
         case createdAt, updatedAt
         case annotations, annotationsAt
-        case images
+        case images, music
     }
 
     init(
@@ -284,6 +294,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         createdAt = try c.decodeIfPresent(Int.self, forKey: .createdAt) ?? 0
         updatedAt = try c.decodeIfPresent(Int.self, forKey: .updatedAt) ?? 0
         images = try c.decodeIfPresent([String].self, forKey: .images) ?? []
+        music = try c.decodeIfPresent(APIMusic.self, forKey: .music)
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来

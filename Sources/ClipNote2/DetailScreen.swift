@@ -41,6 +41,11 @@ struct DetailScreen: View {
     @State private var showFullscreen = false
     /// 图文作品的大图页码。非 nil 就打开全屏看图。
     @State private var galleryIndex: Int?
+    /// 背景音乐试听。单独一个 player，不碰视频那个——退出时要一起收声。
+    @State private var musicPlayer: AVPlayer?
+    @State private var musicPlaying = false
+    @State private var musicExportURL: URL?
+    @State private var showMusicExport = false
     @State private var showAISettings = false
     @State private var showSegments = false
     @State private var aiState: AIState = .idle
@@ -148,6 +153,8 @@ struct DetailScreen: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     authorRow
+
+                    musicRow
 
                     Text(metaLine)
                         .font(.cnMeta)
@@ -321,6 +328,13 @@ struct DetailScreen: View {
         )) {
             ImageGalleryScreen(item: current, startIndex: galleryIndex ?? 0)
         }
+        // 背景音乐导出：先下载成文件，再 ShareLink 分享（可「存储到文件」）
+        .sheet(isPresented: $showMusicExport) {
+            if let musicExportURL {
+                MusicExportSheet(url: musicExportURL) { showMusicExport = false }
+                    .presentationDetents([.height(300)])
+            }
+        }
         .onDisappear {
             // 离开这一页必须收声，并记住看到哪儿。
             // onDisappear 不保证一定执行（手势被取消时可能不触发），
@@ -332,6 +346,9 @@ struct DetailScreen: View {
                 }
             }
             AudioFocus.shared.resign(player)
+            // 背景音乐也要一起停：试听到一半退出，不该在首页继续响。
+            AudioFocus.shared.resign(musicPlayer)
+            musicPlaying = false
             if let timeObserver, let player {
                 player.removeTimeObserver(timeObserver)
             }
@@ -462,6 +479,87 @@ struct DetailScreen: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    /// 背景音乐。抖音作品才有，第三方可能只给地址、不给歌名。
+    /// 有地址就能试听、能导出；歌名是加分项，缺了显示「背景音乐」。
+    @ViewBuilder
+    private var musicRow: some View {
+        if let music = current.music, !music.url.isEmpty {
+            HStack(spacing: Metric.space2) {
+                Image(systemName: musicPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.cnBrand)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(music.title.isEmpty ? "背景音乐" : music.title)
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk)
+                        .lineLimit(1)
+                    if !music.author.isEmpty {
+                        Text(music.author)
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnInk3)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Button(musicPlaying ? "暂停" : "试听") {
+                    Task { await toggleMusic(music) }
+                }
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnBrand)
+                .buttonStyle(.plain)
+
+                Button("导出") {
+                    Task { await exportMusic(music) }
+                }
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnBrand)
+                .buttonStyle(.plain)
+            }
+            .padding(Metric.space3)
+            .background(
+                Color.cnCard,
+                in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+                    .strokeBorder(Color.cnHairlineSoft, lineWidth: 1)
+            )
+        }
+    }
+
+    private func toggleMusic(_ music: APIMusic) async {
+        if musicPlaying {
+            musicPlayer?.pause()
+            musicPlaying = false
+            return
+        }
+        guard let url = URL(string: music.url) else { return }
+        let item = AVPlayerItem(url: url)
+        let player = AVPlayer(playerItem: item)
+        AudioFocus.shared.adopt(player)
+        musicPlayer = player
+        player.play()
+        musicPlaying = true
+    }
+
+    private func exportMusic(_ music: APIMusic) async {
+        guard let url = URL(string: music.url) else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let base = music.title.isEmpty ? "background-music" : music.title
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent(base + ".mp3")
+            try data.write(to: tmp)
+            musicExportURL = tmp
+            showMusicExport = true
+        } catch {
+            notice = "音乐下载失败，稍后再试。"
         }
     }
 
