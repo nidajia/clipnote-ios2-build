@@ -1,5 +1,10 @@
 import Foundation
 
+/// AISummary 里的 `trimmed` 是 fileprivate，别的文件看不见。
+private extension String {
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
 /// 一次后台任务的当前状态。
 ///
 /// 为什么要经过服务端：模型调用要几十秒，而 iOS 一进后台就把请求挂死。
