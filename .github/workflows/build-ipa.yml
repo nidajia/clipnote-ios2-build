@@ -57,7 +57,7 @@ jobs:
           set -euo pipefail
           APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
           echo "app: $APP"
-          rm -rf Payload ClipNote2-unsigned.ipa
+          rm -rf Payload
           mkdir -p Payload
           cp -r "$APP" Payload/
 
@@ -67,8 +67,17 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :ClipNoteCommit string ${GITHUB_SHA}" \
             "$APP_IN_PAYLOAD/Info.plist"
 
-          zip -qry ClipNote2-unsigned.ipa Payload
-          ls -la ClipNote2-unsigned.ipa
+          # 文件名带版本号：装之前能一眼看出拿的是哪一版，
+          # 不会出现「装了半天还是旧包」这种分不清的事。
+          VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_IN_PAYLOAD/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_IN_PAYLOAD/Info.plist")
+          IPA="ClipNote2-${VER}-build${BUILD}.ipa"
+          echo "IPA_NAME=$IPA" >> "$GITHUB_ENV"
+
+          zip -qry "$IPA" Payload
+          # 固定名给「检查更新」用：下载地址永远不变，指向最新
+          cp "$IPA" ClipNote2-latest.ipa
+          ls -la "$IPA" ClipNote2-latest.ipa
 
       - name: 校验（版本 / 最低系统 / 图标）
         run: |
@@ -106,14 +115,15 @@ jobs:
       - name: 上传 ipa
         uses: actions/upload-artifact@v4
         with:
-          name: ClipNote2-unsigned-ipa
+          name: ClipNote2-ipa
           path: |
-            ClipNote2-unsigned.ipa
+            ClipNote2-*.ipa
             BUILD.txt
           if-no-files-found: error
 
-      # 固定地址：https://github.com/nidajia/clipnote-ios2-build/releases/download/latest/ClipNote2-unsigned.ipa
-      # App 的「检查更新」指的就是这个 latest，所以每次构建都要覆盖它。
+      # 两个名字都传：
+      #   ClipNote2-<版本>-build<构建号>.ipa  给人下载（带版本号，不会拿错）
+      #   ClipNote2-latest.ipa               给 App「检查更新」（地址永远不变）
       - name: 更新 latest release
         if: github.ref == 'refs/heads/main'
         env:
@@ -121,10 +131,10 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest ClipNote2-unsigned.ipa --clobber
+            gh release upload latest "$IPA_NAME" ClipNote2-latest.ipa --clobber
             gh release upload latest BUILD.txt --clobber
           else
-            gh release create latest ClipNote2-unsigned.ipa BUILD.txt \
+            gh release create latest "$IPA_NAME" ClipNote2-latest.ipa BUILD.txt \
               --title "最新构建" \
               --notes "推送到 main 时自动更新。装法：TrollStore 打开 ipa。"
           fi
