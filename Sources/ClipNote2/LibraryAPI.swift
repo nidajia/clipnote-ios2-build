@@ -30,7 +30,7 @@ struct APISource: Decodable, Equatable {
 
 /// 背景音乐（BGM）。抖音作品才有。
 /// 歌名/歌手第三方不一定回，可能只有 `url`——客户端按「有什么显示什么」处理。
-struct APIMusic: Decodable, Equatable {
+struct APIMusic: Decodable, Equatable, Hashable {
     var title: String = ""
     var author: String = ""
     var url: String = ""
