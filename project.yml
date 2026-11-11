@@ -52,15 +52,20 @@ targets:
         # 图文作品的「保存到相册」。缺这一条不是弹不出授权，是**直接闪退**——
         # 和语音权限同一个坑，而且只在真机上复现。用 .addOnly，只写入不读取。
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "把图文作品里的图片保存到相册。只写入，不读取你相册里的其它照片。"
-        # 后台播放：图文作品的 BGM 在锁屏/切到别的 App 时继续响。
-        # 光有这个还不行，还要 AppDelegate 里把 AVAudioSession 设成 .playback，
-        # 缺一半就是「能播，但一退到后台就停」。
-        INFOPLIST_KEY_UIBackgroundModes: "audio"
         # 这里放开横屏是**必要但不充分**的：真正决定「现在能不能转」的是
         # AppDelegate.supportedInterfaceOrientationsFor，它平时只返回竖屏，
         # 只有全屏播放页在屏幕上时才放开。Info.plist 里不写横屏，
         # requestGeometryUpdate 会直接被系统拒绝——那种失败没有任何报错。
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+
+    # UIBackgroundModes 是数组，INFOPLIST_KEY_* 机制写不了数组（试过 `"audio"` 单值，
+    # 构建后 Info.plist 里压根没有这个键）。所以单独放一个 Info.plist 只写它；
+    # GENERATE_INFOPLIST_FILE 仍是 YES，Xcode 会把两边的键合并进最终 plist。
+    info:
+      path: Sources/ClipNote2/Info.plist
+      properties:
+        UIBackgroundModes:
+          - audio
 
   ClipNote2Tests:
     type: bundle.unit-test
