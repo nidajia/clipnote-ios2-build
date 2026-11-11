@@ -192,6 +192,9 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     /// 创建与最后修改时间（毫秒，服务端时钟）。
     var createdAt: Int = 0
     var updatedAt: Int = 0
+    /// 图集。抖音图文作品才有；视频条目是空数组。
+    /// 有它就意味着「这条内容没有视频流」，详情页要走图片浏览而不是播放器。
+    var images: [String] = []
     /// AI 脑图。树形，服务端限 3 层 / 40 节点。
     var outline: [OutlineNode] = []
     var outlineAt: Int = 0
@@ -211,6 +214,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case authorAvatar, note, noteAt, outline, outlineAt
         case createdAt, updatedAt
         case annotations, annotationsAt
+        case images
     }
 
     init(
@@ -279,6 +283,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         noteAt = try c.decodeIfPresent(Int.self, forKey: .noteAt) ?? 0
         createdAt = try c.decodeIfPresent(Int.self, forKey: .createdAt) ?? 0
         updatedAt = try c.decodeIfPresent(Int.self, forKey: .updatedAt) ?? 0
+        images = try c.decodeIfPresent([String].self, forKey: .images) ?? []
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来

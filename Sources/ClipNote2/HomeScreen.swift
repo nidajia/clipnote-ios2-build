@@ -92,7 +92,10 @@ struct HomeScreen: View {
         case .all: break
         case .section(let id): list = list.filter { sections.sectionID(for: $0.id) == id }
         case .unassigned: list = list.filter { sections.sectionID(for: $0.id) == nil }
-        case .video: list = list.filter { $0.kind == .video }
+        // 「视频」这一档的语义其实是「导入的内容」（相对「自己写的笔记」）。
+        // 图文作品的 kind 是 image，按 == .video 过滤会让它凭空消失——
+        // 只在「全部」里能看到，用户会以为导入失败了。
+        case .video: list = list.filter { $0.kind != .note }
         case .note:
             // 「笔记」不是指 kind，而是**真的有笔记内容**。
             // 之前按 kind 过滤，把建了条目还没写字的也算进来，

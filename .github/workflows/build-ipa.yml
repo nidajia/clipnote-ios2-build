@@ -3,14 +3,19 @@ name: Build iOS IPA (unsigned)
 # 产出**未签名** ipa，给 TrollStore 直接安装。
 # 不签名、不要证书、不要 Apple ID——这条链路是给巨魔用户的。
 #
-# 只在手动触发或打 tag 时构建：ipa 一次五六分钟，
-# 而一轮里往往要推两三次修复，每次 push 都编只是在编没人下载的包。
+# 推送 main 也构建：这一轮起 ipa 会挂到固定的 latest release，
+# App 里的「检查更新」直接指向它，所以「合并进 main」就应该有新包。
 
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   ipa:
@@ -106,3 +111,20 @@ jobs:
             ClipNote2-unsigned.ipa
             BUILD.txt
           if-no-files-found: error
+
+      # 固定地址：https://github.com/nidajia/clipnote-ios2-build/releases/download/latest/ClipNote2-unsigned.ipa
+      # App 的「检查更新」指的就是这个 latest，所以每次构建都要覆盖它。
+      - name: 更新 latest release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest ClipNote2-unsigned.ipa --clobber
+            gh release upload latest BUILD.txt --clobber
+          else
+            gh release create latest ClipNote2-unsigned.ipa BUILD.txt \
+              --title "最新构建" \
+              --notes "推送到 main 时自动更新。装法：TrollStore 打开 ipa。"
+          fi

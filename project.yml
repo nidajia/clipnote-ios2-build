@@ -49,6 +49,9 @@ targets:
         # 没有这一句，第一次调 SFSpeechRecognizer 会**直接崩**（不是报错，是闪退），
         # 而且只在那台真机上复现——模拟器上根本走不到这一步。
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "用系统的本机听写把视频音轨转成文字，以便生成分段。音频不会离开这台设备。"
+        # 图文作品的「保存到相册」。缺这一条不是弹不出授权，是**直接闪退**——
+        # 和语音权限同一个坑，而且只在真机上复现。用 .addOnly，只写入不读取。
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "把图文作品里的图片保存到相册。只写入，不读取你相册里的其它照片。"
         # 这里放开横屏是**必要但不充分**的：真正决定「现在能不能转」的是
         # AppDelegate.supportedInterfaceOrientationsFor，它平时只返回竖屏，
         # 只有全屏播放页在屏幕上时才放开。Info.plist 里不写横屏，

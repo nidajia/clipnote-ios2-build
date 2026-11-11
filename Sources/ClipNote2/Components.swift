@@ -92,7 +92,11 @@ struct ItemRow: View {
                 url: model.coverURL,
                 top: model.coverTop,
                 bottom: model.coverBottom,
-                duration: model.durationText
+                // 图文没有时长，那个角标空着会让人以为「时长没解析出来」。
+                // 直接写「图文 N」，一眼就知道点进去是看图。
+                duration: model.kind == .image
+                    ? (model.images.count > 1 ? "图文 \(model.images.count)" : "图文")
+                    : model.durationText
             )
 
             VStack(alignment: .leading, spacing: 5) {

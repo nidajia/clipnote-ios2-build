@@ -39,6 +39,8 @@ struct DetailScreen: View {
     @State private var player: AVPlayer?
     @State private var playing = false
     @State private var showFullscreen = false
+    /// 图文作品的大图页码。非 nil 就打开全屏看图。
+    @State private var galleryIndex: Int?
     @State private var showAISettings = false
     @State private var showSegments = false
     @State private var aiState: AIState = .idle
@@ -311,6 +313,14 @@ struct DetailScreen: View {
             }
             .presentationDetents([.medium, .large])
         }
+        // 图文看图：全屏、可横滑。绑到 galleryIndex 而不是 Bool——
+        // 从第几张打开是信息，丢了就得从第一张重新翻。
+        .fullScreenCover(isPresented: Binding(
+            get: { galleryIndex != nil },
+            set: { if !$0 { galleryIndex = nil } }
+        )) {
+            ImageGalleryScreen(item: current, startIndex: galleryIndex ?? 0)
+        }
         .onDisappear {
             // 离开这一页必须收声，并记住看到哪儿。
             // onDisappear 不保证一定执行（手势被取消时可能不触发），
@@ -534,6 +544,22 @@ struct DetailScreen: View {
     // MARK: - 播放器
 
     private var playerSurface: some View {
+        Group {
+            if item.kind == .image {
+                // 图文作品没有视频流，顶部这块是图片而不是播放器。
+                // 以前它走视频分支：显示播放键，点下去服务端把封面（webp）
+                // 当视频地址返回，AVPlayerItem 加载它直接闪退。
+                ImagePostSurface(item: item) { start in
+                    galleryIndex = start
+                }
+            } else {
+                videoSurface
+            }
+        }
+    }
+
+    /// 视频条目那一块：封面 + 播放键，点了才建 AVPlayer。
+    private var videoSurface: some View {
         // 用 Color.clear 撑出 16:9 再叠内容：直接给 ZStack 加 aspectRatio
         // 在高度不受约束的 ScrollView 里容易塌成 0。
         Color.clear
@@ -1203,7 +1229,11 @@ struct DetailScreen: View {
 
     @ViewBuilder
     private func segmentSection(_ value: Item) -> some View {
-        if !value.segments.isEmpty {
+        if item.kind == .image {
+            // 图文没有音轨，分段/字幕/转写这一整套都没有意义。
+            // 留一块空白比留一个点进去必然失败的入口好。
+            EmptyView()
+        } else if !value.segments.isEmpty {
             // 只留一行入口。分段内容已经在播放器下方那排导航里了，
             // 卡片里再列一遍等于同一份信息出现两次。
             Rectangle()
@@ -1400,6 +1430,8 @@ struct DetailScreen: View {
     private func generateSegments(force: Bool = false) async {
         guard !library.isOffline, segmentState != .running else { return }
         guard force || current.segments.isEmpty else { return }
+        // 图文没有音轨。真去请求只会拿到「没有字幕」，白等一次还留一条红字。
+        guard item.kind != .image else { return }
 
         let config = AIConfigStore.load()
         guard config.isConfigured else {
@@ -1542,6 +1574,13 @@ struct DetailScreen: View {
         if !silent { notice = nil }
         do {
             if let payload = try await library.playback(for: item.id) {
+                // 老服务端会把图文封面（webp）当视频地址返回。这个地址一旦
+                // 交给 AVPlayerItem，AVKit 会崩而不是报错，所以先挡在这里。
+                guard payload.isPlayableMedia else {
+                    prepare = .unavailable
+                    if !silent { notice = "这是图文作品，没有视频。" }
+                    return nil
+                }
                 prepare = .ready(payload)
                 return payload
             }
@@ -1570,6 +1609,13 @@ struct DetailScreen: View {
     // MARK: - 播放
 
     private func startPlayback(at seconds: Int? = nil) async {
+        // 图文作品没有视频流。任何路径（播放键、分段、书签、下载）都不该走到
+        // AVPlayer：服务端以前会把封面当流返回，建播放器那一下会闪退。
+        guard item.kind != .image else {
+            notice = "这是图文作品，没有视频。"
+            return
+        }
+
         // 已下载优先：本地文件离线可看，也不必再去要一次地址
         if let local = downloads.localURL(for: item.id) {
             play(local, at: seconds)
@@ -1812,7 +1858,9 @@ struct DetailScreen: View {
     private var downloadSection: some View {
         VStack(alignment: .leading, spacing: Metric.space3) {
             if !item.playbackAvailable {
-                Text("这条内容以文字为主，没有可下载的视频。")
+                Text(item.kind == .image
+                     ? "这是图文作品，没有视频可下载。点上面的图可以看大图。"
+                     : "这条内容以文字为主，没有可下载的视频。")
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
                     .fixedSize(horizontal: false, vertical: true)

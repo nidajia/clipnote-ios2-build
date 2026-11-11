@@ -94,14 +94,14 @@ struct NoteScreen: View {
         .navigationTitle("我的笔记")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // 从视频进来写笔记时，要能回去看那条视频——否则笔记页是个死路。
-            // 笔记条目本身没有视频，就不显示这个入口。
+            // 从视频/图文进来写笔记时，要能回去看那条内容——否则笔记页是个死路。
+            // 笔记条目本身没有原文，就不显示这个入口。
             ToolbarItem(placement: .navigationBarLeading) {
-                if item.kind == .video {
+                if item.kind != .note {
                     NavigationLink {
                         DetailScreen(item: item)
                     } label: {
-                        Text("视频").font(.cnChip)
+                        Text(item.kind == .image ? "图文" : "视频").font(.cnChip)
                     }
                 }
             }

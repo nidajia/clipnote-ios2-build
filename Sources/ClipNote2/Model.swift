@@ -3,7 +3,10 @@ import SwiftUI
 /// 条目类型。由服务端下发，客户端只用于筛选与图标。
 enum ItemKind: String {
     case video
+    /// 用户自己写的笔记
     case note
+    /// 图文作品（抖音图集）。**没有视频流**，详情页要显示图片而不是播放器。
+    case image
 }
 
 /// 首页条目：**已经拿到手的展示数据**。
@@ -71,6 +74,8 @@ struct Item: Identifiable, Hashable {
     var coverURL: URL?
     /// `false` 不是错误，是「这类内容没有视频流」（笔记、图集）
     var playbackAvailable: Bool
+    /// 图文作品的图片。空数组 = 不是图文，或服务端还没补上图集。
+    var images: [URL] = []
     var publishedAt: Date?
 
     /// 封面加载完成前的占位渐变。由 id 稳定派生，同一条永远同色，
@@ -110,7 +115,12 @@ struct Item: Identifiable, Hashable {
         self.outline = api.outline
         self.annotations = api.annotations
         self.platform = api.platform
-        self.playbackAvailable = api.playback.available
+        // 图文作品即使服务端说能播，也不能给播放键：它本来就没有流。
+        // 这一层是客户端兜底，服务端已经把 playback 置成 false 了。
+        self.playbackAvailable = api.playback.available && api.kind != "image"
+        self.images = api.images.compactMap { raw in
+            raw.isEmpty ? nil : URL(string: raw)
+        }
         self.publishedAt = api.publishedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
             : nil
@@ -152,6 +162,7 @@ struct Item: Identifiable, Hashable {
         platform: String = "",
         coverURL: URL? = nil,
         playbackAvailable: Bool = true,
+        images: [URL] = [],
         publishedAt: Date? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
@@ -181,6 +192,7 @@ struct Item: Identifiable, Hashable {
         self.platform = platform
         self.coverURL = coverURL
         self.playbackAvailable = playbackAvailable
+        self.images = images
         self.publishedAt = publishedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
