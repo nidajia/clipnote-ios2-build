@@ -46,6 +46,8 @@ struct DetailScreen: View {
     @State private var musicPlaying = false
     @State private var musicExportURL: URL?
     @State private var showMusicExport = false
+    /// 图文的背景音乐：打开自动播，带进度条、可暂停，能后台播。
+    @StateObject private var bgmController = BGMController()
     @State private var showAISettings = false
     @State private var showSegments = false
     @State private var aiState: AIState = .idle
@@ -154,7 +156,11 @@ struct DetailScreen: View {
 
                     authorRow
 
-                    musicRow
+                    if item.kind == .image {
+                        imageBGM
+                    } else {
+                        musicRow
+                    }
 
                     Text(metaLine)
                         .font(.cnMeta)
@@ -349,6 +355,7 @@ struct DetailScreen: View {
             // 背景音乐也要一起停：试听到一半退出，不该在首页继续响。
             AudioFocus.shared.resign(musicPlayer)
             musicPlaying = false
+            bgmController.stop()
             if let timeObserver, let player {
                 player.removeTimeObserver(timeObserver)
             }
@@ -479,6 +486,20 @@ struct DetailScreen: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    /// 图文的背景音乐：打开就自动播，带进度条、可暂停。
+    /// 和视频不同——视频的音轨里有声音，图文没有，看图的配乐得单独放。
+    @ViewBuilder
+    private var imageBGM: some View {
+        if let music = current.music, !music.url.isEmpty {
+            BGMBar(controller: bgmController, title: music.title, author: music.author)
+                .onAppear {
+                    if let url = URL(string: music.url), !bgmController.isPlaying {
+                        bgmController.play(url: url)
+                    }
+                }
         }
     }
 

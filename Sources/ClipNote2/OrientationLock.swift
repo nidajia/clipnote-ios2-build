@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import AVFoundation
 
 /// App 的方向锁。
 ///
@@ -98,6 +99,16 @@ final class OrientationLock {
 /// 不要为了避开而用 `UIDevice.setValue(forKey: "orientation")`——
 /// 那是私有接口，iOS 16 起已经失效。
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        // 后台播放：BGM 在锁屏/切走时继续响，需要 .playback 类别。
+        // 只配置一次；这里失败不致命——最坏是「退后台就停」，功能还在。
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
