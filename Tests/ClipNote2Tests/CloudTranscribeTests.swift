@@ -214,6 +214,6 @@ final class CloudTranscribeTests: XCTestCase {
         let lines = SpeechLineBuilder.lines(from: chunks)
         XCTAssertEqual(lines.count, 2)
         XCTAssertEqual(lines[0].text, "这句话讲的是存储的分层。")
-        XCTAssertEqual(lines[1].t, 6.0, accuracy: 0.001)
+        XCTAssertEqual(lines[1].t, 6, "行时间是整秒（TranscriptLine.t 是 Int）")
     }
 }
