@@ -34,6 +34,7 @@ struct DetailScreen: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var logs: LogStore
     @EnvironmentObject private var sections: SectionStore
+    @EnvironmentObject private var statuses: StatusStore
 
     @State private var player: AVPlayer?
     @State private var playing = false
@@ -153,6 +154,7 @@ struct DetailScreen: View {
                     videoLinkRow
 
                     sectionRow
+                    statusRow
 
                     // 笔记放在摘要**之前**：首屏能看见。
                     // 原来放在「简介」后面，而那时屏幕已经被播放器、标题、
@@ -1684,6 +1686,51 @@ struct DetailScreen: View {
     @ViewBuilder
     /// 「我为什么存它」。位置放在作者链接之后、笔记之前：
     /// 这两行都是「我给的属性」，连着读才顺；放进摘要卡会被当成 AI 产物。
+    /// 状态用菜单而不是面板：只有四个选项，弹一层 sheet 不值得。
+    private var statusRow: some View {
+        let now = statuses.status(for: current.id)
+        return Menu {
+            Button {
+                statuses.set(nil, for: [current.id])
+            } label: {
+                Label("清除标记", systemImage: "xmark.circle")
+            }
+            ForEach(ItemStatus.allCases) { item in
+                Button {
+                    statuses.set(item, for: [current.id])
+                } label: {
+                    Label(item.title, systemImage: item.symbol)
+                }
+            }
+        } label: {
+            HStack(spacing: Metric.space2) {
+                Image(systemName: now?.symbol ?? "circle.dashed")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(now == nil ? Color.cnInk3 : Color.cnBrand)
+                    .frame(width: 18)
+                Text("状态")
+                    .font(.cnChip)
+                    .foregroundStyle(Color.cnInk3)
+                if let now {
+                    Text(now.title)
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk)
+                } else {
+                    Text("未标记 · 点这里设")
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk3)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.cnInk3)
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+    }
+
     private var sectionRow: some View {
         let assigned = sections.section(for: current.id)
         return Button {

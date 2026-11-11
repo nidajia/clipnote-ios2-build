@@ -157,6 +157,8 @@ enum CloudASRError: LocalizedError, Equatable {
     case badReply(String)
     case empty
     case transport(String)
+    /// 服务端已经把原因说清楚（401、模型名不对、任务过期…），原样展示。
+    case service(String)
     case chunkFailed(index: Int, startSeconds: Int, message: String)
 
     var errorDescription: String? {
@@ -183,6 +185,8 @@ enum CloudASRError: LocalizedError, Equatable {
             return "识别完了但没有文字。可能是纯音乐、人声太轻，或者音轨是空的。"
         case .transport(let message):
             return "连不上转写服务：\(message)"
+        case .service(let message):
+            return message
         case .chunkFailed(let index, let start, let message):
             return "第 \(index + 1) 段（第 \(Self.mmss(start)) 起）没成功：\(message)"
         }
@@ -229,48 +233,18 @@ enum CloudASRReply {
     }
 }
 
-/// multipart/form-data 的拼装。单独拆出来是因为它最容易错、也最容易测。
-enum MultipartBody {
-    static func make(
-        boundary: String,
-        fields: [String: String],
-        fileField: String,
-        fileName: String,
-        mimeType: String,
-        fileData: Data
-    ) -> Data {
-        var body = Data()
-        func append(_ string: String) {
-            body.append(Data(string.utf8))
-        }
-        for key in fields.keys.sorted() {
-            append("--\(boundary)\r\n")
-            append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n")
-            append("\(fields[key] ?? "")\r\n")
-        }
-        append("--\(boundary)\r\n")
-        append("Content-Disposition: form-data; name=\"\(fileField)\"; filename=\"\(fileName)\"\r\n")
-        append("Content-Type: \(mimeType)\r\n\r\n")
-        body.append(fileData)
-        append("\r\n--\(boundary)--\r\n")
-        return body
-    }
-}
-
 /// 云端转写：切片 → 逐段上传 → 合并成带时间戳的行。
 ///
 /// 并发 3 段：串行在 1 小时的内容上要发 30 次请求，等得没有必要；
 /// 全并发又会把手机的上行带宽切成碎片、也更容易被限流。
 struct CloudTranscriber {
-    private let session: URLSession
     private let concurrency: Int
-    /// 单段超时。2 分钟的音频在正常网络下几秒就回，给 90 秒足够。
-    private let perChunkTimeout: TimeInterval
+    /// 走服务端任务：一段音频要转几十秒，直连时切到后台就断。
+    private let jobs: AIJobClient
 
-    init(session: URLSession = .shared, concurrency: Int = 3, perChunkTimeout: TimeInterval = 90) {
-        self.session = session
+    init(concurrency: Int = 3, jobs: AIJobClient = AIJobClient()) {
         self.concurrency = max(1, concurrency)
-        self.perChunkTimeout = perChunkTimeout
+        self.jobs = jobs
     }
 
     func transcribe(
@@ -280,7 +254,7 @@ struct CloudTranscriber {
         config: CloudASRConfig,
         onProgress: @escaping (Int, Int, Int) -> Void
     ) async throws -> LocalTranscript {
-        guard config.isReady, let endpoint = config.endpoint else {
+        guard config.isReady else {
             throw CloudASRError.notConfigured
         }
         let chunks = TranscribeChunkPlanner.plan(durationSeconds: durationSeconds)
@@ -307,7 +281,6 @@ struct CloudTranscriber {
                         let reply = try await upload(
                             chunk: data,
                             chunkMeta: chunk,
-                            endpoint: endpoint,
                             config: config
                         )
                         return (chunk.index, reply)
@@ -343,83 +316,62 @@ struct CloudTranscriber {
 
     // MARK: - 单段
 
+    /// 一段音频交给服务端任务去转。
+    ///
+    /// 重试放在任务层：提交失败会自己重试两次；任务本身失败了不重试——
+    /// 401 或模型名不对这类问题，重发一百次也一样，白白多等两轮。
     private func upload(
         chunk: Data,
         chunkMeta: TranscribeChunk,
-        endpoint: URL,
         config: CloudASRConfig
     ) async throws -> [SpeechChunk] {
-        var lastError: CloudASRError = .transport("未知错误")
-        // 每段重试一次：切片上传偶发超时很常见，直接整体失败代价太大。
-        for attempt in 0..<2 {
-            do {
-                return try await uploadOnce(chunk: chunk, chunkMeta: chunkMeta,
-                                            endpoint: endpoint, config: config)
-            } catch let error as CloudASRError {
-                lastError = error
-                if case .http(let status, _) = error, status == 401 || status == 404 || status == 413 {
-                    break  // 这几类重试也一样
-                }
-                if case .notConfigured = error { break }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                lastError = .transport(error.localizedDescription)
-            }
-            if attempt == 0 {
-                try? await Task.sleep(nanoseconds: 800_000_000)
-            }
-        }
-        throw CloudASRError.chunkFailed(index: chunkMeta.index,
-                                        startSeconds: chunkMeta.startSeconds,
-                                        message: lastError.errorDescription ?? "失败")
-    }
-
-    private func uploadOnce(
-        chunk: Data,
-        chunkMeta: TranscribeChunk,
-        endpoint: URL,
-        config: CloudASRConfig
-    ) async throws -> [SpeechChunk] {
-        let boundary = "cn-\(UUID().uuidString)"
-        let body = MultipartBody.make(
-            boundary: boundary,
-            fields: ["model": config.model, "language": config.language, "response_format": "json"],
-            fileField: "file",
-            fileName: "audio.m4a",
-            mimeType: "audio/m4a",
-            fileData: chunk
-        )
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = perChunkTimeout
-        request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
-        request.setValue("multipart/form-data; boundary=\(boundary)",
-                         forHTTPHeaderField: "Content-Type")
-
-        let data: Data
-        let response: URLResponse
+        let reply: (text: String, segments: [AIJobSegment])
         do {
-            (data, response) = try await session.upload(for: request, from: body)
+            reply = try await jobs.runASR(
+                audio: chunk,
+                mime: "audio/mp4",
+                filename: "chunk-\(chunkMeta.index).m4a",
+                config: config
+            )
+        } catch let failure as AIJobFailure {
+            let message: String
+            switch failure {
+            case .notConfigured:
+                throw CloudASRError.notConfigured
+            case .failed(let text):
+                message = text
+            case .gone:
+                message = "任务过期了（服务端重启或超过一小时），重新开始一次。"
+            case .timeout:
+                message = "等太久了，可能这一段卡住了。"
+            case .transport(let text):
+                message = text
+            }
+            throw CloudASRError.chunkFailed(index: chunkMeta.index,
+                                             startSeconds: chunkMeta.startSeconds,
+                                             message: message)
         } catch is CancellationError {
             throw CancellationError()
-        } catch {
-            throw CloudASRError.transport(error.localizedDescription)
         }
 
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let snippet = String(data: data.prefix(200), encoding: .utf8) ?? ""
-            throw CloudASRError.http(http.statusCode, snippet.trimmed)
+        let offset = Double(chunkMeta.startSeconds)
+        var pieces: [SpeechChunk] = []
+        for segment in reply.segments {
+            let text = segment.text.trimmed
+            guard !text.isEmpty else { continue }
+            pieces.append(SpeechChunk(t: offset + segment.start,
+                                      duration: max(0.1, segment.end - segment.start),
+                                      text: text))
         }
+        if !pieces.isEmpty { return pieces }
 
-        let pieces = try CloudASRReply.speechChunks(
-            from: data,
-            offset: Double(chunkMeta.startSeconds),
-            window: Double(chunkMeta.durationSeconds)
+        // 服务商只回了一整段文字：按字数比例铺在这个窗口里。
+        // 没有时间戳也不能把文字丢掉——分段和书签全靠它。
+        return SpeechTextSplitter.chunks(
+            text: reply.text,
+            start: offset,
+            duration: Double(chunkMeta.durationSeconds)
         )
-        // 某一段没识别出字不算失败：纯音乐段、静音段本来就是空的。
-        return pieces
     }
 
     // MARK: - 切片

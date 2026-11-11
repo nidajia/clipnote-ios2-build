@@ -290,6 +290,19 @@ struct SummaryResult: Equatable {
     var labels: [String]
 }
 
+extension SummarizeFailure {
+    /// 任务层的失败翻成界面能直接显示的话。三处共用，别各写一份。
+    static func from(_ failure: AIJobFailure) -> SummarizeFailure {
+        switch failure {
+        case .notConfigured: return .notConfigured
+        case .failed(let message): return .service(message)
+        case .gone: return .service("任务过期了（服务端重启或超过一小时），重新生成一次。")
+        case .timeout: return .service("等太久了，稍后再试。")
+        case .transport(let message): return .service(message)
+        }
+    }
+}
+
 enum SummarizeFailure: Error, Equatable {
     case notConfigured
     case http(Int, String)
@@ -299,6 +312,8 @@ enum SummarizeFailure: Error, Equatable {
     /// 前者是「把上限调大就好」，后者是「模型没按格式回答」，处理方式完全不同。
     case truncated
     case unparsable(String)
+    /// 服务端已经把原因说清楚了，原样展示。
+    case service(String)
 
     var displayMessage: String {
         switch self {
@@ -312,6 +327,8 @@ enum SummarizeFailure: Error, Equatable {
             return "模型返回了空内容。"
         case .truncated:
             return "模型的回复被截断了，分段没写完。换一个输出上限更大的模型，或先缩短这条视频。"
+        case .service(let message):
+            return message
         case .unparsable(let raw):
             // 把长度也带出来：接近上限就说明是截断，而不是模型乱答。
             // 只给开头 40 字时，这两种原因在日志里长得一模一样，
@@ -323,11 +340,15 @@ enum SummarizeFailure: Error, Equatable {
 
 /// 调用户自己的模型服务，生成摘要 / 要点 / 标签。
 ///
-/// 为什么在手机上直接调、不经我们服务端：key 是用户自己的，额度也是用户的。
-/// 服务端代调意味着任何拿到分享链接的人都能花他的额度。
+/// 调用改走服务端任务（2026-11-11）。
+///
+/// 原来在手机上直接调，理由是「key 和额度都是用户的，服务端代调会让拿到分享链接的人
+/// 花他的额度」。这条代价被接受了：直连时一切到后台请求就挂死，用户只能干等——
+/// 那是每天都会遇到的，而分享链接只有他自己有。任务接口仍要共享码，
+/// Key 只在任务存续期内留在内存，结束即清。
 struct Summarizer {
     var config: AIConfig
-    var session: URLSession = .shared
+    var jobs: AIJobClient = AIJobClient()
     /// 摘要模板。只影响这一条链路（见 `SummaryTemplate` 顶部说明）。
     var template: SummaryTemplate = SummaryTemplateStore.load()
     var customPrompt: String = SummaryTemplateStore.loadCustomPrompt()
@@ -338,54 +359,25 @@ struct Summarizer {
         platform: String,
         duration: String
     ) async throws -> SummaryResult {
-        guard config.isConfigured, let endpoint = config.endpoint else {
+        guard config.isConfigured else {
             throw SummarizeFailure.notConfigured
         }
 
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 45
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
-
-        let payload: [String: Any] = [
-            "model": config.model,
-            "temperature": 0.3,
-            "messages": [
-                ["role": "system", "content": Self.instructions(
-                    template: template, customPrompt: customPrompt
-                )],
-                ["role": "user", "content": Self.userContent(
-                    title: title, description: description,
-                    platform: platform, duration: duration
-                )],
-            ],
+        let messages: [[String: String]] = [
+            ["role": "system", "content": Self.instructions(
+                template: template, customPrompt: customPrompt
+            )],
+            ["role": "user", "content": Self.userContent(
+                title: title, description: description,
+                platform: platform, duration: duration
+            )],
         ]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-            throw SummarizeFailure.unparsable("请求体拼不出来")
-        }
-        request.httpBody = body
 
-        let data: Data
-        let response: URLResponse
+        let content: String
         do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw SummarizeFailure.transport(error.localizedDescription)
-        }
-
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let text = String(data: data.prefix(200), encoding: .utf8) ?? ""
-            throw SummarizeFailure.http(http.statusCode, text)
-        }
-
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = root["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String,
-              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            throw SummarizeFailure.emptyReply
+            content = try await jobs.runChat(messages: messages, config: config)
+        } catch let failure as AIJobFailure {
+            throw SummarizeFailure.from(failure)
         }
 
         return try Self.parse(content)
@@ -581,64 +573,36 @@ struct SegmentOutcome {
 /// 两者都基于同一份字幕，所以**不需要额外拉一次转写**。
 struct BookmarkSuggestor {
     var config: AIConfig
-    var session: URLSession = .shared
+    /// 走服务端任务：这条也要几十秒，直连时切到后台就断。
+    var jobs: AIJobClient = AIJobClient()
 
     func suggest(
         title: String,
         lines: [APITranscriptLine],
         existing: [APIBookmark]
     ) async throws -> [APIBookmark] {
-        guard config.isConfigured, let endpoint = config.endpoint else {
+        guard config.isConfigured else {
             throw SummarizeFailure.notConfigured
         }
         let blocks = TranscriptCompressor.plan(lines)
         guard !blocks.isEmpty else { throw SummarizeFailure.emptyReply }
 
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 90
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
-
-        let payload: [String: Any] = [
-            "model": config.model,
-            "temperature": 0.4,
-            // 3 条建议 × 约 60 token，1200 够用且不会被默认值截断
-            "max_tokens": 1200,
-            "messages": [
-                ["role": "system", "content": Self.instructions],
-                ["role": "user", "content": Self.userContent(
-                    title, blocks: blocks, existing: existing
-                )],
-            ],
+        let messages: [[String: String]] = [
+            ["role": "system", "content": Self.instructions],
+            ["role": "user", "content": Self.userContent(
+                title, blocks: blocks, existing: existing
+            )],
         ]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-            throw SummarizeFailure.unparsable("请求体拼不出来")
-        }
-        request.httpBody = body
-
-        let data: Data
-        let response: URLResponse
+        // 3 条建议 × 约 60 token，1200 够用且不会被默认值截断
+        let reply: (text: String, finishReason: String?)
         do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw SummarizeFailure.transport(error.localizedDescription)
+            reply = try await jobs.runChatResult(messages: messages, config: config, maxTokens: 1200)
+        } catch let failure as AIJobFailure {
+            throw SummarizeFailure.from(failure)
         }
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let text = String(data: data.prefix(200), encoding: .utf8) ?? ""
-            throw SummarizeFailure.http(http.statusCode, text)
-        }
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = root["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String,
-              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { throw SummarizeFailure.emptyReply }
-        if let reason = choices.first?["finish_reason"] as? String, reason == "length" {
-            throw SummarizeFailure.truncated
-        }
+        if reply.finishReason == "length" { throw SummarizeFailure.truncated }
 
-        return try Self.parse(content, transcript: lines)
+        return try Self.parse(reply.text, transcript: lines)
     }
 
     // MARK: - 提示词
@@ -717,14 +681,15 @@ struct BookmarkSuggestor {
 /// 等于拿一个已验证的效果去赌一个没验证的。
 struct Segmenter {
     var config: AIConfig
-    var session: URLSession = .shared
+    /// 走服务端任务：分段要几十秒，直连时切到后台就断。
+    var jobs: AIJobClient = AIJobClient()
 
     func segments(
         title: String,
         lines: [APITranscriptLine],
         durationSeconds: Int
     ) async throws -> SegmentOutcome {
-        guard config.isConfigured, let endpoint = config.endpoint else {
+        guard config.isConfigured else {
             throw SummarizeFailure.notConfigured
         }
         let blocks = TranscriptCompressor.plan(lines)
@@ -732,62 +697,30 @@ struct Segmenter {
             throw SummarizeFailure.emptyReply
         }
 
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        // 输入比摘要大一个量级，45 秒不够
-        request.timeoutInterval = 90
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
-
-        let payload: [String: Any] = [
-            "model": config.model,
-            "temperature": 0.2,
-            // 必须显式给上限。不给的话各家默认值不一样（硅基流动 512 上下），
-            // 长视频要 8–9 段、每段标题 + 一句理解，输出会**正好卡在中间被截断**，
-            // 表现是 `segments.unparsable`，而模型其实答得没问题。
-            // 12 段 × 约 100 token = 1200，给 2400 留一倍余量。
-            "max_tokens": 2400,
-            "messages": [
-                ["role": "system", "content": Self.instructions],
-                ["role": "user", "content": Self.userContent(
-                    title: title, duration: durationSeconds, blocks: blocks
-                )],
-            ],
+        let messages: [[String: String]] = [
+            ["role": "system", "content": Self.instructions],
+            ["role": "user", "content": Self.userContent(
+                title: title, duration: durationSeconds, blocks: blocks
+            )],
         ]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-            throw SummarizeFailure.unparsable("请求体拼不出来")
-        }
-        request.httpBody = body
 
-        let data: Data
-        let response: URLResponse
+        // 必须显式给输出上限。不给的话各家默认值不一样（硅基流动 512 上下），
+        // 长视频要 8–9 段、每段标题 + 一句理解，输出会**正好卡在中间被截断**。
+        // 12 段 × 约 100 token = 1200，给 2400 留一倍余量。
+        let reply: (text: String, finishReason: String?)
         do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw SummarizeFailure.transport(error.localizedDescription)
-        }
-
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let text = String(data: data.prefix(200), encoding: .utf8) ?? ""
-            throw SummarizeFailure.http(http.statusCode, text)
-        }
-
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = root["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String,
-              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            throw SummarizeFailure.emptyReply
+            reply = try await jobs.runChatResult(messages: messages, config: config, maxTokens: 2400)
+        } catch let failure as AIJobFailure {
+            throw SummarizeFailure.from(failure)
         }
 
         // 先看有没有被截断，再解析。反过来的话，截断会伪装成「模型没按 JSON 回答」，
         // 而这两件事的处理方式完全相反：一个要调大上限，一个要改提示词。
-        if let reason = choices.first?["finish_reason"] as? String, reason == "length" {
+        if reply.finishReason == "length" {
             throw SummarizeFailure.truncated
         }
 
-        let (segments, stats) = try Self.parseDetailed(content, transcript: lines)
+        let (segments, stats) = try Self.parseDetailed(reply.text, transcript: lines)
         var outcome = stats
         outcome.blocks = blocks.count
         outcome.chars = blocks.reduce(0) { $0 + $1.text.count }

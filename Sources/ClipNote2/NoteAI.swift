@@ -310,6 +310,8 @@ enum NoteAIFailure: Error, Equatable {
     case notConfigured
     case transport(String)
     case http(Int, String)
+    /// 服务端已经把原因说清楚了（401、模型没回内容、任务过期…），原样展示。
+    case service(String)
     case emptyReply
 
     var displayMessage: String {
@@ -321,8 +323,29 @@ enum NoteAIFailure: Error, Equatable {
         case .http(let status, let snippet):
             let tail = snippet.isEmpty ? "" : "：\(snippet)"
             return "模型服务返回 \(status)\(tail)"
+        case .service(let message):
+            return message
         case .emptyReply:
             return "模型返回了空内容，换个说法再试一次"
+        }
+    }
+}
+
+extension NoteAIFailure {
+    /// 任务层的失败翻成界面能直接显示的话。
+    static func from(_ failure: AIJobFailure) -> NoteAIFailure {
+        switch failure {
+        case .notConfigured:
+            return .notConfigured
+        case .failed(let message):
+            return .service(message)
+        case .gone:
+            return .service("这个任务已经过期了（服务端重启或超过一小时），重新发起一次。")
+        case .timeout:
+            return .service("等太久了，任务可能还卡在服务端。过一会儿再试。")
+        case .transport(let message):
+            // 这句已经说明了「任务交上去了、回来会接着等」，不要再套一层
+            return .service(message)
         }
     }
 }
@@ -331,8 +354,8 @@ enum NoteAIFailure: Error, Equatable {
 
 struct NoteAssistant {
     var config: AIConfig
-    var session: URLSession = .shared
-    var timeout: TimeInterval = 60
+    /// 走服务端任务，不再直连模型：直连时一切到后台就断，用户只能干等。
+    var jobs: AIJobClient = AIJobClient()
 
     /// 模型原样返回时追加的一句。弱模型第一轮经常「照抄原文」，
     /// 明确指出它没做事，通常第二次就动起来了。
@@ -352,55 +375,26 @@ struct NoteAssistant {
         content: String,
         nudge: String?
     ) async throws -> NoteAIResult {
-        guard config.isConfigured, let endpoint = config.endpoint else {
-            throw NoteAIFailure.notConfigured
-        }
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = timeout
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
+        guard config.isConfigured else { throw NoteAIFailure.notConfigured }
 
         var instruction = NotePrompt.instruction(for: action)
         if let nudge { instruction += "\n\n" + nudge }
 
-        let payload: [String: Any] = [
-            "model": config.model,
-            // 排版与摘要类任务要稳定，不要发挥
-            "temperature": 0.2,
-            "messages": [
-                ["role": "system", "content": NotePrompt.system],
-                // 用 <note> 包住原文，而不是拿 `---` 分隔：
-                // `---` 在 Markdown 里是分隔线，模型容易把后半段当成「要格式化的素材」。
-                ["role": "user", "content": instruction
-                    + "\n\n<note>\n" + content + "\n</note>"],
-            ],
+        let messages: [[String: String]] = [
+            ["role": "system", "content": NotePrompt.system],
+            // 用 <note> 包住原文，而不是拿 `---` 分隔：
+            // `---` 在 Markdown 里是分隔线，模型容易把后半段当成「要格式化的素材」。
+            ["role": "user", "content": instruction
+                + "\n\n<note>\n" + content + "\n</note>"],
         ]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-            throw NoteAIFailure.transport("请求体拼不出来")
-        }
-        request.httpBody = body
 
-        let data: Data
-        let response: URLResponse
+        let text: String
         do {
-            (data, response) = try await session.data(for: request)
+            text = try await jobs.runChat(messages: messages, config: config)
+        } catch let failure as AIJobFailure {
+            throw NoteAIFailure.from(failure)
         } catch {
             throw NoteAIFailure.transport(error.localizedDescription)
-        }
-
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let snippet = String(data: data.prefix(160), encoding: .utf8) ?? ""
-            throw NoteAIFailure.http(http.statusCode, snippet)
-        }
-
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = root["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let text = message["content"] as? String
-        else {
-            throw NoteAIFailure.emptyReply
         }
 
         let cleaned = NoteAIResult.cleanReply(text)

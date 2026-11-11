@@ -41,12 +41,10 @@ struct NoteScreen: View {
     @State private var aiRunning = false
     @State private var aiPreview: NoteAIPreview?
     @State private var aiError: String?
-    @State private var aiDraft = ""
-    @State private var showCustomPrompt = false
-    /// 「补充细节」的两种模式：只用原文 / 允许查资料。
-    /// 用对话框而不是两个按钮：多一个按钮就多一个常驻入口，
-    /// 而「要不要查资料」是每次都可能变的判断，不适合钉死成一个开关。
-    @State private var showExpandMode = false
+    /// 「先选择，再干活」：点动作只打开确认面板，不会直接发请求。
+    @State private var preflight: NoteAIPreflight?
+    @State private var preflightExternal = false
+    @State private var preflightInstruction = ""
     /// 键盘弹起时不显示动作条：它和底部格式栏叠在一起会吃掉近 90pt 编辑区，
     /// 而打字时也用不到 AI。有预览时例外——那是用户正要处理的结果。
     @State private var keyboardUp = false
@@ -130,23 +128,21 @@ struct NoteScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             keyboardUp = false
         }
-        .alert("按指令改写", isPresented: $showCustomPrompt) {
-            TextField("例如：改写成书面语，保留原意", text: $aiDraft)
-            Button("取消", role: .cancel) { aiDraft = "" }
-            Button("执行") {
-                let instruction = aiDraft
-                aiDraft = ""
-                Task { await prepare(.custom(instruction)) }
+        .sheet(item: $preflight) { plan in
+            NoteAIPreflightSheet(
+                preflight: plan,
+                external: $preflightExternal,
+                instruction: $preflightInstruction
+            ) {
+                let external = preflightExternal
+                let instruction = preflightInstruction
+                preflight = nil
+                Task {
+                    await run(plan.action, selection: plan.text,
+                              range: plan.range, external: external,
+                              instruction: instruction)
+                }
             }
-        } message: {
-            Text("模型只会按这条指令改，不会顺手改别的。")
-        }
-        .confirmationDialog("补充细节", isPresented: $showExpandMode, titleVisibility: .visible) {
-            Button("只用原文的信息") { Task { await prepare(.expand(external: false)) } }
-            Button("允许查外部资料（会标注）") { Task { await prepare(.expand(external: true)) } }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("没有选中文字时会处理全文。两种模式都不会改动你写的句子；查资料的补充会标「（外部）」。")
         }
     }
 
@@ -172,19 +168,22 @@ struct NoteScreen: View {
                     onDiscard: { self.aiPreview = nil }
                 )
             }
+            if aiRunning {
+                // 切走不影响：任务在服务端。这句话要让用户看见，
+                // 否则他仍然会盯着进度条不敢动。
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.65)
+                    Text("已交给服务端，可以切走 · 回来看结果")
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnInk2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, Metric.pagePad)
+                .padding(.bottom, 6)
+            }
             if !keyboardUp || aiPreview != nil {
                 NoteAIBar(configured: aiConfig.isConfigured, running: aiRunning) { action in
-                    switch action {
-                    case .custom:
-                        // 自由指令要先问要改什么，不能拿空指令直接发出去
-                        aiDraft = ""
-                        showCustomPrompt = true
-                    case .expand:
-                        // 两种模式由用户当场选，不替他决定要不要查资料
-                        showExpandMode = true
-                    default:
-                        Task { await prepare(action) }
-                    }
+                    Task { await prepare(action) }
                 }
             }
         }
@@ -204,7 +203,22 @@ struct NoteScreen: View {
             "kind": scope.kind,
             "chars": String(scope.text.count),
         ])
-        await run(action, selection: scope.text, range: scope.range)
+        // 先把选择摊开：范围、补充细节的来源、自由指令，一次点清楚再开工。
+        // 不这么做的话，用户要等结果出来才知道它处理的是全文还是选区。
+        preflightExternal = false
+        preflightInstruction = ""
+        preflight = NoteAIPreflight(
+            action: action,
+            text: fullTextForScope(scope.text),
+            range: scope.range,
+            kind: scope.kind
+        )
+    }
+
+    /// 面板要显示「全文 · N 字」，而 `__scope()` 在整篇时只回空串。
+    /// 这里补一次真实字数，让用户能判断这次动的东西有多大。
+    private func fullTextForScope(_ selected: String) -> String {
+        selected.isEmpty ? text : selected
     }
 
     /// 解析 `__scope()` 的返回。
@@ -222,7 +236,23 @@ struct NoteScreen: View {
         return (text, NoteAIRange(from: from, to: to, text: text), kind)
     }
 
-    private func run(_ action: NoteAIAction, selection: String, range: NoteAIRange?) async {
+    private func run(
+        _ action: NoteAIAction,
+        selection: String,
+        range: NoteAIRange?,
+        external: Bool = false,
+        instruction: String = ""
+    ) async {
+        // 面板里选的「来源」和「指令」在这里才落到动作上。
+        var action = action
+        switch action {
+        case .expand:
+            action = .expand(external: external)
+        case .custom:
+            action = .custom(instruction.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            break
+        }
         // 全文优先问编辑器要最新内容：`text` 是走 350ms 防抖回传的，
         // 用户刚打完字就去点 AI 时它可能还差一个字。
         var content = selection

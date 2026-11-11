@@ -11,14 +11,39 @@ final class NoteAITests: XCTestCase {
     private let config = AIConfig(base: "https://example.test/v1", model: "test-model", key: "sk-test")
 
     override func tearDown() {
-        StubURLProtocol.handler = nil
+        StubJobTransport.handler = nil
+        StubJobTransport.lastBody = nil
         super.tearDown()
     }
 
+    /// 任务化之后，模型调用不再经过 URLProtocol，而是「提交任务 → 拿结果」。
+    /// 这里把提交直接映射成一个已经完成的任务，省掉轮询——被测的是提示词与解析，
+    /// 轮询逻辑由 AIJobClient 自己负责。
     private func makeAssistant() -> NoteAssistant {
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.protocolClasses = [StubURLProtocol.self]
-        return NoteAssistant(config: config, session: URLSession(configuration: sessionConfig))
+        var jobs = AIJobClient()
+        jobs.pollInterval = 0.001
+        jobs.transport = AIJobTransport(
+            create: { body in
+                StubJobTransport.lastBody = body
+                guard let handler = StubJobTransport.handler else {
+                    throw AIJobFailure.failed("测试没有设置桩")
+                }
+                switch handler(body) {
+                case .success(let snapshot): return snapshot
+                case .failure(let error): throw error
+                }
+            },
+            status: { _ in
+                AIJobFailure.timeout
+            }
+        )
+        return NoteAssistant(config: config, jobs: jobs)
+    }
+
+    /// 一个「已完成」的任务结果。
+    private func done(_ text: String, finishReason: String? = "stop") -> Result<AIJobSnapshot, Error> {
+        .success(AIJobSnapshot(id: "job-1", kind: "chat", status: "done",
+                               text: text, finishReason: finishReason))
     }
 
     private func bodyData(_ request: URLRequest) -> Data? {
@@ -131,8 +156,8 @@ final class NoteAITests: XCTestCase {
     }
 
     func testBasisIsStrippedFromAppliedMarkdown() async throws {
-        StubURLProtocol.handler = { [weak self] _ in
-            (200, [:], self?.reply("前半句补全了后半句\n\n\(NotePrompt.basisMarker)\n依据说明") ?? Data())
+        StubJobTransport.handler = { _ in
+            self.done("前半句补全了后半句\n\n\(NotePrompt.basisMarker)\n依据说明")
         }
         let result = try await makeAssistant().run(action: .complete, content: "前半句")
         XCTAssertEqual(result.markdown, "前半句补全了后半句", "依据不能混进正文")
@@ -202,11 +227,11 @@ final class NoteAITests: XCTestCase {
 
     func testRetriesOnceWhenModelEchoes() async throws {
         var calls = 0
-        StubURLProtocol.handler = { [weak self] _ in
+        StubJobTransport.handler = { _ in
             calls += 1
             // 第一次原样返回，第二次才真正改写——弱模型的典型表现
             let body = calls == 1 ? "原文" : "改写的原文"
-            return (200, [:], self?.reply(body) ?? Data())
+            return self.done(body)
         }
         let result = try await makeAssistant().run(action: .tidy, content: "原文")
         XCTAssertEqual(calls, 2, "模型照抄时应该自动重试一次")
@@ -215,9 +240,9 @@ final class NoteAITests: XCTestCase {
 
     func testGivesUpAfterOneRetry() async throws {
         var calls = 0
-        StubURLProtocol.handler = { [weak self] _ in
+        StubJobTransport.handler = { _ in
             calls += 1
-            return (200, [:], self?.reply("原文") ?? Data())
+            return self.done("原文")
         }
         let result = try await makeAssistant().run(action: .tidy, content: "原文")
         XCTAssertEqual(calls, 2, "只重试一次，不要变成死循环")
@@ -230,49 +255,42 @@ final class NoteAITests: XCTestCase {
     }
 
     func testRequestShape() async throws {
-        var path: String?
-        var auth: String?
-        var body: [String: Any]?
-
-        StubURLProtocol.handler = { [weak self] request in
-            path = request.url?.path
-            auth = request.value(forHTTPHeaderField: "Authorization")
-            if let data = self?.bodyData(request) {
-                body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            }
-            return (200, ["Content-Type": "application/json"], self?.reply("整理后的内容") ?? Data())
-        }
+        StubJobTransport.handler = { _ in self.done("整理后的内容") }
 
         let result = try await makeAssistant().run(action: .tidy, content: "原始内容")
-        XCTAssertEqual(path, "/v1/chat/completions")
-        XCTAssertEqual(auth, "Bearer sk-test")
+        let body = StubJobTransport.lastBody
+
+        XCTAssertEqual(body?["kind"] as? String, "chat")
+        XCTAssertEqual(body?["base"] as? String, "https://example.test/v1")
         XCTAssertEqual(body?["model"] as? String, "test-model")
-        let messages = body?["messages"] as? [[String: Any]]
+        XCTAssertEqual(body?["key"] as? String, "sk-test", "Key 随任务提交，但服务端不落盘")
+
+        let messages = body?["messages"] as? [[String: String]]
         XCTAssertEqual(messages?.count, 2)
-        XCTAssertEqual(messages?.first?["role"] as? String, "system")
-        let userMessage = messages?.last?["content"] as? String ?? ""
+        XCTAssertEqual(messages?.first?["role"], "system")
+        let userMessage = messages?.last?["content"] ?? ""
         XCTAssertTrue(userMessage.contains("<note>"), "原文要用标签包住，避免模型把分隔线当素材边界")
         XCTAssertTrue(userMessage.contains("原始内容"))
         XCTAssertEqual(result.markdown, "整理后的内容")
     }
 
     func testTextChangedFlagWhenModelAddsWords() async throws {
-        StubURLProtocol.handler = { [weak self] _ in
-            (200, [:], self?.reply("# 标题\n\n甲乙丙，另外还有一句原文没有的话") ?? Data())
+        StubJobTransport.handler = { _ in
+            self.done("# 标题\n\n甲乙丙，另外还有一句原文没有的话")
         }
         let result = try await makeAssistant().run(action: .tidy, content: "# 标题\n\n甲乙丙")
         XCTAssertTrue(result.textChanged)
     }
 
     func testEmptyReplyThrows() async throws {
-        StubURLProtocol.handler = { [weak self] _ in
-            (200, [:], self?.reply("   ") ?? Data())
-        }
+        StubJobTransport.handler = { _ in self.done("   ") }
         do {
             _ = try await makeAssistant().run(action: .outline, content: "内容")
             XCTFail("空回复应该抛错，否则用户会看到一张空预览卡")
         } catch let failure as NoteAIFailure {
-            XCTAssertEqual(failure, .emptyReply)
+            // 空回复现在由任务层先拦下来（服务端会说「模型没给内容」），
+            // 界面上要显示的就是那句话，而不是再包一层「空回复」。
+            XCTAssertTrue(failure.displayMessage.contains("没给内容"), failure.displayMessage)
         }
     }
 
@@ -290,13 +308,15 @@ final class NoteAITests: XCTestCase {
     }
 
     func testHTTPErrorCarriesMessage() async {
-        StubURLProtocol.handler = { _ in (401, [:], Data("bad key".utf8)) }
+        StubJobTransport.handler = { _ in
+            .failure(ClipNoteClient.Failure.http(status: 401, code: nil, message: "bad key"))
+        }
         do {
             _ = try await makeAssistant().run(action: .tidy, content: "内容")
             XCTFail("401 应该抛错")
         } catch let failure as NoteAIFailure {
-            if case .http(let status, _) = failure {
-                XCTAssertEqual(status, 401)
+            if case .service(let message) = failure {
+                XCTAssertTrue(message.contains("bad key"), message)
             } else {
                 XCTFail("不是 http 错误：\(failure)")
             }
@@ -384,4 +404,13 @@ final class NoteAITests: XCTestCase {
         XCTAssertEqual(NoteTemplate.title(in: NoteTemplate.body(title: "预算评审")), "预算评审")
         XCTAssertNil(NoteTemplate.title(in: "没有大标题的一段"))
     }
+}
+
+/// 任务接口的桩。
+///
+/// 原来的 `StubURLProtocol` 拦不到这一层了：模型调用已经挪到服务端，
+/// 客户端只「提交任务、取结果」。所以桩也跟着上移一层。
+final class StubJobTransport {
+    static var handler: (([String: Any]) -> Result<AIJobSnapshot, Error>)?
+    static var lastBody: [String: Any]?
 }

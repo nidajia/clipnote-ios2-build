@@ -636,6 +636,17 @@ struct ClipNoteClient {
                        body: ["note": note], as: APILibraryItem.self)
     }
 
+    /// 提交一个后台任务。服务端立刻返回任务号，真正的模型调用在服务端跑——
+    /// 这样用户切出 App 也不影响（见 AIJobClient 里的说明）。
+    func createAIJob(_ body: [String: Any]) async throws -> AIJobSnapshot {
+        try await post("/api/v2/ai/jobs", body: body, as: AIJobSnapshot.self)
+    }
+
+    /// 查任务状态。`404 + JOB_GONE` 表示过期或服务端重启过，调用方该提示重试。
+    func aiJob(id: String) async throws -> AIJobSnapshot {
+        try await get("/api/v2/ai/jobs/\(encode(id))", as: AIJobSnapshot.self)
+    }
+
     /// 新建一条笔记。服务端只开放 note 这一种 kind。
     func createNote(title: String, note: String) async throws -> APILibraryItem {
         try await post("/api/v2/items", body: ["title": title, "note": note],

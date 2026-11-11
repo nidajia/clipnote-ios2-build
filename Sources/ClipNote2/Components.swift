@@ -80,6 +80,8 @@ struct ItemRow: View {
     /// 已分区时显示标记。`nil` 不画任何东西：未分区不该占一个「无」字的位置，
     /// 找未分区的条目请用筛选条上那一条。
     var section: LibrarySection? = nil
+    /// 进度状态。和分区正交：「学习」里也可以有已完成的。
+    var status: ItemStatus? = nil
     /// 覆盖 `metaLine`。笔记要在这里带上「修改 11-10 23:40」，
     /// 而时间不该塞进 `Item`——它是展示细节，不是数据。
     var subtitle: String? = nil
@@ -114,6 +116,10 @@ struct ItemRow: View {
 
                     // 分区放最后：它是「我把它放哪了」，不是内容属性，
                     // 排在作者、时长后面读起来才顺。
+                    if let status {
+                        StatusBadge(status: status)
+                    }
+
                     if let section {
                         SectionBadge(section: section)
                     }

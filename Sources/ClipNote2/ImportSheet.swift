@@ -65,7 +65,7 @@ struct ImportSheet: View {
                 .foregroundStyle(Color.cnInk)
                 .padding(.bottom, Metric.space1)
 
-            TextField("粘贴视频链接，例如 B 站分享链接", text: $link)
+            TextField("粘贴分享链接或分享文案", text: $link)
                 .textFieldStyle(.plain)
                 .font(.cnChip)
                 .foregroundStyle(Color.cnInk)
@@ -77,6 +77,13 @@ struct ImportSheet: View {
                     Color.cnCard2,
                     in: RoundedRectangle(cornerRadius: Metric.radiusButton, style: .continuous)
                 )
+
+            // 支持哪些平台要写出来。之前占位文案只写「例如 B 站」，
+            // 而服务端其实一直支持抖音/小红书/快手/微博，用户没理由知道。
+            Text("支持 B 站 · 抖音 · 小红书 · 快手 · 微博 · AcFun。分享文案整段粘进来也行。")
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnInk3)
+                .fixedSize(horizontal: false, vertical: true)
 
             PrimaryButton(
                 title: buttonTitle,

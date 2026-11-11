@@ -38,6 +38,7 @@ struct HomeScreen: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var downloads: DownloadStore
     @EnvironmentObject private var sections: SectionStore
+    @EnvironmentObject private var statuses: StatusStore
     @Environment(\.colorScheme) private var scheme
 
     @State private var query = ""
@@ -106,7 +107,8 @@ struct HomeScreen: View {
         // 分区不在 Item 里（它是本地归属），所以由这里递进去。
         return list.filter {
             LibrarySearch.matches($0, query: q,
-                                   extra: [sections.section(for: $0.id)?.name ?? ""])
+                                   extra: [sections.section(for: $0.id)?.name ?? "",
+                                           statuses.status(for: $0.id)?.title ?? ""])
                 || !TranscriptIndex.hits(in: transcripts[$0.id] ?? [], query: q, limit: 3).isEmpty
         }
     }
@@ -324,6 +326,7 @@ struct HomeScreen: View {
                             ItemRow(model: item,
                                     isDownloaded: downloads.isDownloaded(item.id),
                                     section: sections.section(for: item.id),
+                                    status: statuses.status(for: item.id),
                                     subtitle: subtitle(for: item))
                         }
 
@@ -389,6 +392,23 @@ struct HomeScreen: View {
                         }
                     } label: {
                         Label("移到分区", systemImage: "square.grid.2x2")
+                    }
+
+                    Menu {
+                        Button {
+                            setStatus(nil, on: [item.id])
+                        } label: {
+                            Label("清除标记", systemImage: "xmark.circle")
+                        }
+                        ForEach(ItemStatus.allCases) { status in
+                            Button {
+                                setStatus(status, on: [item.id])
+                            } label: {
+                                Label(status.title, systemImage: status.symbol)
+                            }
+                        }
+                    } label: {
+                        Label("状态", systemImage: "circle.dashed")
                     }
                 }
                 .listRowInsets(EdgeInsets(
@@ -542,6 +562,13 @@ struct HomeScreen: View {
             ? "MM-dd HH:mm"
             : "yyyy-MM-dd HH:mm"
         return formatter.string(from: date)
+    }
+
+    /// 改状态并给一句反馈。批量入口留着：多选底栏要接的时候直接复用。
+    private func setStatus(_ status: ItemStatus?, on ids: [String]) {
+        let changed = statuses.set(status, for: ids)
+        guard changed > 0 else { return }
+        showToast(status.map { "已标为「\($0.title)」" } ?? "已清除状态")
     }
 
     // MARK: - 分区

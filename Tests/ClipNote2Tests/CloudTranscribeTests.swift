@@ -166,31 +166,38 @@ final class CloudTranscribeTests: XCTestCase {
                                                             offset: 0, window: 10))
     }
 
-    // MARK: - multipart
+    // MARK: - 任务提交
 
-    func testMultipartBodyShape() {
-        let audio = Data([0x00, 0x01, 0x02])
-        let body = MultipartBody.make(
-            boundary: "BOUND",
-            fields: ["model": "m", "language": "zh"],
-            fileField: "file",
-            fileName: "audio.m4a",
-            mimeType: "audio/m4a",
-            fileData: audio
+    func testASRJobCarriesAudioAndModel() async throws {
+        var captured: [String: Any]?
+        var client = AIJobClient()
+        client.pollInterval = 0.001
+        client.transport = AIJobTransport(
+            create: { body in
+                captured = body
+                return AIJobSnapshot(id: "j1", kind: "asr", status: "done",
+                                     text: "一段话", segments: [])
+            },
+            status: { _ in AIJobFailure.timeout }
         )
-        let text = String(decoding: body, as: UTF8.self)
 
-        XCTAssertTrue(text.contains("--BOUND\r\n"))
-        XCTAssertTrue(text.contains(#"name="model""#))
-        XCTAssertTrue(text.contains("m\r\n"))
-        XCTAssertTrue(text.contains(#"filename="audio.m4a""#))
-        XCTAssertTrue(text.contains("Content-Type: audio/m4a"))
-        XCTAssertTrue(text.hasSuffix("--BOUND--\r\n"), "结尾必须闭合，否则服务端会一直等")
-        // 二进制原样带上，不能被当字符串转码
-        XCTAssertNotNil(body.range(of: audio))
+        let config = CloudASRConfig(base: "https://example.test/v1",
+                                    key: "sk-test",
+                                    model: "FunAudioLLM/SenseVoiceSmall",
+                                    language: "zh")
+        let reply = try await client.runASR(audio: Data([0x01, 0x02]),
+                                            mime: "audio/mp4",
+                                            filename: "chunk-0.m4a",
+                                            config: config)
+
+        XCTAssertEqual(reply.text, "一段话")
+        XCTAssertEqual(captured?["kind"] as? String, "asr")
+        XCTAssertEqual(captured?["model"] as? String, "FunAudioLLM/SenseVoiceSmall")
+        XCTAssertEqual(captured?["mime"] as? String, "audio/mp4")
+        XCTAssertEqual(captured?["audio"] as? String, "AQI=", "音频按 base64 交给服务端")
     }
 
-    // MARK: - 错误文案
+    // MARK: - 错误文案    // MARK: - 错误文案
 
     func testErrorsSayWhatToDo() {
         XCTAssertTrue(CloudASRError.notConfigured.errorDescription?.contains("AI 设置") == true)

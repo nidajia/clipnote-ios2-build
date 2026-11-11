@@ -47,62 +47,35 @@ struct OutlineNode: Decodable, Hashable {
 /// 只是多花钱，不会多出信息。用「摘要 + 分段标题和一句理解 + 标签」足够。
 struct Outliner {
     var config: AIConfig
-    var session: URLSession = .shared
+    /// 走服务端任务：脑图比摘要更慢，切到后台断了最难受。
+    var jobs: AIJobClient = AIJobClient()
 
     func outline(title: String, summary: String,
                  segments: [APISegment], labels: [String]) async throws -> [OutlineNode] {
-        guard config.isConfigured, let endpoint = config.endpoint else {
+        guard config.isConfigured else {
             throw SummarizeFailure.notConfigured
         }
         guard !summary.isEmpty || !segments.isEmpty else {
             throw SummarizeFailure.emptyReply
         }
 
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 90
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
-
-        let payload: [String: Any] = [
-            "model": config.model,
-            "temperature": 0.3,
-            // 顶层 3–5 个分支 + 每个 2–4 个叶子。中文 + note 实测能到 1200 token 以上，
-            // 1600 时偶发截断（真机日志里同一条目时好时坏），抬到 2200 留足余量。
-            "max_tokens": 2200,
-            "messages": [
-                ["role": "system", "content": Self.instructions],
-                ["role": "user", "content": Self.userContent(
-                    title: title, summary: summary, segments: segments, labels: labels
-                )],
-            ],
+        let messages: [[String: String]] = [
+            ["role": "system", "content": Self.instructions],
+            ["role": "user", "content": Self.userContent(
+                title: title, summary: summary, segments: segments, labels: labels
+            )],
         ]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-            throw SummarizeFailure.unparsable("请求体拼不出来")
-        }
-        request.httpBody = body
-
-        let data: Data
-        let response: URLResponse
+        // 顶层 3–5 个分支 + 每个 2–4 个叶子。中文 + note 实测能到 1200 token 以上，
+        // 1600 时偶发截断（真机日志里同一条目时好时坏），抬到 2200 留足余量。
+        let reply: (text: String, finishReason: String?)
         do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw SummarizeFailure.transport(error.localizedDescription)
+            reply = try await jobs.runChatResult(messages: messages, config: config, maxTokens: 2200)
+        } catch let failure as AIJobFailure {
+            throw SummarizeFailure.from(failure)
         }
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw SummarizeFailure.http(http.statusCode,
-                                        String(data: data.prefix(200), encoding: .utf8) ?? "")
-        }
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = root["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String,
-              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { throw SummarizeFailure.emptyReply }
-        if let reason = choices.first?["finish_reason"] as? String, reason == "length" {
-            throw SummarizeFailure.truncated
-        }
-        return try Self.parse(content)
+        if reply.finishReason == "length" { throw SummarizeFailure.truncated }
+
+        return try Self.parse(reply.text)
     }
 
     private static let instructions = """

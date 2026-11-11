@@ -20,6 +20,7 @@ struct SnapshotRoot: View {
     @StateObject private var library: LibraryStore
     @StateObject private var logs: LogStore
     @StateObject private var sections: SectionStore
+    @StateObject private var statuses: StatusStore
 
     init(state: String, appearance: ColorScheme?) {
         self.state = state
@@ -200,6 +201,16 @@ struct SnapshotRoot: View {
             sectionStore.seed(assignment: plan)
         }
         _sections = StateObject(wrappedValue: sectionStore)
+        // 截图里的状态标记：给前两条，别全标——全标看不出「没标过不画点」
+        let statusStore = StatusStore(directory: sandbox, log: logStore)
+        if state == "list" || state == "home-section" || state == "home-notes" {
+            let ids = lib.items.map(\.id)
+            if ids.count > 2 {
+                statusStore.set(.doing, for: [ids[0]])
+                statusStore.set(.done, for: [ids[1]])
+            }
+        }
+        _statuses = StateObject(wrappedValue: statusStore)
     }
 
     var body: some View {
@@ -312,6 +323,7 @@ struct SnapshotRoot: View {
         .environmentObject(library)
         .environmentObject(logs)
         .environmentObject(sections)
+        .environmentObject(statuses)
     }
 
     private var tabs: some View {
