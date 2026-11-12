@@ -36,6 +36,16 @@ struct APIMusic: Decodable, Equatable, Hashable {
     var url: String = ""
 }
 
+/// 视频里提到的具体东西：开源项目 / 工具 / 网站 / 产品。
+///
+/// 和 `labels` 的区别：labels 是分类（这条讲什么），projects 是视频里
+/// 真的点了名的实体。`url` 可能为空——模型不确定就不填，不猜网址。
+struct APIProject: Decodable, Equatable, Hashable {
+    var name: String = ""
+    var url: String = ""
+    var note: String = ""
+}
+
 /// 一段总结。`t` 是这段开始的时间（秒），用来和播放器对齐。
 /// 对某一句话的批注。
 ///
@@ -205,6 +215,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var images: [String] = []
     /// 背景音乐。抖音视频才有；图文/笔记没有。
     var music: APIMusic?
+    /// 视频里提到的项目 / 工具 / 网站。可能为空（没提到，或还没跑抽取）。
+    var projects: [APIProject] = []
     /// AI 脑图。树形，服务端限 3 层 / 40 节点。
     var outline: [OutlineNode] = []
     var outlineAt: Int = 0
@@ -225,6 +237,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case createdAt, updatedAt
         case annotations, annotationsAt
         case images, music
+        case projects
     }
 
     init(
@@ -295,6 +308,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         updatedAt = try c.decodeIfPresent(Int.self, forKey: .updatedAt) ?? 0
         images = try c.decodeIfPresent([String].self, forKey: .images) ?? []
         music = try c.decodeIfPresent(APIMusic.self, forKey: .music)
+        projects = try c.decodeIfPresent([APIProject].self, forKey: .projects) ?? []
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来

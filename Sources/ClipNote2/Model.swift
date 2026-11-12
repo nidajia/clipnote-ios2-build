@@ -78,6 +78,8 @@ struct Item: Identifiable, Hashable {
     var images: [URL] = []
     /// 背景音乐（抖音）。可能只有地址、没有歌名。
     var music: APIMusic?
+    /// 视频里提到的项目 / 工具 / 网站。空数组 = 没提到或还没抽取。
+    var projects: [APIProject] = []
     var publishedAt: Date?
 
     /// 封面加载完成前的占位渐变。由 id 稳定派生，同一条永远同色，
@@ -124,6 +126,7 @@ struct Item: Identifiable, Hashable {
             raw.isEmpty ? nil : URL(string: raw)
         }
         self.music = api.music
+        self.projects = api.projects
         self.publishedAt = api.publishedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
             : nil
@@ -167,6 +170,7 @@ struct Item: Identifiable, Hashable {
         playbackAvailable: Bool = true,
         images: [URL] = [],
         music: APIMusic? = nil,
+        projects: [APIProject] = [],
         publishedAt: Date? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
@@ -198,6 +202,7 @@ struct Item: Identifiable, Hashable {
         self.playbackAvailable = playbackAvailable
         self.images = images
         self.music = music
+        self.projects = projects
         self.publishedAt = publishedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt

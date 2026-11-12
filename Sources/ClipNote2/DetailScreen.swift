@@ -180,6 +180,8 @@ struct DetailScreen: View {
 
                     outlineRow
 
+                    projectsRow
+
                     exportRow
 
                     if showsSummary {
@@ -1818,6 +1820,56 @@ struct DetailScreen: View {
     }
 
     // MARK: - 笔记
+
+    /// 视频里提到的项目 / 工具 / 网站。
+    ///
+    /// 有 `url` 的直接可点；没有的只显示名字——模型不确定时不会编链接，
+    /// 所以「名字没有链接」是正常状态，不该看起来像坏了。
+    @ViewBuilder
+    private var projectsRow: some View {
+        if !current.projects.isEmpty {
+            VStack(alignment: .leading, spacing: Metric.space2) {
+                Text("视频里提到的")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+
+                ForEach(Array(current.projects.enumerated()), id: \.offset) { _, one in
+                    if let link = URL(string: one.url), !one.url.isEmpty {
+                        Link(destination: link) {
+                            projectLabel(one, tappable: true)
+                        }
+                    } else {
+                        projectLabel(one, tappable: false)
+                    }
+                }
+            }
+        }
+    }
+
+    private func projectLabel(_ one: APIProject, tappable: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: tappable ? "link" : "smallcircle.filled.circle")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tappable ? Color.cnBrand : Color.cnInk3)
+                .frame(width: 14, height: 18, alignment: .center)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(one.name)
+                    .font(.cnChip)
+                    .foregroundStyle(tappable ? Color.cnBrand : Color.cnInk)
+                    .lineLimit(1)
+                if !one.note.isEmpty {
+                    Text(one.note)
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+    }
 
     /// 脑图入口。放在摘要卡下面：它是「对摘要的结构化」，
     /// 和摘要属于同一层东西，不该跑到底部去。
