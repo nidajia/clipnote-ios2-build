@@ -15,6 +15,8 @@ struct AISettingsScreen: View {
     @AppStorage("clipnote.autoSummary") private var autoSummary = false
     /// 云端 AI 配置的状态：快捷导入（背面敲击）要服务端有一份 Key。
     @State private var cloudStatus: CloudStatus = .unknown
+    /// 转写模型：对话模型不能转写，自动分段要单独一个。
+    @State private var asrModel: String = ""
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var logs: LogStore
 
@@ -37,6 +39,9 @@ struct AISettingsScreen: View {
         let loaded = AIConfigStore.load()
         _config = State(initialValue: loaded)
         _preset = State(initialValue: AIProviderPreset.match(base: loaded.base))
+        // 按服务商给一个能直接用的转写模型默认值——让用户自己猜「哪个模型能转写」
+        // 是不合理的：填成对话模型会在 /audio/transcriptions 上 404。
+        _asrModel = State(initialValue: TranscribeModel.presets(for: loaded.base).first ?? "")
     }
 
     var body: some View {
@@ -128,11 +133,21 @@ struct AISettingsScreen: View {
             }
 
             Section {
+                HStack(spacing: Metric.space2) {
+                    Text("转写模型")
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnInk3)
+                        .frame(width: 64, alignment: .leading)
+                    TextField("FunAudioLLM/SenseVoiceSmall", text: $asrModel)
+                        .font(.cnBody)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
                 cloudRow
             } header: {
                 Text("快捷导入")
             } footer: {
-                Text("iOS 快捷指令不唤起 App，读剪贴板直接调服务端。它拿不到本机钥匙串里的 Key，所以要在这里上传一份（服务端混淆落盘）。上传后可随时清除。")
+                Text("快捷指令不唤起 App，拿不到本机钥匙串，所以要在这里上传一份（服务端混淆落盘）。转写模型用于自动分段——对话模型不能转写，要填服务商的语音模型（硅基流动是 FunAudioLLM/SenseVoiceSmall）。留空则只做摘要和脑图。")
             }
 
             Section {
@@ -313,7 +328,8 @@ struct AISettingsScreen: View {
         cloudStatus = .uploading
         do {
             let ok = try await ClipNoteClient.production.saveAIConfigCloud(
-                base: config.base, key: config.key, model: config.model)
+                base: config.base, key: config.key, model: config.model,
+                asrModel: asrModel.trimmingCharacters(in: .whitespacesAndNewlines))
             cloudStatus = ok ? .stored : .failed("上传失败，请重试。")
         } catch {
             cloudStatus = .failed("上传失败：\(error.localizedDescription)")
@@ -335,6 +351,10 @@ struct AISettingsScreen: View {
         do {
             let res = try await ClipNoteClient.production.getAIConfigCloud()
             cloudStatus = res.stored ? .stored : .cleared
+            // 云端已有转写模型就回填，避免每次进来看到空输入以为没存。
+            if let remote = res.config, !remote.asrModel.isEmpty {
+                asrModel = remote.asrModel
+            }
         } catch {
             cloudStatus = .unknown
         }

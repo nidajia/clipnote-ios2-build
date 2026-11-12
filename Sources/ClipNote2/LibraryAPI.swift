@@ -637,6 +637,8 @@ struct ClipNoteClient {
     struct AIConfigCloud: Decodable, Equatable {
         var base: String = ""
         var model: String = ""
+        /// 转写模型。对话模型不能转写，分段流水线要单独一个。
+        var asrModel: String = ""
         var key: String = ""
     }
 
@@ -647,10 +649,12 @@ struct ClipNoteClient {
     }
 
     /// 把 AI Key 上传到服务端（落盘前混淆），供快捷导入不唤起 App 时跑摘要。
-    func saveAIConfigCloud(base: String, key: String, model: String) async throws -> Bool {
+    func saveAIConfigCloud(base: String, key: String, model: String,
+                           asrModel: String) async throws -> Bool {
         let res: AIConfigCloudResponse = try await post(
             "/api/v2/ai/config",
-            body: ["action": "save", "base": base, "key": key, "model": model],
+            body: ["action": "save", "base": base, "key": key,
+                   "model": model, "asrModel": asrModel],
             as: AIConfigCloudResponse.self
         )
         return res.stored
