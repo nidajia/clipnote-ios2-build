@@ -53,6 +53,7 @@ struct HomeScreen: View {
     @State private var focusTranscriptAt: Int?
     @State private var filter: HomeFilter = .all
     @State private var showImport = false
+    @State private var showAsk = false
     @State private var showBatchSections = false
     @State private var selected: Item?
     /// 正在看哪条笔记。笔记是**直接进编辑器**的，不经过视频详情页——
@@ -189,14 +190,29 @@ struct HomeScreen: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if !selecting {
-                        Button {
-                            showImport = true
-                        } label: {
-                            importLabel
+                        HStack(spacing: Metric.space3) {
+                            Button {
+                                showAsk = true
+                            } label: {
+                                Image(systemName: "sparkle.magnifyingglass")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Color.cnInk2)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("问库")
+
+                            Button {
+                                showImport = true
+                            } label: {
+                                importLabel
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
+            }
+            .sheet(isPresented: $showAsk) {
+                NavigationStack { AskScreen() }
             }
             // 多选时底部浮出操作条。不用 toolbar 的 bottomBar：
             // 那条会和 tabBar 抢位置，而 tabBar 在本页是可见的。

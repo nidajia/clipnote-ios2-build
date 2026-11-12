@@ -28,6 +28,20 @@ struct APISource: Decodable, Equatable {
     var platform: String?
 }
 
+/// 问库的引用：AI 答案里点了名的条目。
+struct APIAskCitation: Decodable, Equatable, Hashable, Identifiable {
+    var id: String = ""
+    var title: String = ""
+    var kind: String = ""
+}
+
+/// 问库的结果。
+struct APIAskResult: Decodable, Equatable {
+    var ok: Bool = false
+    var answer: String = ""
+    var citations: [APIAskCitation] = []
+}
+
 /// 背景音乐（BGM）。抖音作品才有。
 /// 歌名/歌手第三方不一定回，可能只有 `url`——客户端按「有什么显示什么」处理。
 struct APIMusic: Decodable, Equatable, Hashable {
@@ -608,6 +622,11 @@ struct ClipNoteClient {
                            body: [:], as: APIOkResponse.self)
     }
 
+    /// 问库：跨条目问答，返回答案 + 引用。
+    func ask(question: String) async throws -> APIAskResult {
+        try await post("/api/v2/ask", body: ["question": question], as: APIAskResult.self)
+    }
+
     /// 删除（软删）。条目进回收站，文件仍在本机。
     func deleteItem(id: String) async throws -> APILibraryItem {
         try await post("/api/v2/items/\(encode(id))/delete", body: [:], as: APILibraryItem.self)
@@ -1123,6 +1142,12 @@ final class LibraryStore: ObservableObject {
             ])
             throw failure
         }
+    }
+
+    /// 问库：跨条目问答。走同步请求——问答要即时，排队轮询反而更慢。
+    func ask(question: String) async throws -> APIAskResult {
+        guard let client else { throw ClipNoteClient.Failure.transport("截图模式没有网络层") }
+        return try await client.ask(question: question)
     }
 
     /// 让服务端重跑一条：重新下载、转写、分段、抽项目。
