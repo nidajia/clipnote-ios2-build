@@ -13,6 +13,8 @@ struct AISettingsScreen: View {
     /// 进详情页要不要自动总结。默认关：AI 花的是用户自己的额度，
     /// 只是路过看一眼不该先扣一次调用。
     @AppStorage("clipnote.autoSummary") private var autoSummary = false
+    /// 云端 AI 配置的状态：快捷导入（背面敲击）要服务端有一份 Key。
+    @State private var cloudStatus: CloudStatus = .unknown
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var logs: LogStore
 
@@ -20,6 +22,14 @@ struct AISettingsScreen: View {
         case idle
         case testing
         case ok
+        case failed(String)
+    }
+
+    enum CloudStatus: Equatable {
+        case unknown
+        case uploading
+        case stored
+        case cleared
         case failed(String)
     }
 
@@ -114,7 +124,15 @@ struct AISettingsScreen: View {
             } header: {
                 Text("密钥")
             } footer: {
-                Text("只存在本机的钥匙串里，不上传、不进仓库。换设备要重新填一次。")
+                Text("默认只存在本机钥匙串。要支持「快捷导入」（背面敲击后台总结），在下方单独上传一份到服务端。")
+            }
+
+            Section {
+                cloudRow
+            } header: {
+                Text("快捷导入")
+            } footer: {
+                Text("iOS 快捷指令不唤起 App，读剪贴板直接调服务端。它拿不到本机钥匙串里的 Key，所以要在这里上传一份（服务端混淆落盘）。上传后可随时清除。")
             }
 
             Section {
@@ -162,6 +180,7 @@ struct AISettingsScreen: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color.cnBg)
+        .task { await refreshCloud() }
         .navigationTitle("AI 摘要")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $showModels) {
@@ -172,6 +191,56 @@ struct AISettingsScreen: View {
                 key: config.key,
                 selected: $config.model
             )
+        }
+    }
+
+    @ViewBuilder
+    private var cloudRow: some View {
+        switch cloudStatus {
+        case .unknown, .cleared:
+            Button {
+                Task { await uploadCloud() }
+            } label: {
+                HStack(spacing: Metric.space2) {
+                    Image(systemName: "icloud.and.arrow.up")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("上传 Key 供快捷导入")
+                        .font(.cnBody)
+                }
+                .foregroundStyle(Color.cnBrand)
+            }
+            .disabled(!config.isConfigured)
+
+        case .uploading:
+            HStack(spacing: Metric.space2) {
+                RingSpinner(size: 14, color: .cnBrand)
+                Text("正在处理…")
+                    .font(.cnBody)
+                    .foregroundStyle(Color.cnInk3)
+            }
+
+        case .stored:
+            HStack(spacing: Metric.space2) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.cnGreen)
+                Text("已上传")
+                    .font(.cnBody)
+                    .foregroundStyle(Color.cnGreen)
+                Spacer()
+                Button("清除") {
+                    Task { await clearCloud() }
+                }
+                .font(.cnChip)
+                .foregroundStyle(Color.cnRed)
+                .buttonStyle(.plain)
+            }
+
+        case .failed(let message):
+            Text(message)
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnRed)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -237,6 +306,38 @@ struct AISettingsScreen: View {
         // 存完就回去：从「我」进来是返回上一页，从详情页的弹层进来是收起弹层，
         // 两种都对。留一条「已保存」在页面上反而要多按一次返回。
         dismiss()
+    }
+
+    private func uploadCloud() async {
+        guard config.isConfigured else { return }
+        cloudStatus = .uploading
+        do {
+            let ok = try await ClipNoteClient.production.saveAIConfigCloud(
+                base: config.base, key: config.key, model: config.model)
+            cloudStatus = ok ? .stored : .failed("上传失败，请重试。")
+        } catch {
+            cloudStatus = .failed("上传失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func clearCloud() async {
+        cloudStatus = .uploading
+        do {
+            let ok = try await ClipNoteClient.production.clearAIConfigCloud()
+            cloudStatus = ok ? .cleared : .failed("清除失败，请重试。")
+        } catch {
+            cloudStatus = .failed("清除失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func refreshCloud() async {
+        cloudStatus = .uploading
+        do {
+            let res = try await ClipNoteClient.production.getAIConfigCloud()
+            cloudStatus = res.stored ? .stored : .cleared
+        } catch {
+            cloudStatus = .unknown
+        }
     }
 
     private func test() async {

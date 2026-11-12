@@ -625,6 +625,42 @@ struct ClipNoteClient {
         )
     }
 
+    // MARK: AI Key 云存储（快捷导入用）
+
+    /// 服务端存的云端 AI 配置（Key 已解密返回）。
+    struct AIConfigCloud: Decodable, Equatable {
+        var base: String = ""
+        var model: String = ""
+        var key: String = ""
+    }
+
+    struct AIConfigCloudResponse: Decodable {
+        var ok: Bool = false
+        var stored: Bool = false
+        var config: AIConfigCloud?
+    }
+
+    /// 把 AI Key 上传到服务端（落盘前混淆），供快捷导入不唤起 App 时跑摘要。
+    func saveAIConfigCloud(base: String, key: String, model: String) async throws -> Bool {
+        let res: AIConfigCloudResponse = try await post(
+            "/api/v2/ai/config",
+            body: ["action": "save", "base": base, "key": key, "model": model],
+            as: AIConfigCloudResponse.self
+        )
+        return res.stored
+    }
+
+    func clearAIConfigCloud() async throws -> Bool {
+        let res: AIConfigCloudResponse = try await post(
+            "/api/v2/ai/config", body: ["action": "clear"], as: AIConfigCloudResponse.self)
+        return !res.stored
+    }
+
+    func getAIConfigCloud() async throws -> AIConfigCloudResponse {
+        try await post("/api/v2/ai/config", body: ["action": "get"],
+                       as: AIConfigCloudResponse.self)
+    }
+
     /// 写回书签。整体替换：书签少，整存整取不用为「删第几个」设计语义。
     func saveBookmarks(id: String, bookmarks: [APIBookmark]) async throws -> APILibraryItem {
         try await post(

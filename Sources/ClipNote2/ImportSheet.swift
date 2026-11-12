@@ -105,17 +105,17 @@ struct ImportSheet: View {
                 .frame(maxWidth: .infinity)
 
             optionRow(
-                symbol: "square.and.pencil",
-                title: "新建一条笔记",
-                isEnabled: true,
-                action: { showNewNote = true }
-            )
-
-            optionRow(
                 symbol: "doc.on.clipboard",
                 title: "从剪贴板读取链接",
                 isEnabled: clipboardHasText,
                 action: pasteFromClipboard
+            )
+
+            optionRow(
+                symbol: "square.and.pencil",
+                title: "新建一条笔记",
+                isEnabled: true,
+                action: { showNewNote = true }
             )
 
             Spacer(minLength: 0)
