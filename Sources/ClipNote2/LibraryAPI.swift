@@ -581,6 +581,12 @@ struct ClipNoteClient {
         try await post("/api/v2/parse", body: ["url": link], as: APIImportResult.self)
     }
 
+    /// 快捷导入：解析 + 入库 + 顺手提交摘要任务（服务端有云端 AI 配置时）。
+    /// 和 `/parse` 的差别只有「会自动总结」这一条。
+    func quickImport(text: String) async throws -> APIImportResult {
+        try await post("/api/v2/quick-import", body: ["url": text], as: APIImportResult.self)
+    }
+
     /// 删除（软删）。条目进回收站，文件仍在本机。
     func deleteItem(id: String) async throws -> APILibraryItem {
         try await post("/api/v2/items/\(encode(id))/delete", body: [:], as: APILibraryItem.self)
