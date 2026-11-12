@@ -601,6 +601,13 @@ struct ClipNoteClient {
         try await post("/api/v2/quick-import", body: ["url": text], as: APIImportResult.self)
     }
 
+    /// 重跑一条：服务端会重新下载、转写、分段、抽项目。
+    /// 换模型后想重新生成，或者上一版分段没覆盖全时用。
+    func rebuildItem(id: String) async throws {
+        _ = try await post("/api/v2/items/\(encode(id))/rebuild",
+                           body: [:], as: APIOkResponse.self)
+    }
+
     /// 删除（软删）。条目进回收站，文件仍在本机。
     func deleteItem(id: String) async throws -> APILibraryItem {
         try await post("/api/v2/items/\(encode(id))/delete", body: [:], as: APILibraryItem.self)
@@ -1115,6 +1122,20 @@ final class LibraryStore: ObservableObject {
                 "ms": ms(since: started),
             ])
             throw failure
+        }
+    }
+
+    /// 让服务端重跑一条：重新下载、转写、分段、抽项目。
+    /// 换模型后想重新生成，或者上一版分段没覆盖全时用。
+    func rebuildItem(id: String) async -> Bool {
+        guard let client else { return false }
+        do {
+            try await client.rebuildItem(id: id)
+            log?.info("item.rebuild", "已提交服务端重跑", meta: ["id": id])
+            return true
+        } catch {
+            log?.error("item.rebuild.failed", "提交重跑失败", meta: ["id": id])
+            return false
         }
     }
 

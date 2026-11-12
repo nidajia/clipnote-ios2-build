@@ -1490,6 +1490,17 @@ struct DetailScreen: View {
                 }
                 .buttonStyle(.plain)
 
+                // 已有分段时给一条重跑路径：换模型、或上一版没覆盖全，都靠它。
+                // 走服务端重跑（重新下载+转写），不依赖本机有没有转过。
+                if !current.segments.isEmpty {
+                    Button("重新分段（换模型后重跑）") {
+                        Task { await rebuildSegments() }
+                    }
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+                    .buttonStyle(.plain)
+                }
+
                 // 抖音/小红书本来就可能没字幕。等失败一次再给入口等于让用户先撞墙，
                 // 所以第一次进来就把这条路摆出来，用弱化的样式，不抢主按钮。
                 Button("没有字幕？转写这条") {
@@ -1500,6 +1511,20 @@ struct DetailScreen: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    /// 让服务端重跑一条（重新下载 + 转写 + 分段 + 抽项目）。
+    ///
+    /// 为什么不复用 `generateSegments`：那条路要求本机已经有转写，
+    /// 而用户换模型想重跑时，本机往往什么都没有。服务端重跑不依赖本机状态。
+    private func rebuildSegments() async {
+        guard !library.isOffline, segmentState != .running else { return }
+        segmentState = .running
+        let ok = await library.rebuildItem(id: current.id)
+        segmentState = .idle
+        notice = ok
+            ? "已交给服务端重跑，大约半分钟到一分钟，之后下拉刷新。"
+            : "提交重跑失败，检查网络后再试。"
     }
 
     /// 进页面时自动生成一次。默认**不**跑：AI 是用户自己的额度。
