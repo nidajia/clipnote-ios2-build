@@ -108,6 +108,17 @@ final class DownloadStore: ObservableObject {
                     try FileManager.default.moveItem(at: temporary, to: destination)
                     let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
                     let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+                    // 109 字节的 CDN 错误页会被 URLSession 当成「下载成功」，
+                    // 于是索引里留下一条 0MB 的假记录：看不了、也没有重试入口。
+                    // 小于 64KB 的一律当失败处理，把残文件删掉。
+                    guard size > 64 * 1024 else {
+                        try? FileManager.default.removeItem(at: destination)
+                        self.lastFailure = DownloadFailure(
+                            id: k,
+                            message: "下载到的不是视频（只有 \(size) 字节），点重试。"
+                        )
+                        return
+                    }
                     self.records[k] = DownloadRecord(fileName: fileName, byteCount: size, finishedAt: Date())
                     self.save()
                     let logger = self.log

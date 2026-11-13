@@ -2069,16 +2069,32 @@ struct DetailScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
 
             } else if downloads.isDownloaded(item.id) {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("已下载 · \(sizeText) · 存于本机，离线可看")
-                        .font(.cnMeta)
-                }
-                .foregroundStyle(Color.cnGreen)
+                // 0MB 的假记录：当时下载到的是 CDN 的错误页，被当成了成功。
+                // 这种条目看不了也删不掉，必须给一条明确的「重新下载」出口。
+                if downloads.byteCount(for: item.id) < 64 * 1024 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("下载的文件不完整（\(sizeText)），需要重新下载")
+                            .font(.cnMeta)
+                    }
+                    .foregroundStyle(Color.cnRed)
 
-                PrimaryButton(title: playing ? "正在播放" : "在本地播放") {
-                    Task { await startPlayback() }
+                    PrimaryButton(title: "重新下载") {
+                        Task { await redownload() }
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("已下载 · \(sizeText) · 存于本机，离线可看")
+                            .font(.cnMeta)
+                    }
+                    .foregroundStyle(Color.cnGreen)
+
+                    PrimaryButton(title: playing ? "正在播放" : "在本地播放") {
+                        Task { await startPlayback() }
+                    }
                 }
 
             } else if let value = downloads.progressValue(for: item.id) {
@@ -2126,6 +2142,13 @@ struct DetailScreen: View {
         guard let payload = await ensurePlayback(),
               let url = URL(string: payload.url) else { return }
         downloads.start(item.id, url: url)
+    }
+
+    /// 把不完整的下载清掉再重来一次。地址要重新取——旧地址早过期了。
+    private func redownload() async {
+        downloads.removeLocalFile(item.id)
+        prepare = .idle
+        await startDownload()
     }
 
     private var sizeText: String {
