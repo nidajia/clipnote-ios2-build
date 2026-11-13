@@ -29,7 +29,7 @@ struct APISource: Decodable, Equatable {
 }
 
 /// 原视频的互动数据。抖音没有播放量（平台不公开），那一项恒为 0。
-struct APIStats: Decodable, Equatable {
+struct APIStats: Decodable, Equatable, Hashable {
     var views: Int = 0
     var likes: Int = 0
     var coins: Int = 0
