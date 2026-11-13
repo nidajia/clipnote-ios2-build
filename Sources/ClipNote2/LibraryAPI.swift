@@ -36,6 +36,9 @@ struct APIComment: Decodable, Equatable, Hashable {
     var author: String = ""
     var text: String = ""
     var likes: Int = 0
+    /// 评论里贴的图（最多 2 张）。存的是本服务代理地址——
+    /// B 站 CDN 不带 Referer 会 403，直连拿不到。
+    var pictures: [String] = []
 }
 
 /// 一条「快捷导入失败」的记录。

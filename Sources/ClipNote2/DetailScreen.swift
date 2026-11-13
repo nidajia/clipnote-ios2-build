@@ -1859,55 +1859,120 @@ struct DetailScreen: View {
 
     /// 评论区快照（6.3）。
     ///
-    /// 默认折叠：评论是「补充信息」，不该把详情页撑得很长；
-    /// 但它必须存在——视频被删之后，这里就是唯一还能看到当时讨论的地方。
+    /// 做成独立卡片而不是列表里的一行：评论是「另一类信息」——
+    /// 视频讲什么、评论里在吵什么，是两件事。视觉上分开，用户才知道
+    /// 这一段不是内容摘要的一部分。
     @ViewBuilder
     private var commentsRow: some View {
         if !current.comments.isEmpty {
-            VStack(alignment: .leading, spacing: Metric.space2) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        commentsExpanded.toggle()
+            VStack(alignment: .leading, spacing: Metric.space3) {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.bubble.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.cnBrand)
+                    Text("评论区快照")
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk)
+                    Text("\(current.comments.count) 条 · 按热度")
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                    Spacer(minLength: 0)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            commentsExpanded.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(commentsExpanded ? "收起" : "展开")
+                                .font(.cnCaption)
+                            Image(systemName: commentsExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundStyle(Color.cnBrand)
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "text.bubble")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("评论区 · \(current.comments.count) 条")
-                            .font(.cnChip)
-                        Spacer(minLength: 0)
-                        Image(systemName: commentsExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .foregroundStyle(Color.cnInk2)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 if commentsExpanded {
                     VStack(alignment: .leading, spacing: Metric.space3) {
-                        ForEach(Array(current.comments.enumerated()), id: \.offset) { _, one in
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 4) {
-                                    Text(one.author)
-                                        .font(.cnCaption)
-                                        .foregroundStyle(Color.cnInk3)
-                                        .lineLimit(1)
-                                    if one.likes > 0 {
-                                        Text("· \(one.likes) 赞")
-                                            .font(.cnCaption)
-                                            .foregroundStyle(Color.cnInk3)
-                                    }
-                                    Spacer(minLength: 0)
+                        ForEach(Array(current.comments.enumerated()), id: \.offset) { index, one in
+                            if index > 0 {
+                                Divider().overlay(Color.cnHairlineSoft)
+                            }
+                            commentCell(one)
+                        }
+                    }
+                } else {
+                    // 收起时给一句「里面有什么」，否则用户不知道值不值得展开。
+                    Text("视频被删之后，这里还能看到当时大家在说什么。")
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                }
+            }
+            .padding(Metric.space3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color.cnCard,
+                in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+                    .strokeBorder(Color.cnHairline, lineWidth: 0.5)
+            )
+        }
+    }
+
+    private func commentCell(_ one: APIComment) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text(one.author)
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+                    .lineLimit(1)
+                if one.likes > 0 {
+                    Text("· \(one.likes) 赞")
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                }
+                Spacer(minLength: 0)
+            }
+            Text(one.text)
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnInk)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+
+            if !one.pictures.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(one.pictures, id: \.self) { src in
+                        if let url = URL(string: src) {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 88, height: 88)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                case .failure:
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.cnCard3)
+                                        .frame(width: 88, height: 88)
+                                        .overlay(
+                                            Image(systemName: "photo")
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(Color.cnInk3)
+                                        )
+                                default:
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.cnCard3)
+                                        .frame(width: 88, height: 88)
                                 }
-                                Text(one.text)
-                                    .font(.cnMeta)
-                                    .foregroundStyle(Color.cnInk)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .textSelection(.enabled)
                             }
                         }
                     }
                 }
+                .padding(.top, 2)
             }
         }
     }
