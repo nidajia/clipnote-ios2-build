@@ -52,6 +52,8 @@ struct DetailScreen: View {
     @State private var showSegments = false
     @State private var aiState: AIState = .idle
     @State private var segmentState: SegmentState = .idle
+    /// 评论区默认收起：它属于补充信息，不该把详情页撑长。
+    @State private var commentsExpanded = false
     /// 分段导航里高亮哪一段。只反映「上次点了哪块」，不跟播放进度走——
     /// 跟进度要挂定时器，那是另一件事（progress bar），先不混进来。
     @State private var activeSegment: Int?
@@ -181,6 +183,8 @@ struct DetailScreen: View {
                     outlineRow
 
                     projectsRow
+
+                    commentsRow
 
                     exportRow
 
@@ -1852,6 +1856,61 @@ struct DetailScreen: View {
     }
 
     // MARK: - 笔记
+
+    /// 评论区快照（6.3）。
+    ///
+    /// 默认折叠：评论是「补充信息」，不该把详情页撑得很长；
+    /// 但它必须存在——视频被删之后，这里就是唯一还能看到当时讨论的地方。
+    @ViewBuilder
+    private var commentsRow: some View {
+        if !current.comments.isEmpty {
+            VStack(alignment: .leading, spacing: Metric.space2) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        commentsExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "text.bubble")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("评论区 · \(current.comments.count) 条")
+                            .font(.cnChip)
+                        Spacer(minLength: 0)
+                        Image(systemName: commentsExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.cnInk2)
+                }
+                .buttonStyle(.plain)
+
+                if commentsExpanded {
+                    VStack(alignment: .leading, spacing: Metric.space3) {
+                        ForEach(Array(current.comments.enumerated()), id: \.offset) { _, one in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 4) {
+                                    Text(one.author)
+                                        .font(.cnCaption)
+                                        .foregroundStyle(Color.cnInk3)
+                                        .lineLimit(1)
+                                    if one.likes > 0 {
+                                        Text("· \(one.likes) 赞")
+                                            .font(.cnCaption)
+                                            .foregroundStyle(Color.cnInk3)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                Text(one.text)
+                                    .font(.cnMeta)
+                                    .foregroundStyle(Color.cnInk)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// 视频里提到的项目 / 工具 / 网站。
     ///

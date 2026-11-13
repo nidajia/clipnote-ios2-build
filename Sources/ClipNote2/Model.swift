@@ -80,6 +80,8 @@ struct Item: Identifiable, Hashable {
     var music: APIMusic?
     /// 视频里提到的项目 / 工具 / 网站。空数组 = 没提到或还没抽取。
     var projects: [APIProject] = []
+    /// 评论区快照。
+    var comments: [APIComment] = []
     var publishedAt: Date?
 
     /// 封面加载完成前的占位渐变。由 id 稳定派生，同一条永远同色，
@@ -127,6 +129,7 @@ struct Item: Identifiable, Hashable {
         }
         self.music = api.music
         self.projects = api.projects
+        self.comments = api.comments
         self.publishedAt = api.publishedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
             : nil
@@ -171,6 +174,7 @@ struct Item: Identifiable, Hashable {
         images: [URL] = [],
         music: APIMusic? = nil,
         projects: [APIProject] = [],
+        comments: [APIComment] = [],
         publishedAt: Date? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
@@ -203,6 +207,7 @@ struct Item: Identifiable, Hashable {
         self.images = images
         self.music = music
         self.projects = projects
+        self.comments = comments
         self.publishedAt = publishedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt

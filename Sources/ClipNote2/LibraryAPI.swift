@@ -28,6 +28,16 @@ struct APISource: Decodable, Equatable {
     var platform: String?
 }
 
+/// 一条评论快照。
+///
+/// 只存文字：目的是「视频没了还能看到当时大家在说什么」，不是完整备份——
+/// 评论进快照 JSON，存多了每次同步都要多传。
+struct APIComment: Decodable, Equatable, Hashable {
+    var author: String = ""
+    var text: String = ""
+    var likes: Int = 0
+}
+
 /// 一条「快捷导入失败」的记录。
 ///
 /// 静默模式下失败是无声的，这个列表就是唯一的反馈通道：
@@ -250,6 +260,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var music: APIMusic?
     /// 视频里提到的项目 / 工具 / 网站。可能为空（没提到，或还没跑抽取）。
     var projects: [APIProject] = []
+    /// 评论区快照（B 站有，其他平台暂时没有公开接口）。
+    var comments: [APIComment] = []
     /// AI 脑图。树形，服务端限 3 层 / 40 节点。
     var outline: [OutlineNode] = []
     var outlineAt: Int = 0
@@ -270,7 +282,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case createdAt, updatedAt
         case annotations, annotationsAt
         case images, music
-        case projects
+        case projects, comments
     }
 
     init(
@@ -342,6 +354,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         images = try c.decodeIfPresent([String].self, forKey: .images) ?? []
         music = try c.decodeIfPresent(APIMusic.self, forKey: .music)
         projects = try c.decodeIfPresent([APIProject].self, forKey: .projects) ?? []
+        comments = try c.decodeIfPresent([APIComment].self, forKey: .comments) ?? []
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
