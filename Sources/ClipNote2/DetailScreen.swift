@@ -2393,7 +2393,8 @@ struct DetailScreen: View {
                         // 抖音的楼层是**按需买**的（展开一层 $0.002），
                         // 所以默认只显示「共 N 条回复」，点了才去拉。
                         // B 站的楼层是快照里带的（免费），直接显示。
-                        if one.replyCount > shown.count || (shown.isEmpty && one.replyCount > 0) {
+                        if one.replyCount > shown.count, !one.cid.isEmpty,
+                           shown.isEmpty || one.replyCount > shown.count {
                             Button {
                                 Task { await loadReplies(one) }
                             } label: {
@@ -2410,6 +2411,12 @@ struct DetailScreen: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(loadingReply == one.cid)
+                        } else if one.replyCount > shown.count, one.cid.isEmpty {
+                            // 老数据的评论没有平台 id，拉不到更多楼层。
+                            // 与其给一个点了必然失败的按钮，不如老实说数字。
+                            Text("共 \(one.replyCount) 条回复")
+                                .font(.cnCaption)
+                                .foregroundStyle(Color.cnInk3)
                         }
                     }
                     .padding(.leading, 10)
