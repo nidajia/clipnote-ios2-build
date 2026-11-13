@@ -55,6 +55,9 @@ struct APIAskCitation: Decodable, Equatable, Hashable, Identifiable {
 struct APIAskResult: Decodable, Equatable {
     var ok: Bool = false
     var answer: String = ""
+    /// 答案主要来自你存的内容（true）还是模型的通用知识（false）。
+    /// 这个标记不能省：用户需要知道「这句话是我存的，还是模型自己说的」。
+    var grounded: Bool = true
     var citations: [APIAskCitation] = []
 }
 

@@ -19,6 +19,7 @@ struct AskScreen: View {
         let id = UUID()
         var isUser: Bool
         var text: String
+        var grounded: Bool = true
         var citations: [APIAskCitation] = []
     }
 
@@ -27,6 +28,7 @@ struct AskScreen: View {
             "我存的关于 AI 泡沫的内容，主要观点是什么？",
             "代码动画那个工具叫什么？在哪下载？",
             "我最近存的财经类内容有哪些分歧？",
+            "什么是向量数据库？",
         ]
     }
 
@@ -143,6 +145,16 @@ struct AskScreen: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: Metric.space2) {
+                    // 来源标签放在答案上方：先告诉用户「这是哪来的」，
+                    // 再让他读内容。库外的通用回答必须一眼能看出来。
+                    HStack(spacing: 4) {
+                        Image(systemName: message.grounded ? "books.vertical" : "sparkles")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(message.grounded ? "来自你存的内容" : "通用知识 · 库里没有相关")
+                            .font(.cnCaption)
+                    }
+                    .foregroundStyle(Color.cnInk3)
+
                     Text(message.text)
                         .font(.cnBody)
                         .foregroundStyle(Color.cnInk)
@@ -249,6 +261,7 @@ struct AskScreen: View {
             let result = try await library.ask(question: text)
             messages.append(AskMessage(isUser: false,
                                        text: result.answer,
+                                       grounded: result.grounded,
                                        citations: result.citations))
         } catch let failure as ClipNoteClient.Failure {
             failed = failure.displayMessage
