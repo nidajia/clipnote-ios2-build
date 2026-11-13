@@ -757,7 +757,15 @@ struct DetailScreen: View {
     /// 播放器下方那一行里的「标记」。
     private var markButton: some View {
         Button {
-            Task { await addBookmarkAtCurrentTime() }
+            Task {
+                // 不能 .disabled：灰按钮点下去一声不响，用户只会觉得「坏了」。
+                // 要么标上，要么说清楚为什么现在标不了。
+                guard player != nil else {
+                    notice = "视频还没加载好，等画面出来再标记。"
+                    return
+                }
+                await addBookmarkAtCurrentTime()
+            }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "flag.badge.plus")
@@ -774,7 +782,6 @@ struct DetailScreen: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(player == nil)
         .accessibilityLabel("把当前位置标成书签")
     }
 

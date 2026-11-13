@@ -217,12 +217,18 @@ struct HomeScreen: View {
                             .disabled(refreshing)
                             .accessibilityLabel("刷新")
 
+                            // 带文字而不是纯图标：一个陌生的 sparkle 图标
+                            // 用户根本不会去点（实测反馈「问库在哪」）。
                             Button {
                                 showAsk = true
                             } label: {
-                                Image(systemName: "sparkle.magnifyingglass")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(Color.cnInk2)
+                                HStack(spacing: 3) {
+                                    Image(systemName: "sparkle")
+                                        .font(.system(size: 11, weight: .semibold))
+                                    Text("问库")
+                                        .font(.cnChip)
+                                }
+                                .foregroundStyle(Color.cnBrand)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("问库")
