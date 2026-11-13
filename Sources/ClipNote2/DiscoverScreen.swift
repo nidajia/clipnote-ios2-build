@@ -408,8 +408,9 @@ struct DiscoverScreen: View {
     @ViewBuilder
     private func cardLink<C: View>(_ one: APIDiscoverItem,
                                    @ViewBuilder content: () -> C) -> some View {
-        if let item = library.items.first(where: { $0.videoId == one.videoId }),
-           !one.videoId.isEmpty {
+        let vid = one.videoId ?? ""
+        if !vid.isEmpty,
+           let item = library.items.first(where: { $0.videoId == vid }) {
             NavigationLink {
                 DetailScreen(item: item)
             } label: {
