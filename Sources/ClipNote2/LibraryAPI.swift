@@ -28,6 +28,22 @@ struct APISource: Decodable, Equatable {
     var platform: String?
 }
 
+/// 一条「快捷导入失败」的记录。
+///
+/// 静默模式下失败是无声的，这个列表就是唯一的反馈通道：
+/// 首页据此显示「有 N 条没存上」，用户才知道要去重试。
+struct APIFailedImport: Decodable, Equatable, Identifiable {
+    var url: String = ""
+    var reason: String = ""
+    var at: Int = 0
+    var id: String { url + "#\(at)" }
+}
+
+struct APIFailedImportList: Decodable {
+    var ok: Bool = false
+    var items: [APIFailedImport] = []
+}
+
 /// 问库的引用：AI 答案里点了名的条目。
 struct APIAskCitation: Decodable, Equatable, Hashable, Identifiable {
     var id: String = ""
@@ -627,6 +643,19 @@ struct ClipNoteClient {
         try await post("/api/v2/ask", body: ["question": question], as: APIAskResult.self)
     }
 
+    /// 快捷导入失败的链接列表。
+    func failedImports() async throws -> [APIFailedImport] {
+        let res: APIFailedImportList = try await get("/api/v2/failed-imports",
+                                                     as: APIFailedImportList.self)
+        return res.items
+    }
+
+    /// 清空失败记录（用户点「忽略」）。
+    func clearFailedImports() async throws {
+        _ = try await post("/api/v2/failed-imports/clear", body: [:],
+                           as: APIOkResponse.self)
+    }
+
     /// 删除（软删）。条目进回收站，文件仍在本机。
     func deleteItem(id: String) async throws -> APILibraryItem {
         try await post("/api/v2/items/\(encode(id))/delete", body: [:], as: APILibraryItem.self)
@@ -966,6 +995,10 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var version: String = ""
     /// 回收站条数。跟着 library 一起回来，不用为一行字单独请求。
     @Published private(set) var trashCount: Int = 0
+    /// 快捷导入失败的链接。首页据此显示「有 N 条没存上」——
+    /// 静默模式下这是唯一的反馈通道，不显示用户就永远不知道存失败过。
+    @Published private(set) var failedImports: [APIFailedImport] = []
+
     /// 本次进程里上一次成功同步的时刻。
     ///
     /// 不能再用「phase == .idle」判断要不要补一次同步了：有缓存时启动就是
@@ -1010,6 +1043,42 @@ final class LibraryStore: ObservableObject {
         await reload(onStep: nil)
     }
 
+    /// 切回前台补一次同步，但别每次都拉（20 秒内刚同步过就跳过）。
+    ///
+    /// 快捷导入是在后台静默完成的，用户切回片记时如果不补一次，他刚存的那条
+    /// 就「不见了」——实测反馈是「存了要等一两分钟才看到」。节流是为了避免
+    /// 来回切 Tab 时反复打网络。
+    func reloadIfStale(minInterval: TimeInterval = 20) async {
+        guard !isOffline else { return }
+        if let last = lastSyncAt, Date().timeIntervalSince(last) < minInterval {
+            return
+        }
+        await reload()
+    }
+
+    // MARK: 快捷导入失败
+
+    func loadFailedImports() async {
+        guard let client else { return }
+        failedImports = (try? await client.failedImports()) ?? []
+    }
+
+    /// 重试全部：逐条重新提交快捷导入，成功的会从失败列表消失。
+    func retryAllFailedImports() async {
+        guard let client else { return }
+        for one in failedImports {
+            _ = try? await client.quickImport(text: one.url)
+        }
+        await loadFailedImports()
+        await reload()
+    }
+
+    func dismissFailedImports() async {
+        guard let client else { return }
+        try? await client.clearFailedImports()
+        failedImports = []
+    }
+
     /// 同步。`onStep` 是可选的进度回调，只为引导页的步骤行服务。
     ///
     /// 三步对应三个**真实发生**的时刻，不是定时器：
@@ -1037,6 +1106,8 @@ final class LibraryStore: ObservableObject {
                 apply(payload.library)
                 lastSyncAt = Date()
                 saveCache(payload.data)
+                // 顺手拉一次失败列表：静默失败只有这里能看见。
+                await loadFailedImports()
                 onStep?(.ready)
                 log?.info("library.loaded", "同步完成 \(payload.library.items.count) 条", meta: [
                     "count": "\(payload.library.items.count)",

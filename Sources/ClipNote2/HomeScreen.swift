@@ -54,6 +54,8 @@ struct HomeScreen: View {
     @State private var filter: HomeFilter = .all
     @State private var showImport = false
     @State private var showAsk = false
+    /// 手动刷新中。下拉刷新有自己的转圈，这个只给导航栏按钮用。
+    @State private var refreshing = false
     @State private var showBatchSections = false
     @State private var selected: Item?
     /// 正在看哪条笔记。笔记是**直接进编辑器**的，不经过视频详情页——
@@ -160,6 +162,9 @@ struct HomeScreen: View {
 
     var body: some View {
         content
+            // 下拉刷新。之前没有这个控件，下拉只是滚动，大标题跟着走——
+            // 用户的感受是「存了新的看不到，也没地方刷」。
+            .refreshable { await library.reload() }
             .background(Color.cnBg)
             .navigationTitle("片记")
             .navigationBarTitleDisplayMode(.large)
@@ -191,6 +196,27 @@ struct HomeScreen: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if !selecting {
                         HStack(spacing: Metric.space3) {
+                            // 显式刷新入口。下拉也能刷，但「看不到新内容」时
+                            // 用户第一反应是找一个按钮，而不是去猜手势。
+                            Button {
+                                Task {
+                                    refreshing = true
+                                    await library.reload()
+                                    refreshing = false
+                                }
+                            } label: {
+                                if refreshing {
+                                    RingSpinner(size: 14, color: .cnBrand)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(Color.cnInk2)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(refreshing)
+                            .accessibilityLabel("刷新")
+
                             Button {
                                 showAsk = true
                             } label: {
@@ -663,8 +689,53 @@ struct HomeScreen: View {
             .padding(.bottom, Metric.space1)
 
             filterBar
+
+            if !library.failedImports.isEmpty {
+                failedImportsBar
+            }
         }
         .background(Color.cnBg)
+    }
+
+    /// 快捷导入失败的提示条。
+    ///
+    /// 快捷指令是静默的：存失败时用户看到的只是「我明明存了，怎么没有」。
+    /// 这条是唯一能告诉他「有东西没存上」的地方，所以放在搜索框下面、
+    /// 不折叠、不自动消失。
+    private var failedImportsBar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.cnRed)
+                Text("有 \(library.failedImports.count) 条没存上")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk)
+                Spacer(minLength: 0)
+                Button("重试") {
+                    Task { await library.retryAllFailedImports() }
+                }
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnBrand)
+                .buttonStyle(.plain)
+                Button("忽略") {
+                    Task { await library.dismissFailedImports() }
+                }
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnInk3)
+                .buttonStyle(.plain)
+            }
+            if let first = library.failedImports.first, !first.reason.isEmpty {
+                Text("最近一条：\(first.reason)")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cnRed.opacity(0.08))
     }
 
     private var searchField: some View {

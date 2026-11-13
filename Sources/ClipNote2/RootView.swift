@@ -10,6 +10,9 @@ import SwiftUI
 struct RootView: View {
     /// 引导走完才为 true。钥匙存在 UserDefaults，重装才会重置。
     @AppStorage("clipnote.onboarded") private var onboarded = false
+    /// 用来「切回前台就补一次同步」：快捷导入在后台静默完成，
+    /// 不补这一次，用户切回来看到的就是「我明明存了，怎么没有」。
+    @Environment(\.scenePhase) private var scenePhase
 
     @StateObject private var downloads: DownloadStore
     @StateObject private var library: LibraryStore
@@ -54,6 +57,10 @@ struct RootView: View {
         // 放 init 里会往日志文件写一串重复的「启动」。
         .task {
             logs.info("app.launch", "启动", meta: ["version": AppVersion.text])
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else { return }
+            Task { await library.reloadIfStale() }
         }
     }
 
