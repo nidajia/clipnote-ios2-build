@@ -28,6 +28,22 @@ struct APISource: Decodable, Equatable {
     var platform: String?
 }
 
+/// 原视频的互动数据。抖音没有播放量（平台不公开），那一项恒为 0。
+struct APIStats: Decodable, Equatable {
+    var views: Int = 0
+    var likes: Int = 0
+    var coins: Int = 0
+    var favorites: Int = 0
+    var shares: Int = 0
+    var comments: Int = 0
+    var danmaku: Int = 0
+
+    /// 有没有任何一项非零。全 0 说明还没抓，不该显示一排 0。
+    var hasAny: Bool {
+        views + likes + coins + favorites + shares + comments + danmaku > 0
+    }
+}
+
 /// 一条评论快照。
 ///
 /// 只存文字：目的是「视频没了还能看到当时大家在说什么」，不是完整备份——
@@ -274,6 +290,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var projects: [APIProject] = []
     /// 评论区快照（B 站有，其他平台暂时没有公开接口）。
     var comments: [APIComment] = []
+    /// 原视频互动数据。
+    var stats: APIStats?
     /// AI 脑图。树形，服务端限 3 层 / 40 节点。
     var outline: [OutlineNode] = []
     var outlineAt: Int = 0
@@ -294,7 +312,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case createdAt, updatedAt
         case annotations, annotationsAt
         case images, music
-        case projects, comments
+        case projects, comments, stats
     }
 
     init(
@@ -367,6 +385,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         music = try c.decodeIfPresent(APIMusic.self, forKey: .music)
         projects = try c.decodeIfPresent([APIProject].self, forKey: .projects) ?? []
         comments = try c.decodeIfPresent([APIComment].self, forKey: .comments) ?? []
+        stats = try c.decodeIfPresent(APIStats.self, forKey: .stats)
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来

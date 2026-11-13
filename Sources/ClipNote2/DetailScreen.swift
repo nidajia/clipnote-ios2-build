@@ -174,6 +174,8 @@ struct DetailScreen: View {
                         .font(.cnMeta)
                         .foregroundStyle(Color.cnInk3)
 
+                    statsRow
+
                     videoLinkRow
 
                     sectionRow
@@ -1862,6 +1864,55 @@ struct DetailScreen: View {
     }
 
     // MARK: - 笔记
+
+    /// 原视频互动数据。只画非零项——抖音没有播放量，硬画一个「播放 0」
+    /// 会让人以为是抓取失败。
+    @ViewBuilder
+    private var statsRow: some View {
+        if let stats = current.stats, stats.hasAny {
+            HStack(spacing: Metric.space4) {
+                if stats.views > 0 {
+                    statItem("play.fill", Self.compact(stats.views), "播放")
+                }
+                if stats.likes > 0 {
+                    statItem("hand.thumbsup.fill", Self.compact(stats.likes), "点赞")
+                }
+                if stats.coins > 0 {
+                    statItem("circle.fill", Self.compact(stats.coins), "投币")
+                }
+                if stats.favorites > 0 {
+                    statItem("star.fill", Self.compact(stats.favorites), "收藏")
+                }
+                if stats.comments > 0 {
+                    statItem("bubble.left.fill", Self.compact(stats.comments), "评论")
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func statItem(_ icon: String, _ value: String, _ label: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.cnInk3)
+            Text(value)
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnInk2)
+        }
+        .accessibilityLabel("\(label) \(value)")
+    }
+
+    /// 12,345 → 1.2万；1.2 亿 → 1.2亿。中文语境的习惯写法。
+    static func compact(_ n: Int) -> String {
+        if n >= 100_000_000 {
+            return String(format: "%.1f亿", Double(n) / 100_000_000)
+        }
+        if n >= 10_000 {
+            return String(format: "%.1f万", Double(n) / 10_000)
+        }
+        return "\(n)"
+    }
 
     /// 评论区快照（6.3）。
     ///
