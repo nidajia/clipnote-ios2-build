@@ -63,6 +63,10 @@ struct APIComment: Decodable, Equatable, Hashable {
     var replies: [APICommentReply] = []
     /// 该楼层的回复总数。比 replies.count 大就说明还有更多。
     var replyCount: Int = 0
+    /// 这条评论的平台 id。抖音展开楼层要用它换回复。
+    var cid: String = ""
+    /// 所在视频的平台 id（抖音楼层接口要）。
+    var postId: String = ""
 }
 
 /// 评论正文的一个片段：文字或表情图。
@@ -86,6 +90,103 @@ struct APICommentPage: Decodable {
     var count: Int = 0
     var hasMore: Bool = false
     var comments: [APIComment] = []
+}
+
+/// 发现页的一条内容（热榜 / 话题）。
+struct APIDiscoverItem: Decodable, Identifiable, Equatable, Hashable {
+    var id: String = ""
+    var platform: String = ""
+    var title: String = ""
+    var desc: String = ""
+    var cover: String = ""
+    var author: String = ""
+    var avatar: String = ""
+    var views: Int = 0
+    var likes: Int = 0
+    var duration: Int = 0
+    var url: String = ""
+    /// 服务端分类：AI / 编程 / 科技 / 科普 / 商业 / 学习 / 其他。
+    var category: String = ""
+    /// 兴趣权重。0 表示「没命中任何兴趣词」，只是兜底。
+    var interest: Int = 0
+    /// 这条已经在你库里了（按 videoId 匹配）。
+    var inLibrary: Bool = false
+    /// 命中的库关键词。非空说明「你存过这个话题」。
+    var libraryKeyword: String = ""
+    var videoId: String?
+    var tname: String = ""
+}
+
+struct APIDiscoverFeed: Decodable {
+    var ok: Bool = false
+    var fetchedAt: Int = 0
+    var categories: [String] = []
+    var blockedCats: [String] = []
+    var hot: [APIDiscoverItem] = []
+    var mine: [APIDiscoverItem] = []
+    var keywords: [String] = []
+}
+
+/// 订阅者最新的一条投稿。
+struct APISubVideo: Decodable, Equatable, Hashable {
+    var videoId: String = ""
+    var title: String = ""
+    var cover: String = ""
+    var created: Int = 0
+    var views: Int = 0
+    var url: String = ""
+}
+
+/// 一个订阅（UP 主 / 抖音作者）。
+struct APISubscription: Decodable, Identifiable, Equatable, Hashable {
+    var key: String = ""
+    var platform: String = ""
+    var name: String = ""
+    var avatar: String = ""
+    var uid: String = ""
+    var latestAt: Int = 0
+    var lastCheckedAt: Int = 0
+    var videos: [APISubVideo] = []
+    var id: String { key }
+}
+
+struct APISubList: Decodable {
+    var ok: Bool = false
+    var subs: [APISubscription] = []
+}
+
+/// 合集里的一集。
+struct APISeasonEpisode: Decodable, Equatable, Hashable {
+    var videoId: String = ""
+    var title: String = ""
+    var created: Int = 0
+    var views: Int = 0
+    /// 这一集已经在库里，可以直接跳过去。
+    var itemId: String = ""
+    var current: Bool = false
+    var url: String = ""
+}
+
+struct APISeason: Decodable {
+    var ok: Bool = false
+    var seasonId: String = ""
+    var title: String = ""
+    var index: Int = 0
+    var total: Int = 0
+    var episodes: [APISeasonEpisode] = []
+}
+
+/// 某一层楼的回复。
+struct APIReplies: Decodable {
+    var ok: Bool = false
+    var count: Int = 0
+    var replies: [APICommentReply] = []
+}
+
+/// 不感兴趣的结果：返回累积的分类黑名单。
+struct APIBlockResult: Decodable {
+    var ok: Bool = false
+    var blockedCats: [String] = []
 }
 
 /// 一条「快捷导入失败」的记录。
@@ -314,6 +415,11 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var comments: [APIComment] = []
     /// 原视频互动数据。
     var stats: APIStats?
+    /// 合集归属（B 站 ugc_season）。
+    var seasonId: String = ""
+    var seasonTitle: String = ""
+    var seasonIndex: Int = 0
+    var seasonTotal: Int = 0
     /// AI 脑图。树形，服务端限 3 层 / 40 节点。
     var outline: [OutlineNode] = []
     var outlineAt: Int = 0
@@ -335,6 +441,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         case annotations, annotationsAt
         case images, music
         case projects, comments, stats
+        case seasonId, seasonTitle, seasonIndex, seasonTotal
     }
 
     init(
@@ -408,6 +515,10 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         projects = try c.decodeIfPresent([APIProject].self, forKey: .projects) ?? []
         comments = try c.decodeIfPresent([APIComment].self, forKey: .comments) ?? []
         stats = try c.decodeIfPresent(APIStats.self, forKey: .stats)
+        seasonId = try c.decodeIfPresent(String.self, forKey: .seasonId) ?? ""
+        seasonTitle = try c.decodeIfPresent(String.self, forKey: .seasonTitle) ?? ""
+        seasonIndex = try c.decodeIfPresent(Int.self, forKey: .seasonIndex) ?? 0
+        seasonTotal = try c.decodeIfPresent(Int.self, forKey: .seasonTotal) ?? 0
         authorNoteAt = try c.decodeIfPresent(Int.self, forKey: .authorNoteAt) ?? 0
         platform = (try c.decodeIfPresent(APISource.self, forKey: .source))?.platform ?? ""
         // 缺 playback 时按 kind 推断，避免老版本服务端让整页解不出来
@@ -710,6 +821,53 @@ struct ClipNoteClient {
     /// 问库：跨条目问答，返回答案 + 引用。
     func ask(question: String) async throws -> APIAskResult {
         try await post("/api/v2/ask", body: ["question": question], as: APIAskResult.self)
+    }
+
+    /// 发现页信息流。`refresh` 为真时绕过 30 分钟缓存。
+    func discoverFeed(refresh: Bool) async throws -> APIDiscoverFeed {
+        try await get("/api/v2/discover/feed?refresh=\(refresh ? 1 : 0)",
+                      as: APIDiscoverFeed.self)
+    }
+
+    func subscriptions() async throws -> APISubList {
+        try await get("/api/v2/discover/subs", as: APISubList.self)
+    }
+
+    func addSubscription(itemId: String) async throws -> APISubList {
+        try await post("/api/v2/discover/subs/add", body: ["itemId": itemId],
+                       as: APISubList.self)
+    }
+
+    func removeSubscription(key: String) async throws -> APISubList {
+        try await post("/api/v2/discover/subs/remove", body: ["key": key],
+                       as: APISubList.self)
+    }
+
+    func checkSubscriptions() async throws -> APISubList {
+        try await post("/api/v2/discover/subs/check", body: [:], as: APISubList.self)
+    }
+
+    /// 不感兴趣。`category` 记进分类黑名单，`itemId` 屏蔽单条。
+    func block(itemId: String, category: String) async throws -> APIBlockResult {
+        try await post("/api/v2/discover/block",
+                       body: ["itemId": itemId, "category": category],
+                       as: APIBlockResult.self)
+    }
+
+    func unblock(category: String) async throws -> APIBlockResult {
+        try await post("/api/v2/discover/unblock", body: ["category": category],
+                       as: APIBlockResult.self)
+    }
+
+    /// 展开一层楼。B 站快照里就有，抖音是现买（$0.002）。
+    func replies(id: String, cid: String) async throws -> APIReplies {
+        try await get("/api/v2/items/\(encode(id))/replies?cid=\(encode(cid))",
+                      as: APIReplies.self)
+    }
+
+    /// 合集剧集清单。
+    func season(id: String) async throws -> APISeason {
+        try await get("/api/v2/items/\(encode(id))/season", as: APISeason.self)
     }
 
     /// 评论区某一页（实时拉，不写快照）。`sort` 是 "hot" 或 "new"。
@@ -1294,6 +1452,60 @@ final class LibraryStore: ObservableObject {
     func comments(id: String, page: Int, sort: String) async throws -> APICommentPage {
         guard let client else { return APICommentPage() }
         return try await client.comments(id: id, page: page, sort: sort)
+    }
+
+    // MARK: 发现页与订阅
+
+    func discoverFeed(refresh: Bool = false) async throws -> APIDiscoverFeed {
+        guard let client else { throw ClipNoteClient.Failure.transport("离线模式") }
+        return try await client.discoverFeed(refresh: refresh)
+    }
+
+    func subscriptions() async -> [APISubscription] {
+        guard let client else { return [] }
+        return (try? await client.subscriptions())?.subs ?? []
+    }
+
+    func addSubscription(itemId: String) async -> String? {
+        guard let client else { return "离线模式订阅不了" }
+        do {
+            _ = try await client.addSubscription(itemId: itemId)
+            return nil
+        } catch {
+            return "订阅失败：\(error)"
+        }
+    }
+
+    func removeSubscription(key: String) async {
+        guard let client else { return }
+        _ = try? await client.removeSubscription(key: key)
+    }
+
+    func checkSubscriptions() async -> [APISubscription] {
+        guard let client else { return [] }
+        return (try? await client.checkSubscriptions())?.subs ?? []
+    }
+
+    /// 合集剧集清单。
+    func season(id: String) async throws -> APISeason {
+        guard let client else { throw ClipNoteClient.Failure.transport("离线模式") }
+        return try await client.season(id: id)
+    }
+
+    /// 展开一层楼。
+    func replies(id: String, cid: String) async -> [APICommentReply] {
+        guard let client else { return [] }
+        return (try? await client.replies(id: id, cid: cid))?.replies ?? []
+    }
+
+    func blockDiscover(itemId: String, category: String) async {
+        guard let client else { return }
+        _ = try? await client.block(itemId: itemId, category: category)
+    }
+
+    func unblockCategory(_ category: String) async {
+        guard let client else { return }
+        _ = try? await client.unblock(category: category)
     }
 
     /// 问库：跨条目问答。走同步请求——问答要即时，排队轮询反而更慢。

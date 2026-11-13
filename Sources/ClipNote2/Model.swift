@@ -84,6 +84,11 @@ struct Item: Identifiable, Hashable {
     var comments: [APIComment] = []
     /// 原视频互动数据。
     var stats: APIStats?
+    /// 合集归属。空 = 单集。
+    var seasonId: String = ""
+    var seasonTitle: String = ""
+    var seasonIndex: Int = 0
+    var seasonTotal: Int = 0
     var publishedAt: Date?
 
     /// 封面加载完成前的占位渐变。由 id 稳定派生，同一条永远同色，
@@ -133,6 +138,10 @@ struct Item: Identifiable, Hashable {
         self.projects = api.projects
         self.comments = api.comments
         self.stats = api.stats
+        self.seasonId = api.seasonId
+        self.seasonTitle = api.seasonTitle
+        self.seasonIndex = api.seasonIndex
+        self.seasonTotal = api.seasonTotal
         self.publishedAt = api.publishedAt > 0
             ? Date(timeIntervalSince1970: TimeInterval(api.publishedAt))
             : nil
@@ -179,6 +188,10 @@ struct Item: Identifiable, Hashable {
         projects: [APIProject] = [],
         comments: [APIComment] = [],
         stats: APIStats? = nil,
+        seasonId: String = "",
+        seasonTitle: String = "",
+        seasonIndex: Int = 0,
+        seasonTotal: Int = 0,
         publishedAt: Date? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
@@ -213,6 +226,10 @@ struct Item: Identifiable, Hashable {
         self.projects = projects
         self.comments = comments
         self.stats = stats
+        self.seasonId = seasonId
+        self.seasonTitle = seasonTitle
+        self.seasonIndex = seasonIndex
+        self.seasonTotal = seasonTotal
         self.publishedAt = publishedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt

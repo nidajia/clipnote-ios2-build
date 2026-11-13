@@ -71,6 +71,13 @@ struct RootView: View {
             }
             .tabItem { Label("首页", systemImage: "house.fill") }
 
+            // 中间这栏是「外面在发生什么」。之前只有首页和我，两栏确实塞不下：
+            // 首页是「我存的」，我是「设置」，中间缺一层「发现」。
+            NavigationStack {
+                DiscoverScreen()
+            }
+            .tabItem { Label("发现", systemImage: "sparkles") }
+
             NavigationStack {
                 MeScreen()
             }

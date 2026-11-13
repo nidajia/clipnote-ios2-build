@@ -52,6 +52,25 @@ struct DetailScreen: View {
     @State private var showSegments = false
     @State private var aiState: AIState = .idle
     @State private var segmentState: SegmentState = .idle
+    /// 是否已经关注了这条的作者。进入页面时从订阅列表里比对。
+    @State private var following = false
+    @State private var followBusy = false
+
+    /// 简介展开状态。默认 3 行——长简介会把下面的内容全推下去。
+    @State private var summaryExpanded = false
+    /// 已经拉下来的楼层（按评论 id 存）。
+    ///
+    /// 抖音每展开一层都要花钱，所以拉一次就留在内存里，同一次浏览里
+    /// 收起再展开不该再扣一次费。
+    @State private var liveReplies: [String: [APICommentReply]] = [:]
+    @State private var loadingReply = ""
+
+    /// 「更多操作」是否展开（导出、下载都收在里面）。
+    @State private var showMore = false
+    /// 合集剧集（点开才拉）。
+    @State private var season: APISeason?
+    @State private var seasonOpen = false
+
     /// 评论区默认收起：它属于补充信息，不该把详情页撑长。
     @State private var commentsExpanded = false
     /// 「加载更多」实时拉回来的评论（快照只有前 50 条，看全要靠翻页）。
@@ -164,6 +183,8 @@ struct DetailScreen: View {
 
                     authorRow
 
+                    followRow
+
                     if item.kind == .image {
                         imageBGM
                     } else {
@@ -175,6 +196,11 @@ struct DetailScreen: View {
                         .foregroundStyle(Color.cnInk3)
 
                     statsRow
+
+                    // 简介紧跟在标题/数据下面。
+                    // 用户的直觉是「先看这是什么，再看能干嘛」——之前简介排在
+                    // 评论、项目、导出后面，翻到底才看到，等于没有。
+                    summaryBlock
 
                     videoLinkRow
 
@@ -196,22 +222,7 @@ struct DetailScreen: View {
 
                     exportRow
 
-                    if showsSummary {
-                        Rectangle()
-                            .fill(Color.cnHairline)
-                            .frame(height: 1)
-                            .padding(.vertical, Metric.space1)
-
-                        Text("简介")
-                            .font(.cnCaption)
-                            .foregroundStyle(Color.cnInk3)
-
-                        Text(item.summary)
-                            .font(.cnChip)
-                            .foregroundStyle(Color.cnInk2)
-                            .lineSpacing(6)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    seasonRow
 
                     if let notice {
                         Text(notice)
@@ -220,8 +231,8 @@ struct DetailScreen: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    downloadSection
-                        .padding(.top, Metric.space2)
+                    // 导出、下载这些是「偶尔用一次」的动作，不该和内容抢位置。
+                    moreSection
                 }
                 .padding(Metric.pagePad)
     }
@@ -1865,6 +1876,250 @@ struct DetailScreen: View {
 
     // MARK: - 笔记
 
+    /// 关注作者。
+    ///
+    /// 为什么放在作者行下面而不是工具栏：订阅这个动作的对象是「人」，
+    /// 视觉上就该挨着人。放工具栏会变成「这个视频的某个设置」。
+    @ViewBuilder
+    private var followRow: some View {
+        if !current.displayAuthor.isEmpty {
+            Button {
+                Task { await toggleFollow() }
+            } label: {
+                HStack(spacing: 4) {
+                    if followBusy {
+                        RingSpinner(size: 10, color: .cnBrand)
+                    } else {
+                        Image(systemName: following ? "checkmark" : "plus")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    Text(following ? "已关注，新内容会出现在发现页" : "关注 TA")
+                        .font(.cnCaption)
+                }
+                .foregroundStyle(following ? Color.cnInk3 : Color.cnBrand)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(following ? Color.cnCard3 : Color.cnBrandSoft,
+                            in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(followBusy)
+            .task {
+                let subs = await library.subscriptions()
+                following = subs.contains { $0.name == current.displayAuthor }
+            }
+        }
+    }
+
+    private func toggleFollow() async {
+        if following { return }
+        followBusy = true
+        defer { followBusy = false }
+        if let err = await library.addSubscription(itemId: item.id) {
+            notice = err
+        } else {
+            following = true
+        }
+    }
+
+    /// 简介：默认 3 行，可展开。
+    ///
+    /// 折叠不是耍花招：抖音的简介动辄几十行（话题标签 + 版权 + 引流），
+    /// 全展开会把「笔记」「AI 摘要」推到两屏之外。
+    @ViewBuilder
+    private var summaryBlock: some View {
+        if showsSummary {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.summary)
+                    .font(.cnChip)
+                    .foregroundStyle(Color.cnInk2)
+                    .lineSpacing(5)
+                    .lineLimit(summaryExpanded ? nil : 3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        summaryExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(summaryExpanded ? "收起" : "展开全文")
+                            .font(.cnCaption)
+                        Image(systemName: summaryExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.cnBrand)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(Metric.space3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color.cnCard,
+                in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+            )
+        }
+    }
+
+    /// 合集：同一部作品的其它集。
+    ///
+    /// 只对 B 站有效（`ugc_season`）。抖音没有可靠的合集 ID，
+    /// 按标题猜会把不相干的视频并到一起，所以宁可不做。
+    @ViewBuilder
+    private var seasonRow: some View {
+        if !item.seasonId.isEmpty, item.seasonTotal > 1 {
+            VStack(alignment: .leading, spacing: Metric.space3) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        seasonOpen.toggle()
+                    }
+                    if seasonOpen, season == nil {
+                        Task { await loadSeason() }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "rectangle.stack.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.cnBrand)
+                        Text(item.seasonTitle.isEmpty ? "合集" : item.seasonTitle)
+                            .font(.cnChip)
+                            .foregroundStyle(Color.cnInk)
+                            .lineLimit(1)
+                        Text("第 \(item.seasonIndex + 1)/\(item.seasonTotal) 集")
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnInk3)
+                        Spacer(minLength: 0)
+                        Image(systemName: seasonOpen ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.cnInk3)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if seasonOpen {
+                    if let season {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(season.episodes, id: \.videoId) { ep in
+                                seasonEpisodeRow(ep)
+                                if ep.videoId != season.episodes.last?.videoId {
+                                    Divider().overlay(Color.cnHairlineSoft)
+                                }
+                            }
+                        }
+                    } else {
+                        HStack(spacing: 6) {
+                            RingSpinner(size: 12, color: .cnBrand)
+                            Text("正在拉剧集列表…")
+                                .font(.cnCaption)
+                                .foregroundStyle(Color.cnInk3)
+                        }
+                    }
+                }
+            }
+            .padding(Metric.space3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color.cnCard,
+                in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func seasonEpisodeRow(_ ep: APISeasonEpisode) -> some View {
+        let label = HStack(spacing: Metric.space2) {
+            Text("\(ep.created > 0 ? Self.seasonDate(ep.created) : "")")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.cnInk3)
+                .frame(width: 40, alignment: .leading)
+            Text(ep.title)
+                .font(.cnCaption)
+                .foregroundStyle(ep.current ? Color.cnBrand : Color.cnInk)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if ep.current {
+                Text("当前")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.cnBrand)
+            } else if !ep.itemId.isEmpty {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.cnGreen)
+            }
+        }
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+
+        if !ep.itemId.isEmpty, !ep.current,
+           let target = library.items.first(where: { $0.id == ep.itemId }) {
+            NavigationLink {
+                DetailScreen(item: target)
+            } label: {
+                label
+            }
+            .buttonStyle(.plain)
+        } else {
+            Button {
+                if let url = URL(string: ep.url) {
+                    UIApplication.shared.open(url)
+                }
+            } label: {
+                label
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// 「更多操作」：导出、下载。
+    ///
+    /// 这两块原来直接摊在页面最底部，一屏里堆了导出 CSV / Markdown / 图片、
+    /// 下载、重新下载、清缓存……用户的原话是「按钮越来越多，样式有点乱」。
+    /// 收进一个折叠区，需要时才展开。
+    private var moreSection: some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    showMore.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("更多操作")
+                        .font(.cnCaption)
+                    Spacer(minLength: 0)
+                    Image(systemName: showMore ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Color.cnInk3)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showMore {
+                VStack(spacing: 0) {
+                    exportRow
+                    downloadSection
+                }
+                .padding(.top, Metric.space1)
+            }
+        }
+        .padding(.top, Metric.space2)
+    }
+
+    private static func seasonDate(_ ts: Int) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yy/MM"
+        return f.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
+    }
+
+    private func loadSeason() async {
+        guard !library.isOffline else { return }
+        season = try? await library.season(id: current.id)
+    }
+
     /// 原视频互动数据。只画非零项——抖音没有播放量，硬画一个「播放 0」
     /// 会让人以为是抓取失败。
     @ViewBuilder
@@ -2048,6 +2303,20 @@ struct DetailScreen: View {
     ///
     /// 左头像、中间昵称+正文+楼层、右侧点赞——这是用户熟悉的肌肉记忆。
     /// 之前把作者和正文挤在同一个 `VStack` 里，看着像一坨文字，分不出谁在说话。
+    private func loadReplies(_ one: APIComment) async {
+        if loadingReply == one.cid { return }
+        loadingReply = one.cid
+        defer { loadingReply = "" }
+        let rows = await library.replies(id: current.id, cid: one.cid)
+        if !rows.isEmpty {
+            liveReplies[one.cid] = rows
+        } else {
+            notice = one.replyCount > 0
+                ? "这层回复拉不到，可能已经删了。"
+                : "这层还没有回复。"
+        }
+    }
+
     private func commentCell(_ one: APIComment) -> some View {
         HStack(alignment: .top, spacing: 10) {
             avatar(one.avatar, size: 34)
@@ -2105,8 +2374,9 @@ struct DetailScreen: View {
 
                 // 楼层：左侧一条竖线把「谁在回谁」串起来。
                 if !one.replies.isEmpty || one.replyCount > 0 {
+                    let shown = liveReplies[one.cid] ?? one.replies
                     VStack(alignment: .leading, spacing: 7) {
-                        ForEach(Array(one.replies.enumerated()), id: \.offset) { _, reply in
+                        ForEach(Array(shown.enumerated()), id: \.offset) { _, reply in
                             HStack(alignment: .top, spacing: 6) {
                                 avatar(reply.avatar, size: 20)
                                 VStack(alignment: .leading, spacing: 2) {
@@ -2120,10 +2390,26 @@ struct DetailScreen: View {
                                 }
                             }
                         }
-                        if one.replyCount > one.replies.count {
-                            Text("共 \(one.replyCount) 条回复")
-                                .font(.cnCaption)
+                        // 抖音的楼层是**按需买**的（展开一层 $0.002），
+                        // 所以默认只显示「共 N 条回复」，点了才去拉。
+                        // B 站的楼层是快照里带的（免费），直接显示。
+                        if one.replyCount > shown.count || (shown.isEmpty && one.replyCount > 0) {
+                            Button {
+                                Task { await loadReplies(one) }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    if loadingReply == one.cid {
+                                        RingSpinner(size: 9, color: .cnBrand)
+                                    }
+                                    Text(shown.isEmpty
+                                         ? "展开 \(one.replyCount) 条回复"
+                                         : "还有 \(one.replyCount - shown.count) 条回复")
+                                        .font(.cnCaption)
+                                }
                                 .foregroundStyle(Color.cnBrand)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(loadingReply == one.cid)
                         }
                     }
                     .padding(.leading, 10)

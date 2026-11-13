@@ -89,7 +89,30 @@ struct HomeScreen: View {
 
     private var items: [Item] { library.items }
 
+    /// 列表最终展示的条目。
+    ///
+    /// 在筛选结果之上再折叠一次：**同一个合集只留最新一集**。
+    /// 用户存「每周 AI 大事」会一条条攒，不折叠的话首页会被同一部作品的
+    /// 十几个分集撑满，别的内容全被挤下去。点进去在详情页能看到整个合集。
     private var filtered: [Item] {
+        let raw = filteredRaw
+        var best: [String: Item] = [:]
+        for one in raw where !one.seasonId.isEmpty {
+            if let cur = best[one.seasonId], cur.seasonIndex >= one.seasonIndex { continue }
+            best[one.seasonId] = one
+        }
+        guard !best.isEmpty else { return raw }
+        var placed: Set<String> = []
+        return raw.compactMap { one in
+            if one.seasonId.isEmpty { return one }
+            guard let champion = best[one.seasonId] else { return one }
+            guard champion.id == one.id, !placed.contains(one.seasonId) else { return nil }
+            placed.insert(one.seasonId)
+            return one
+        }
+    }
+
+    private var filteredRaw: [Item] {
         var list = items
         switch filter {
         case .all: break
