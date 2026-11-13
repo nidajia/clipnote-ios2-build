@@ -54,6 +54,12 @@ struct DetailScreen: View {
     @State private var segmentState: SegmentState = .idle
     /// 评论区默认收起：它属于补充信息，不该把详情页撑长。
     @State private var commentsExpanded = false
+    /// 「加载更多」实时拉回来的评论（快照只有前 50 条，看全要靠翻页）。
+    @State private var liveComments: [APIComment] = []
+    @State private var commentsPage = 1
+    @State private var commentsSort = "hot"
+    @State private var loadingComments = false
+    @State private var commentsExhausted = false
     /// 分段导航里高亮哪一段。只反映「上次点了哪块」，不跟播放进度走——
     /// 跟进度要挂定时器，那是另一件事（progress bar），先不混进来。
     @State private var activeSegment: Int?
@@ -1873,7 +1879,7 @@ struct DetailScreen: View {
                     Text("评论区快照")
                         .font(.cnChip)
                         .foregroundStyle(Color.cnInk)
-                    Text("\(current.comments.count) 条 · 按热度")
+                    Text("\(displayComments.count) 条 · \(commentsSort == "hot" ? "按热度" : "按时间")")
                         .font(.cnCaption)
                         .foregroundStyle(Color.cnInk3)
                     Spacer(minLength: 0)
@@ -1894,13 +1900,47 @@ struct DetailScreen: View {
                 }
 
                 if commentsExpanded {
+                    // 排序切换：热度看「大家最在意什么」，最新看「现在在聊什么」。
+                    HStack(spacing: Metric.space3) {
+                        ForEach([("hot", "按热度"), ("new", "按时间")], id: \.0) { key, label in
+                            Button {
+                                Task { await loadComments(sort: key, reset: true) }
+                            } label: {
+                                Text(label)
+                                    .font(.cnCaption)
+                                    .foregroundStyle(commentsSort == key ? Color.cnBrand : Color.cnInk3)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Spacer(minLength: 0)
+                    }
+
                     VStack(alignment: .leading, spacing: Metric.space3) {
-                        ForEach(Array(current.comments.enumerated()), id: \.offset) { index, one in
+                        ForEach(Array(displayComments.enumerated()), id: \.offset) { index, one in
                             if index > 0 {
                                 Divider().overlay(Color.cnHairlineSoft)
                             }
                             commentCell(one)
                         }
+                    }
+
+                    if !commentsExhausted {
+                        Button {
+                            Task { await loadComments(sort: commentsSort, reset: false) }
+                        } label: {
+                            HStack(spacing: 5) {
+                                if loadingComments {
+                                    RingSpinner(size: 12, color: .cnBrand)
+                                }
+                                Text(loadingComments ? "正在加载…" : "加载更多")
+                                    .font(.cnCaption)
+                            }
+                            .foregroundStyle(Color.cnBrand)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(loadingComments)
                     }
                 } else {
                     // 收起时给一句「里面有什么」，否则用户不知道值不值得展开。
@@ -1919,6 +1959,37 @@ struct DetailScreen: View {
                 RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
                     .strokeBorder(Color.cnHairline, lineWidth: 0.5)
             )
+        }
+    }
+
+    /// 翻过页就用翻页结果，否则用快照里的（离线也能看）。
+    private var displayComments: [APIComment] {
+        liveComments.isEmpty ? current.comments : liveComments
+    }
+
+    /// 拉一页评论。`reset` 为真时从第 1 页重来（切排序时用）。
+    private func loadComments(sort: String, reset: Bool) async {
+        guard !loadingComments, !library.isOffline else { return }
+        loadingComments = true
+        defer { loadingComments = false }
+        if reset {
+            commentsSort = sort
+            liveComments = []
+            commentsPage = 1
+            commentsExhausted = false
+        }
+        let next = liveComments.isEmpty ? 1 : commentsPage + 1
+        do {
+            let page = try await library.comments(id: current.id, page: next, sort: sort)
+            if next == 1 {
+                liveComments = page.comments
+            } else {
+                liveComments.append(contentsOf: page.comments)
+            }
+            commentsPage = next
+            commentsExhausted = !page.hasMore || page.comments.isEmpty
+        } catch {
+            commentsExhausted = true
         }
     }
 

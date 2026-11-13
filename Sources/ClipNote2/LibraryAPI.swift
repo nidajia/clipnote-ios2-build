@@ -41,6 +41,15 @@ struct APIComment: Decodable, Equatable, Hashable {
     var pictures: [String] = []
 }
 
+/// 评论翻页结果（实时拉，不写快照）。
+struct APICommentPage: Decodable {
+    var ok: Bool = false
+    var page: Int = 1
+    var count: Int = 0
+    var hasMore: Bool = false
+    var comments: [APIComment] = []
+}
+
 /// 一条「快捷导入失败」的记录。
 ///
 /// 静默模式下失败是无声的，这个列表就是唯一的反馈通道：
@@ -662,6 +671,12 @@ struct ClipNoteClient {
         try await post("/api/v2/ask", body: ["question": question], as: APIAskResult.self)
     }
 
+    /// 评论区某一页（实时拉，不写快照）。`sort` 是 "hot" 或 "new"。
+    func comments(id: String, page: Int, sort: String) async throws -> APICommentPage {
+        try await get("/api/v2/items/\(encode(id))/comments?page=\(page)&sort=\(sort)",
+                      as: APICommentPage.self)
+    }
+
     /// 快捷导入失败的链接列表。
     func failedImports() async throws -> [APIFailedImport] {
         let res: APIFailedImportList = try await get("/api/v2/failed-imports",
@@ -1232,6 +1247,12 @@ final class LibraryStore: ObservableObject {
             ])
             throw failure
         }
+    }
+
+    /// 评论区某一页。
+    func comments(id: String, page: Int, sort: String) async throws -> APICommentPage {
+        guard let client else { return APICommentPage() }
+        return try await client.comments(id: id, page: page, sort: sort)
     }
 
     /// 问库：跨条目问答。走同步请求——问答要即时，排队轮询反而更慢。
