@@ -50,11 +50,33 @@ struct APIStats: Decodable, Equatable, Hashable {
 /// 评论进快照 JSON，存多了每次同步都要多传。
 struct APIComment: Decodable, Equatable, Hashable {
     var author: String = ""
+    /// 头像（proxy 地址）。
+    var avatar: String = ""
     var text: String = ""
     var likes: Int = 0
     /// 评论里贴的图（最多 2 张）。存的是本服务代理地址——
     /// B 站 CDN 不带 Referer 会 403，直连拿不到。
     var pictures: [String] = []
+    /// 正文拆好的片段（文字 / 表情图）。为空时按 text 渲染。
+    var segments: [APICommentSegment] = []
+    /// 楼层：前几条子回复（B 站一次给 3 条，免费）。
+    var replies: [APICommentReply] = []
+    /// 该楼层的回复总数。比 replies.count 大就说明还有更多。
+    var replyCount: Int = 0
+}
+
+/// 评论正文的一个片段：文字或表情图。
+struct APICommentSegment: Decodable, Equatable, Hashable {
+    var type: String = "text"
+    var value: String = ""
+}
+
+/// 楼层里的一条子回复。
+struct APICommentReply: Decodable, Equatable, Hashable {
+    var author: String = ""
+    var avatar: String = ""
+    var text: String = ""
+    var likes: Int = 0
 }
 
 /// 评论翻页结果（实时拉，不写快照）。

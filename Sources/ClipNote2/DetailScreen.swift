@@ -2044,48 +2044,55 @@ struct DetailScreen: View {
         }
     }
 
+    /// 一条评论（抖音/贴吧那种版式）。
+    ///
+    /// 左头像、中间昵称+正文+楼层、右侧点赞——这是用户熟悉的肌肉记忆。
+    /// 之前把作者和正文挤在同一个 `VStack` 里，看着像一坨文字，分不出谁在说话。
     private func commentCell(_ one: APIComment) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
+        HStack(alignment: .top, spacing: 10) {
+            avatar(one.avatar, size: 34)
+
+            VStack(alignment: .leading, spacing: 5) {
                 Text(one.author)
                     .font(.cnCaption)
                     .foregroundStyle(Color.cnInk3)
                     .lineLimit(1)
-                if one.likes > 0 {
-                    Text("· \(one.likes) 赞")
-                        .font(.cnCaption)
-                        .foregroundStyle(Color.cnInk3)
-                }
-                Spacer(minLength: 0)
-            }
-            Text(one.text)
-                .font(.cnMeta)
-                .foregroundStyle(Color.cnInk)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
 
-            if !one.pictures.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(one.pictures, id: \.self) { src in
-                        if let url = URL(string: src) {
-                            AsyncImage(url: url) { phase in
-                                switch phase {
-                                case .success(let image):
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
+                Text(one.text)
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+
+                // 表情：B 站正文里写的是 `[吃瓜]`，服务端把对应图片拆出来了。
+                // 放在正文下面一行而不是内联混排——异步图和文本的流式换行
+                // 容易错行，分开更稳，用户照样能看见那个表情。
+                if !one.segments.filter({ $0.type == "emote" }).isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(one.segments.filter { $0.type == "emote" }.map(\.value),
+                                id: \.self) { src in
+                            AsyncImage(url: URL(string: src)) { phase in
+                                if case .success(let img) = phase {
+                                    img.resizable().scaledToFit()
+                                } else {
+                                    Color.clear
+                                }
+                            }
+                            .frame(width: 22, height: 22)
+                        }
+                    }
+                }
+
+                if !one.pictures.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(one.pictures, id: \.self) { src in
+                            AsyncImage(url: URL(string: src)) { phase in
+                                if case .success(let image) = phase {
+                                    image.resizable().scaledToFill()
                                         .frame(width: 88, height: 88)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                case .failure:
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(Color.cnCard3)
-                                        .frame(width: 88, height: 88)
-                                        .overlay(
-                                            Image(systemName: "photo")
-                                                .font(.system(size: 14))
-                                                .foregroundStyle(Color.cnInk3)
-                                        )
-                                default:
+                                        .clipShape(RoundedRectangle(cornerRadius: 8,
+                                                                    style: .continuous))
+                                } else {
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                                         .fill(Color.cnCard3)
                                         .frame(width: 88, height: 88)
@@ -2093,10 +2100,71 @@ struct DetailScreen: View {
                             }
                         }
                     }
+                    .padding(.top, 2)
                 }
-                .padding(.top, 2)
+
+                // 楼层：左侧一条竖线把「谁在回谁」串起来。
+                if !one.replies.isEmpty || one.replyCount > 0 {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(Array(one.replies.enumerated()), id: \.offset) { _, reply in
+                            HStack(alignment: .top, spacing: 6) {
+                                avatar(reply.avatar, size: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(reply.author)
+                                        .font(.cnCaption)
+                                        .foregroundStyle(Color.cnInk3)
+                                    Text(reply.text)
+                                        .font(.cnCaption)
+                                        .foregroundStyle(Color.cnInk2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        if one.replyCount > one.replies.count {
+                            Text("共 \(one.replyCount) 条回复")
+                                .font(.cnCaption)
+                                .foregroundStyle(Color.cnBrand)
+                        }
+                    }
+                    .padding(.leading, 10)
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.cnHairline)
+                            .frame(width: 2)
+                    }
+                    .padding(.top, 2)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(spacing: 2) {
+                Image(systemName: "hand.thumbsup")
+                    .font(.system(size: 12, weight: .regular))
+                Text(one.likes > 0 ? Self.compact(one.likes) : "赞")
+                    .font(.system(size: 10))
+            }
+            .foregroundStyle(Color.cnInk3)
+        }
+    }
+
+    /// 圆头像。抓不到就画一个灰底人形，不要留空洞。
+    private func avatar(_ src: String, size: CGFloat) -> some View {
+        AsyncImage(url: URL(string: src)) { phase in
+            if case .success(let image) = phase {
+                image.resizable().scaledToFill()
+            } else {
+                Circle()
+                    .fill(Color.cnCard3)
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .font(.system(size: size * 0.45))
+                            .foregroundStyle(Color.cnInk3)
+                    )
             }
         }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
     }
 
     /// 视频里提到的项目 / 工具 / 网站。
