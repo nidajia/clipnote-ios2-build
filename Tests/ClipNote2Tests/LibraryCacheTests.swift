@@ -105,7 +105,9 @@ final class LibraryCacheTests: XCTestCase {
         let store = LibraryStore(client: makeClient(), cacheDirectory: dir)
         await store.reload()
 
-        XCTAssertEqual(calls, 2, "403 是瞬时失败，应该自动再试一次")
+        // 3 次：第 1 次 403、第 2 次重试 200、第 3 次是成功后再拉一次失败列表。
+        // 之前只写 2 次，但 reload 成功后新增了「顺手拉失败列表」，这里没跟上。
+        XCTAssertEqual(calls, 3, "403 是瞬时失败，应该自动再试一次")
         XCTAssertEqual(store.items.count, 1)
         XCTAssertEqual(store.phase, .loaded)
     }

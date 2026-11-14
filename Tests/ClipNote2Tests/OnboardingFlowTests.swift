@@ -40,13 +40,16 @@ final class OnboardingFlowTests: XCTestCase {
     // MARK: - 步骤是真实事件，不是定时器
 
     @MainActor
-    func testReloadEmitsTheThreeRealStepsInOrder() async {
+    func testReloadEmitsTheThreeRealStepsInOrder() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
         StubURLProtocol.handler = { _ in
             (200, ["Content-Type": "application/json"],
              Data(#"{"libraryVersion":"lv_1","count":1,"generatedAt":0,"items":[{"id":"a1","title":"一条"}]}"#.utf8))
         }
 
-        let store = LibraryStore(client: makeClient())
+        let store = LibraryStore(client: makeClient(), cacheDirectory: dir)
         var steps: [SyncStep] = []
         await store.reload { steps.append($0) }
 
@@ -56,13 +59,16 @@ final class OnboardingFlowTests: XCTestCase {
 
     /// 请求就失败时，只有第一个步骤该发生——这正是「三步动画」和「三步事件」的区别。
     @MainActor
-    func testFailedReloadOnlyReportsConnecting() async {
+    func testFailedReloadOnlyReportsConnecting() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
         StubURLProtocol.handler = { _ in
             (500, ["Content-Type": "application/json"],
              Data(#"{"code":"BOOM","message":"服务端出错","retryable":true}"#.utf8))
         }
 
-        let store = LibraryStore(client: makeClient())
+        let store = LibraryStore(client: makeClient(), cacheDirectory: dir)
         var steps: [SyncStep] = []
         await store.reload { steps.append($0) }
 
@@ -73,6 +79,13 @@ final class OnboardingFlowTests: XCTestCase {
     }
 
     // MARK: -
+
+    private func makeTempDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clipnote-cache-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
 
     private func makeClient() -> ClipNoteClient {
         let config = URLSessionConfiguration.ephemeral
