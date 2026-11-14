@@ -130,15 +130,34 @@ struct APIDiscoverSection: Decodable, Identifiable {
     var id: String { category }
 }
 
+/// 我存过的合集。
+struct APIDiscoverCollection: Decodable, Identifiable {
+    var seasonId: String = ""
+    var itemId: String = ""
+    var title: String = ""
+    var total: Int = 0
+    var index: Int = 0
+    var episodeTitle: String = ""
+    var cover: String = ""
+    var id: String { seasonId }
+}
+
 struct APIDiscoverFeed: Decodable {
     var ok: Bool = false
     var fetchedAt: Int = 0
     var categories: [String] = []
     var sections: [APIDiscoverSection] = []
+    var collections: [APIDiscoverCollection] = []
     var blockedCats: [String] = []
     var hot: [APIDiscoverItem] = []
     var mine: [APIDiscoverItem] = []
     var keywords: [String] = []
+}
+
+struct APIDiscoverMore: Decodable {
+    var ok: Bool = false
+    var page: Int = 1
+    var items: [APIDiscoverItem] = []
 }
 
 /// 发现页点开的预览：只解析出播放地址，不入库。
@@ -759,10 +778,19 @@ struct ClipNoteClient {
         guard var components = URLComponents(string: baseURL.absoluteString + path) else {
             return nil
         }
-        components.queryItems = [
-            URLQueryItem(name: "sharecode", value: shareCode),
-            URLQueryItem(name: "code", value: shareCode)
-        ]
+        // 必须在**已有参数**上追加，不能整体覆盖。
+        //
+        // 之前这里是 `components.queryItems = [sharecode, code]`，把 path 里
+        // 自带的 `u=` / `page=` / `sort=` / `cid=` 全丢了。后果：
+        //   · 预览 `/preview?u=<链接>` → 服务端收到空 u → 「找不到播放地址」
+        //   · 楼层 `/replies?cid=<id>` → 缺 cid → 展开回复永远失败
+        //   · 翻页 `/comments?page=2&sort=new` → 永远第 1 页、永远按热度
+        // 一个赋值语句，同时废掉三个功能，而且全都表现为「看起来没做」。
+        var items = components.queryItems ?? []
+        items.removeAll { $0.name == "sharecode" || $0.name == "code" }
+        items.append(URLQueryItem(name: "sharecode", value: shareCode))
+        items.append(URLQueryItem(name: "code", value: shareCode))
+        components.queryItems = items
         return components.url
     }
 
@@ -866,6 +894,12 @@ struct ClipNoteClient {
 
     private func encoded(_ raw: String) -> String {
         raw.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? raw
+    }
+
+    /// 某个分类的下一页（无限下滑用）。
+    func discoverMore(category: String, page: Int) async throws -> APIDiscoverMore {
+        try await get("/api/v2/discover/more?category=\(encoded(category))&page=\(page)",
+                      as: APIDiscoverMore.self, timeout: 20)
     }
 
     func subscriptions() async throws -> APISubList {
@@ -1505,6 +1539,11 @@ final class LibraryStore: ObservableObject {
     func preview(url link: String) async throws -> APIPreview {
         guard let client else { throw ClipNoteClient.Failure.transport("离线模式") }
         return try await client.preview(url: link)
+    }
+
+    func discoverMore(category: String, page: Int) async -> [APIDiscoverItem] {
+        guard let client else { return [] }
+        return (try? await client.discoverMore(category: category, page: page))?.items ?? []
     }
 
     /// 收藏一条链接到首页（真的入库）。

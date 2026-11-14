@@ -25,17 +25,29 @@ struct DiscoverScreen: View {
     @State private var openedSub: APISubscription?
     /// 正在预览的那条（点卡片 = 应用内直接看，不跳浏览器）。
     @State private var playing: APIDiscoverItem?
+    /// 下滑加载的追加内容（按分类翻页，B 站搜索）。
+    @State private var extra: [APIDiscoverItem] = []
+    @State private var morePage = 1
+    @State private var loadingMore = false
+    @State private var noMore = false
 
     private var hot: [APIDiscoverItem] {
         guard let feed else { return [] }
+        if category == "合集" { return [] }
         guard category != "全部" else { return feed.hot }
         // 用服务端分好组的那一份。之前是从 hot 里 filter，而 hot 只有前 60 条，
         // 「商业」「学习」排在 60 名之外 → 切过去一片空白。
+        var base: [APIDiscoverItem] = []
         if let sec = feed.sections.first(where: { $0.category == category }) {
-            return sec.items
+            base = sec.items
         }
-        return []
+        // 追加下滑加载的部分，按 id 去重。
+        let seen = Set(base.map(\.id))
+        base.append(contentsOf: extra.filter { !seen.contains($0.id) })
+        return base
     }
+
+    private var collections: [APIDiscoverCollection] { feed?.collections ?? [] }
 
     private var mine: [APIDiscoverItem] {
         guard let feed else { return [] }
@@ -58,7 +70,11 @@ struct DiscoverScreen: View {
                 } else {
                     subsSection
                     mineSection
-                    hotSection
+                    if category == "合集" {
+                        collectionsSection
+                    } else {
+                        hotSection
+                    }
                     blockedFooter
                 }
             }
@@ -87,6 +103,11 @@ struct DiscoverScreen: View {
         }
         .task {
             if feed == nil { await load(refresh: false) }
+        }
+        .onChange(of: category) { _ in
+            extra = []
+            morePage = 1
+            noMore = false
         }
         .sheet(item: $blocking) { one in
             BlockSheet(item: one) { cat in
@@ -274,9 +295,107 @@ struct DiscoverScreen: View {
                             .padding(.leading, Metric.pagePad + 104)
                     }
                     hotRow(one)
+                        .onAppear {
+                            if one.id == hot.last?.id {
+                                Task { await loadMore() }
+                            }
+                        }
                 }
             }
         }
+    }
+
+    /// 合集一栏：我存过的所有多集作品。
+    ///
+    /// 之前合集只藏在每条视频的详情页里，用户得先猜「这条是不是合集」。
+    /// 全部摊在发现页，一眼看到自己在追哪几部。
+    private var collectionsSection: some View {
+        VStack(alignment: .leading, spacing: Metric.space3) {
+            sectionHeader("我的合集", detail: "\(collections.count) 部")
+
+            if collections.isEmpty {
+                Text("还没有多集作品。你在 B 站收藏的合集会出现在这里。")
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+                    .padding(.horizontal, Metric.pagePad)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(collections) { one in
+                        collectionRow(one)
+                        if one.id != collections.last?.id {
+                            Divider().overlay(Color.cnHairlineSoft)
+                                .padding(.leading, Metric.pagePad + 104)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func collectionRow(_ one: APIDiscoverCollection) -> some View {
+        let target = library.items.first(where: { $0.id == one.itemId })
+        if let target {
+            NavigationLink {
+                DetailScreen(item: target)
+            } label: {
+                collectionLabel(one)
+            }
+            .buttonStyle(.plain)
+        } else {
+            collectionLabel(one)
+        }
+    }
+
+    private func collectionLabel(_ one: APIDiscoverCollection) -> some View {
+        HStack(alignment: .top, spacing: Metric.space3) {
+            ZStack {
+                RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous)
+                    .fill(Color.cnCard3)
+                if !one.cover.isEmpty {
+                    AsyncImage(url: URL(string: one.cover)) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Color.clear
+                        }
+                    }
+                }
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Text("\(one.index)/\(one.total)")
+                            .font(.cnDuration)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.black.opacity(0.6), in: Capsule())
+                    }
+                }
+                .padding(3)
+            }
+            .frame(width: 92, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(one.title)
+                    .font(.cnRowTitle)
+                    .foregroundStyle(Color.cnInk)
+                    .lineLimit(1)
+                Text("共 \(one.total) 集 · 已存第 \(one.index) 集")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnBrand)
+                Text(one.episodeTitle)
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.vertical, Metric.space3)
+        .contentShape(Rectangle())
     }
 
     private var filterBar: some View {
@@ -474,9 +593,23 @@ struct DiscoverScreen: View {
                 }
             }
 
-            if one.duration > 0 {
-                VStack {
+            // 平台角标：用户的原话是「抖音和 B 站热榜视频我分辨不出来」。
+            // 两个平台的封面风格本来就接近，只能靠明确标识。
+            VStack {
+                HStack {
+                    Text(one.platform == "douyin" ? "抖音" : "B站")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(one.platform == "douyin" ? Color.black.opacity(0.72)
+                                                              : Color(red: 0.98, green: 0.45,
+                                                                      blue: 0.60).opacity(0.92),
+                                    in: Capsule())
                     Spacer()
+                }
+                Spacer()
+                if one.duration > 0 {
                     HStack {
                         Spacer()
                         Text(Self.clock(one.duration))
@@ -487,8 +620,8 @@ struct DiscoverScreen: View {
                             .background(Color.black.opacity(0.55), in: Capsule())
                     }
                 }
-                .padding(3)
             }
+            .padding(3)
         }
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous))
@@ -528,6 +661,23 @@ struct DiscoverScreen: View {
             errorText = "热榜拉不到，检查一下网络。已经存的内容不受影响。"
         }
         subs = await library.subscriptions()
+    }
+
+    /// 下滑到底部时继续取。只对具体分类有效——「全部」已经是混合流，
+    /// 再按分类翻页会重复。
+    private func loadMore() async {
+        guard !loadingMore, !noMore else { return }
+        guard category != "全部", category != "合集" else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        let next = morePage + 1
+        let rows = await library.discoverMore(category: category, page: next)
+        if rows.isEmpty {
+            noMore = true
+        } else {
+            extra.append(contentsOf: rows)
+            morePage = next
+        }
     }
 
     private func block(_ one: APIDiscoverItem, category: String) async {
