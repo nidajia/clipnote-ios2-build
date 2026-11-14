@@ -365,7 +365,7 @@ struct SnapshotRoot: View {
             NavigationStack {
                 if state == "collection" {
                     CollectionScreen(itemId: "season-preview", seasonId: "season-preview",
-                                     title: "AI 生产力", cover: "", total: 24)
+                                     title: "AI 生产力", cover: "", total: 9)
                 } else {
                     DiscoverScreen(initialCategory: state == "discover-collections" ? "合集" : nil)
                 }

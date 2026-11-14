@@ -341,16 +341,11 @@ struct CollectionScreen: View {
             loading = false
             return
         }
-        if library.isOffline {
-            // 离线：用库里同合集的条目兜底，不再打网络。
-            loading = false
-            failed = ""
-            markScrollTarget()
-            return
-        }
         loading = true
         failed = ""
         do {
+            // 离线（截图/预览）时 LibraryStore 会直接给种子目录；
+            // 真断网时这里抛错，下面退化成「库里同合集的条目」。
             let result = try await library.season(id: itemId)
             season = result
             if result.episodes.isEmpty {
