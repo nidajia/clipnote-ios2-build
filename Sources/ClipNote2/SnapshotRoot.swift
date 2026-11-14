@@ -601,7 +601,7 @@ struct SnapshotRoot: View {
     /// 发现页样本：分类 + 热榜 + 合集 + 「你存过的」。
     static let sampleDiscoverFeed: APIDiscoverFeed = {
         func item(_ id: String, _ title: String, _ cat: String,
-                  _ author: String, _ views: Int, duration: Int) -> APIDiscoverItem {
+                  _ author: String, _ views: Int, _ duration: Int) -> APIDiscoverItem {
             APIDiscoverItem(id: id, platform: "bilibili", title: title, author: author,
                             views: views, duration: duration, url: "https://www.bilibili.com/video/\(id)",
                             category: cat, interest: 1)
