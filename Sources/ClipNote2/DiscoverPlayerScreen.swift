@@ -25,12 +25,11 @@ struct DiscoverPlayerScreen: View {
     @State private var notice = ""
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    playerArea
+            VStack(spacing: 0) {
+                playerArea
 
                     VStack(alignment: .leading, spacing: Metric.space3) {
                         Text(item.title)
@@ -99,19 +98,24 @@ struct DiscoverPlayerScreen: View {
                     }
                     .padding(Metric.pagePad)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
-            .navigationTitle("预览")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(Color.black, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
-                        .foregroundStyle(.white)
-                }
+        }
+        // 关闭按钮用固定位置的 overlay，而不是导航栏工具栏：
+        // 之前放工具栏里，视频加载时 AVPlayer 会反复重排导航栏安全区，
+        // 左上角那个「关闭」就会跟着乱跳。
+        .overlay(alignment: .topLeading) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Color.white.opacity(0.16), in: Circle())
             }
+            .padding(.top, 8)
+            .padding(.leading, 16)
+            .accessibilityLabel("关闭")
         }
         .task { await load() }
         .onDisappear { player?.pause() }

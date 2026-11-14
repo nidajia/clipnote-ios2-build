@@ -1564,8 +1564,12 @@ final class LibraryStore: ObservableObject {
         do {
             _ = try await client.addSubscription(itemId: itemId)
             return nil
+        } catch let failure as ClipNoteClient.Failure {
+            // 不能直接 "\(error)"——那会把枚举连同关联值整个 dump 出来
+            // （形如 `malformed(keyNotFound(...))`），用户看到的就是一串乱码。
+            return "关注失败：\(failure.displayMessage)"
         } catch {
-            return "订阅失败：\(error)"
+            return "关注失败：\(error.localizedDescription)"
         }
     }
 

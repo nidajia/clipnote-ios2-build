@@ -75,7 +75,7 @@ struct DetailScreen: View {
     @State private var commentsExpanded = false
     /// 「加载更多」实时拉回来的评论（快照只有前 50 条，看全要靠翻页）。
     @State private var liveComments: [APIComment] = []
-    @State private var commentsPage = 1
+    @State private var commentsPage = 0
     @State private var commentsSort = "hot"
     @State private var loadingComments = false
     @State private var commentsExhausted = false
@@ -2310,18 +2310,28 @@ struct DetailScreen: View {
         // 快照里已经存了前 N 条（最多 50）。按热度翻页时必须**接着往后翻**，
         // 而不是从第 1 页重来——重来会用 20 条覆盖掉快照里的 50 条，
         // 用户看到的就是「点了加载更多，评论反而变少了」（实测反馈）。
+        // 注意 commentsPage 初始值是 0（不是 1）：为 0 才代表「还没翻过页」。
         let perPage = 20
         let useSnapshot = commentsPage == 0 && sort == "hot" && !current.comments.isEmpty
         let next: Int
         if useSnapshot {
-            next = max(1, (current.comments.count + perPage - 1) / perPage + 1)
+            // 快照是「按热度前 N 条」，跨了 ceil(N/20) 页。接着翻要先翻到快照
+            // 所在的最后一页（不能 +1 跳页，会把那一页的尾巴漏掉），再按 cid 去重。
+            next = max(1, (current.comments.count + perPage - 1) / perPage)
         } else {
             next = commentsPage + 1
         }
         do {
             let page = try await library.comments(id: current.id, page: next, sort: sort)
             if useSnapshot {
-                liveComments = current.comments + page.comments
+                var merged = current.comments
+                var seen = Set(merged.map(\.cid).filter { !$0.isEmpty })
+                for c in page.comments {
+                    if !c.cid.isEmpty, seen.contains(c.cid) { continue }
+                    merged.append(c)
+                    if !c.cid.isEmpty { seen.insert(c.cid) }
+                }
+                liveComments = merged
             } else if commentsPage == 0 {
                 liveComments = page.comments
             } else {

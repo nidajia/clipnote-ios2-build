@@ -70,6 +70,10 @@ struct DiscoverScreen: View {
                 } else {
                     subsSection
                     mineSection
+                    // 分类栏放这里而不是塞进热榜区块：切到「合集」时热榜区块
+                    // 整个不渲染，分类栏跟着消失，用户就再也切不回「全部 / 科技」——
+                    // 表现就是「点了合集回不去」。分类栏必须始终可见。
+                    filterBar
                     if category == "合集" {
                         collectionsSection
                     } else {
@@ -284,8 +288,6 @@ struct DiscoverScreen: View {
     private var hotSection: some View {
         VStack(alignment: .leading, spacing: Metric.space3) {
             sectionHeader("前沿热榜", detail: feed.map { Self.agoText($0.fetchedAt) } ?? "")
-
-            filterBar
 
             VStack(spacing: 0) {
                 ForEach(Array(hot.enumerated()), id: \.element.id) { index, one in
