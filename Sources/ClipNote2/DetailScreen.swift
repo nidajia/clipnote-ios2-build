@@ -2281,13 +2281,25 @@ struct DetailScreen: View {
         if reset {
             commentsSort = sort
             liveComments = []
-            commentsPage = 1
+            commentsPage = 0
             commentsExhausted = false
         }
-        let next = liveComments.isEmpty ? 1 : commentsPage + 1
+        // 快照里已经存了前 N 条（最多 50）。按热度翻页时必须**接着往后翻**，
+        // 而不是从第 1 页重来——重来会用 20 条覆盖掉快照里的 50 条，
+        // 用户看到的就是「点了加载更多，评论反而变少了」（实测反馈）。
+        let perPage = 20
+        let useSnapshot = commentsPage == 0 && sort == "hot" && !current.comments.isEmpty
+        let next: Int
+        if useSnapshot {
+            next = max(1, (current.comments.count + perPage - 1) / perPage + 1)
+        } else {
+            next = commentsPage + 1
+        }
         do {
             let page = try await library.comments(id: current.id, page: next, sort: sort)
-            if next == 1 {
+            if useSnapshot {
+                liveComments = current.comments + page.comments
+            } else if commentsPage == 0 {
                 liveComments = page.comments
             } else {
                 liveComments.append(contentsOf: page.comments)

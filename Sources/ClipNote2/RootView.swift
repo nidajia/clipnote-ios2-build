@@ -56,7 +56,11 @@ struct RootView: View {
         // 启动日志放在这里而不是 init：View 的 init 会被调用多次，
         // 放 init 里会往日志文件写一串重复的「启动」。
         .task {
-            logs.info("app.launch", "启动", meta: ["version": AppVersion.text])
+            // tabs / discover 这两个标记是给排障用的：
+            // 用户在手机上说不清「有没有第三栏」时，这条日志能直接回答
+            // 「他跑的这一版到底有没有发现页」。
+            logs.info("app.launch", "启动",
+                      meta: ["version": AppVersion.text, "tabs": "3", "discover": "1"])
         }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }

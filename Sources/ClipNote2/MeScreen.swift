@@ -27,6 +27,15 @@ struct MeScreen: View {
                 // 带箭头却点不开，比没有箭头更让人困惑。
                 settingsRow("下载与存储", storageValue, showsChevron: false)
                 settingsRow("播放", "自动横屏", showsChevron: false)
+                // 双入口：底部有第三栏，这里再给一条路径。
+                // 理由很实在——Tab 栏在某些情况下会被隐藏（比如停在详情页时
+                // 为了腾空间），那时用户就找不到热榜了。
+                NavigationLink {
+                    DiscoverScreen()
+                } label: {
+                    settingsRow("发现", "热榜 · 关注 · 你存过的话题", showsChevron: false)
+                }
+
                 NavigationLink {
                     AISettingsScreen()
                 } label: {

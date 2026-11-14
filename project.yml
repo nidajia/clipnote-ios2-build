@@ -38,7 +38,7 @@ targets:
       base:
         PRODUCT_NAME: ClipNote2
         PRODUCT_BUNDLE_IDENTIFIER: com.clipnote.v2
-        MARKETING_VERSION: "8.0.0"
+        MARKETING_VERSION: "8.1.0"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
