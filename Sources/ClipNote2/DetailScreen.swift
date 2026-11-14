@@ -70,6 +70,8 @@ struct DetailScreen: View {
     /// 合集剧集（点开才拉）。
     @State private var season: APISeason?
     @State private var seasonOpen = false
+    /// 合集剧集排序："index" 按集数（默认）/ "time" 按发布时间。
+    @State private var seasonSort = "index"
 
     /// 评论区默认收起：它属于补充信息，不该把详情页撑长。
     @State private var commentsExpanded = false
@@ -218,11 +220,13 @@ struct DetailScreen: View {
 
                     projectsRow
 
-                    commentsRow
-
-                    exportRow
-
+                    // 合集、导出、下载放在评论**之前**：评论区动辄几十条，
+                    // 排在它后面等于「要翻到底才能点到」（用户原话）。
                     seasonRow
+
+                    // 导出、下载是「偶尔用一次」的动作，收进折叠区。
+                    // 页面里原来还有一个独立的「导出」行，和这里重复，已删。
+                    moreSection
 
                     if let notice {
                         Text(notice)
@@ -231,8 +235,8 @@ struct DetailScreen: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    // 导出、下载这些是「偶尔用一次」的动作，不该和内容抢位置。
-                    moreSection
+                    // 评论区放最后：它是最长的一块，也是「看完正文再看」的东西。
+                    commentsRow
                 }
                 .padding(Metric.pagePad)
     }
@@ -2022,10 +2026,32 @@ struct DetailScreen: View {
 
                 if seasonOpen {
                     if let season {
+                        let eps = sortedEpisodes(season.episodes)
+                        // 排序切换：用户原话「没法按时间顺序查看」——
+                        // 合集动辄上百集，只能顺着集数翻，想找最近更新的很费劲。
+                        HStack(spacing: Metric.space3) {
+                            ForEach([("index", "按集数"), ("time", "按时间")], id: \.0) { key, label in
+                                Button {
+                                    seasonSort = key
+                                } label: {
+                                    Text(label)
+                                        .font(.cnCaption)
+                                        .foregroundStyle(seasonSort == key
+                                                         ? Color.cnBrand : Color.cnInk3)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            Spacer(minLength: 0)
+                            Text("共 \(eps.count) 集")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.cnInk3)
+                        }
+                        .padding(.bottom, 4)
+
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(season.episodes, id: \.videoId) { ep in
+                            ForEach(eps, id: \.videoId) { ep in
                                 seasonEpisodeRow(ep)
-                                if ep.videoId != season.episodes.last?.videoId {
+                                if ep.videoId != eps.last?.videoId {
                                     Divider().overlay(Color.cnHairlineSoft)
                                 }
                             }
@@ -2062,9 +2088,14 @@ struct DetailScreen: View {
                 .lineLimit(1)
             Spacer(minLength: 0)
             if ep.current {
-                Text("当前")
-                    .font(.system(size: 9))
+                // 「当前查看的是哪个」要说清楚：只写「当前」两个字太轻，
+                // 加个胶囊底 + 「正在看」，滚到这一行一眼能认出来。
+                Text("正在看")
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Color.cnBrand)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.cnBrandSoft, in: Capsule())
             } else if !ep.itemId.isEmpty {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.system(size: 10))
@@ -2072,6 +2103,9 @@ struct DetailScreen: View {
             }
         }
         .padding(.vertical, 7)
+        .padding(.horizontal, 6)
+        .background(ep.current ? Color.cnBrandSoft.opacity(0.55) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .contentShape(Rectangle())
 
         if !ep.itemId.isEmpty, !ep.current,
@@ -2141,6 +2175,17 @@ struct DetailScreen: View {
     private func loadSeason() async {
         guard !library.isOffline else { return }
         season = try? await library.season(id: current.id)
+    }
+
+    /// 合集剧集排序。按集数 = 接口原序；按时间 = 按发布时间升序，
+    /// 没有发布时间的排最后（否则 created=0 会全挤到最前面）。
+    private func sortedEpisodes(_ episodes: [APISeasonEpisode]) -> [APISeasonEpisode] {
+        guard seasonSort == "time" else { return episodes }
+        return episodes.sorted {
+            let a = $0.created > 0 ? $0.created : Int.max
+            let b = $1.created > 0 ? $1.created : Int.max
+            return a < b
+        }
     }
 
     /// 原视频互动数据。只画非零项——抖音没有播放量，硬画一个「播放 0」
@@ -2244,7 +2289,10 @@ struct DetailScreen: View {
                         Spacer(minLength: 0)
                     }
 
-                    VStack(alignment: .leading, spacing: Metric.space3) {
+                    // LazyVStack 而不是 VStack：评论动辄 50+ 条，每条带头像、
+                    // 表情、楼层。VStack 会一次性把所有 cell 都建出来，
+                    // 滚动时明显卡顿；Lazy 只渲染可见范围。
+                    LazyVStack(alignment: .leading, spacing: Metric.space3) {
                         ForEach(Array(displayComments.enumerated()), id: \.offset) { index, one in
                             if index > 0 {
                                 Divider().overlay(Color.cnHairlineSoft)
@@ -2339,10 +2387,18 @@ struct DetailScreen: View {
             }
             commentsPage = next
             commentsExhausted = !page.hasMore || page.comments.isEmpty
-        } catch {
+        } catch let failure as ClipNoteClient.Failure {
             // 静默失败会让「按时间」看起来完全没反应——必须说一句。
+            if case .http(let status, _, let message) = failure, status == 429 {
+                // 真限流：不要把「加载更多」永久关掉，允许隔一会儿再试。
+                notice = message ?? "评论接口暂时限流，过一会儿再试。"
+            } else {
+                commentsExhausted = true
+                notice = "评论加载失败：\(failure.displayMessage)"
+            }
+        } catch {
             commentsExhausted = true
-            notice = "评论加载失败，可能是平台限流，过一会儿再试。"
+            notice = "评论加载失败，检查一下网络。"
         }
     }
 

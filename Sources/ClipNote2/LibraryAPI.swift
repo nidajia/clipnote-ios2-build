@@ -944,9 +944,11 @@ struct ClipNoteClient {
     }
 
     /// 评论区某一页（实时拉，不写快照）。`sort` 是 "hot" 或 "new"。
+    /// 超时给到 30 秒：服务端要现连 B 站，网络抖动时 12 秒会把「能拿到」变成
+    /// 「平台限流」——而后者根本是两回事。
     func comments(id: String, page: Int, sort: String) async throws -> APICommentPage {
         try await get("/api/v2/items/\(encode(id))/comments?page=\(page)&sort=\(sort)",
-                      as: APICommentPage.self)
+                      as: APICommentPage.self, timeout: 30)
     }
 
     /// 快捷导入失败的链接列表。
