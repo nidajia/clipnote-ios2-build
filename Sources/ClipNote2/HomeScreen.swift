@@ -546,6 +546,23 @@ struct HomeScreen: View {
                 .buttonStyle(.plain)
                 .disabled(picked.isEmpty || batchWorking)
 
+                // 批量总结：多选后一次提交，服务端逐条跑，用户可以退出 App 等结果。
+                Button {
+                    Task { await runBatchSummary() }
+                } label: {
+                    Text(batchWorking ? "处理中…" : "总结")
+                        .font(.cnChip)
+                        .foregroundStyle(picked.isEmpty ? Color.cnInk3 : Color.cnBrand)
+                        .padding(.horizontal, Metric.space3)
+                        .padding(.vertical, 8)
+                        .background(
+                            (picked.isEmpty ? Color.cnCard3 : Color.cnBrandSoft),
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(picked.isEmpty || batchWorking)
+
                 Button {
                     confirmBatchDelete = true
                 } label: {
@@ -566,6 +583,32 @@ struct HomeScreen: View {
             .padding(.vertical, Metric.space2)
         }
         .background(Color.cnBg)
+    }
+
+    /// 批量总结：提交到服务端排队跑，跑完写回快照，用户下次同步可见。
+    ///
+    /// 不在本地循环调模型：那样用户得一直开着 App，切走就断。
+    private func runBatchSummary() async {
+        guard !picked.isEmpty, !batchWorking else { return }
+        batchWorking = true
+        defer { batchWorking = false }
+
+        let result = await library.batchSummary(ids: Array(picked))
+        if let err = result.error {
+            showToast(err)
+            return
+        }
+        if result.submitted == 0 {
+            showToast(result.skipped > 0 ? "选中的都已有摘要了" : "没有可总结的条目")
+            return
+        }
+        var msg = "已提交 \(result.submitted) 条，后台生成中"
+        if result.skipped > 0 { msg += "（\(result.skipped) 条已有摘要跳过）" }
+        showToast(msg)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            selecting = false
+            picked.removeAll()
+        }
     }
 
     private func runBatchDelete() async {

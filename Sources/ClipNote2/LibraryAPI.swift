@@ -1150,6 +1150,24 @@ struct ClipNoteClient {
                        as: APIBatchResult.self)
     }
 
+    /// 批量总结：服务端逐条提交摘要任务（复用导入那套 prompt），
+    /// 跑完写回快照，客户端下次同步就能看到。
+    func batchSummary(ids: [String]) async throws -> APIBatchSummary {
+        try await post("/api/v2/items/batch-summary",
+                       body: ["ids": ids],
+                       as: APIBatchSummary.self)
+    }
+
+    struct APIBatchSummary: Decodable {
+        var ok: Bool = false
+        /// 本次真正提交了几条
+        var submitted: Int = 0
+        /// 已有摘要、跳过
+        var skipped: Int = 0
+        /// 服务端找不到这条（可能已被删）
+        var missing: Int = 0
+    }
+
     /// 回收站列表
     func trash() async throws -> APITrash {
         try await get("/api/v2/trash", as: APITrash.self)
@@ -1981,6 +1999,27 @@ final class LibraryStore: ObservableObject {
     /// 批量移到回收站。
     func batchDelete(ids: [String]) async -> Int? {
         await batch("delete", ids: ids)
+    }
+
+    /// 批量总结。返回 (本次提交数, 已有摘要跳过数, 失败提示)。
+    ///
+    /// 不在本地逐条调模型：任务提交到服务端排队跑，用户退出 App 也会继续，
+    /// 跑完写回快照。所以这里只关心「提交成功了几条」。
+    func batchSummary(ids: [String]) async -> (submitted: Int, skipped: Int, error: String?) {
+        guard let client, !ids.isEmpty else { return (0, 0, "没有选中条目") }
+        do {
+            let r = try await client.batchSummary(ids: ids)
+            log?.info("batch.summary", "批量总结已提交", meta: [
+                "count": String(r.submitted), "skipped": String(r.skipped),
+            ])
+            return (r.submitted, r.skipped, nil)
+        } catch let failure as ClipNoteClient.Failure {
+            log?.error("batch.summary.failed", failure.displayMessage,
+                       meta: ["count": String(ids.count)])
+            return (0, 0, failure.displayMessage)
+        } catch {
+            return (0, 0, error.localizedDescription)
+        }
     }
 
     func loadTrash() async throws -> [APILibraryItem] {
