@@ -72,6 +72,10 @@ struct DetailScreen: View {
     @State private var seasonOpen = false
     /// 合集剧集排序："index" 按集数（默认）/ "time" 按发布时间。
     @State private var seasonSort = "index"
+    /// 合集里「没入库的那一集」，点了就在应用内直接播——不跳浏览器。
+    @State private var previewEpisode: APIDiscoverItem?
+    /// 自动起播只做一次（页面重新出现不该又播一遍）。
+    @State private var didAutoPlay = false
 
     /// 评论区默认收起：它属于补充信息，不该把详情页撑长。
     @State private var commentsExpanded = false
@@ -119,8 +123,15 @@ struct DetailScreen: View {
     /// 从搜索结果进来时，直接落到字幕页的这一句。
     var focusTranscriptAt: Int? = nil
 
-    init(item: Item, initialPrepare: PrepareState? = nil, focusTranscriptAt: Int? = nil) {
+    /// 进页面就起播。合集目录里点某一集走这条：用户点一集就是「我要看这一集」，
+    /// 再让他找播放键点第二次是多余的。
+    var autoPlay: Bool = false
+
+    init(item: Item, initialPrepare: PrepareState? = nil, focusTranscriptAt: Int? = nil,
+         autoPlay: Bool = false) {
         self.item = item
+        self.focusTranscriptAt = focusTranscriptAt
+        self.autoPlay = autoPlay
         if let initialPrepare {
             _prepare = State(initialValue: initialPrepare)
         }
@@ -302,6 +313,11 @@ struct DetailScreen: View {
         // 而不是让用户点下去才知道下多大。有 5 分钟缓存，来回切页不会重复打上游。
         .task {
             await prefetch()
+            // 从合集目录点进来：直接起播，别让用户再找一次播放键。
+            if autoPlay, !didAutoPlay {
+                didAutoPlay = true
+                await startPlayback()
+            }
             await maybeSummarize()
             await maybeLoadSegments()
         }
@@ -417,6 +433,14 @@ struct DetailScreen: View {
             RelinkSheet(item: current) {
                 notice = "链接补上了，作者主页和原视频现在能直达。"
             }
+        }
+        // 合集里「还没存下来」的那一集：应用内在线播放，不再因为没入库就甩去浏览器。
+        .sheet(item: $previewEpisode, onDismiss: {
+            // 播放页里可能刚收藏了这一集，回来把「已存」小图标刷新一下。
+            if seasonOpen { Task { await loadSeason() } }
+        }) { one in
+            DiscoverPlayerScreen(item: one)
+                .environmentObject(library)
         }
         .sheet(isPresented: $editingAuthorNote) {
             AuthorNoteSheet(
@@ -2111,21 +2135,54 @@ struct DetailScreen: View {
         if !ep.itemId.isEmpty, !ep.current,
            let target = library.items.first(where: { $0.id == ep.itemId }) {
             NavigationLink {
-                DetailScreen(item: target)
+                // 点一集就是「看这一集」：进详情直接起播，不再让用户找播放键。
+                DetailScreen(item: target, autoPlay: true)
             } label: {
                 label
             }
             .buttonStyle(.plain)
+            .contextMenu { seasonExternalMenu(ep) }
         } else {
+            // 没入库不等于「只能去 B 站看」：应用内解析地址直接播。
+            // 外部打开降级成长按菜单里的一项，由用户显式选。
             Button {
-                if let url = URL(string: ep.url) {
-                    UIApplication.shared.open(url)
+                if ep.current {
+                    // 当前这一集就在下面播着，点它不要重复解析
+                    Task { await startPlayback() }
+                } else {
+                    previewEpisode = previewItem(ep)
                 }
             } label: {
                 label
             }
             .buttonStyle(.plain)
+            .contextMenu { seasonExternalMenu(ep) }
         }
+    }
+
+    @ViewBuilder
+    private func seasonExternalMenu(_ ep: APISeasonEpisode) -> some View {
+        if let url = URL(string: ep.url), !ep.url.isEmpty {
+            Button {
+                UIApplication.shared.open(url)
+            } label: {
+                Label("在浏览器打开这一集", systemImage: "safari")
+            }
+        }
+    }
+
+    /// 合集里某一集 → 预览用的条目（只需 url / 标题 / 封面）。
+    private func previewItem(_ ep: APISeasonEpisode) -> APIDiscoverItem {
+        var one = APIDiscoverItem()
+        one.id = ep.videoId
+        one.videoId = ep.videoId
+        one.platform = "bilibili"
+        one.title = ep.title
+        one.cover = item.coverURL?.absoluteString ?? ""
+        one.author = item.author
+        one.views = ep.views
+        one.url = ep.url
+        return one
     }
 
     /// 「更多操作」：导出、下载。

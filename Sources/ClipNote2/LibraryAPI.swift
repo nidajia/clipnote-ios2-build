@@ -1339,6 +1339,8 @@ final class LibraryStore: ObservableObject {
     private let cacheURL: URL?
     /// 截图/预览用的发现页数据。正常联网时永远为 nil。
     private var seededFeed: APIDiscoverFeed?
+    /// 截图用的合集目录。只在 `client == nil` 时生效。
+    private var seededSeason: APISeason?
 
     /// `client == nil` 表示不联网（截图与预览）。这时只能通过 `loadFixture` 供数。
     /// `cacheDirectory` 只给测试用，正常传 nil 走 Caches。
@@ -1610,7 +1612,11 @@ final class LibraryStore: ObservableObject {
 
     /// 合集剧集清单。
     func season(id: String) async throws -> APISeason {
-        guard let client else { throw ClipNoteClient.Failure.transport("离线模式") }
+        guard let client else {
+            // 截图/预览态没有 client：给种子数据，否则目录页只能是空壳。
+            if let seededSeason { return seededSeason }
+            throw ClipNoteClient.Failure.transport("离线模式")
+        }
         return try await client.season(id: id)
     }
 
@@ -1879,6 +1885,11 @@ final class LibraryStore: ObservableObject {
     /// 截图/预览用：塞发现页数据（分类、热榜、合集）。
     func seedDiscoverFeed(_ feed: APIDiscoverFeed) {
         seededFeed = feed
+    }
+
+    /// 截图用：种一份合集目录。
+    func seedSeason(_ season: APISeason) {
+        seededSeason = season
     }
 
     /// 保存笔记。返回是否成功。

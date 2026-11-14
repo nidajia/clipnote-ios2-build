@@ -126,6 +126,8 @@ shot infographic        infographic        light
 # 发现页：验筛选栏始终在（切「合集」也回得去）、热榜能渲染、合集入口可见
 shot discover              discover              light
 shot discover-collections  discover-collections  light
+# 合集目录：点合集先进这一页（有集数/时间/播放量/正在看），点某一集才播
+shot collection            collection            light
 # 本机转写面板（sheet，只能作为根呈现）。
 # 模拟器上真跑只会停在「这台设备暂时不行」，所以这几张全走 preview 注入。
 # 除了「转写中 / 完成」，另外四张是**失败路径**：真机上它们要么看运气

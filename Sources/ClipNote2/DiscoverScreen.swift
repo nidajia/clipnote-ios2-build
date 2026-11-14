@@ -341,16 +341,22 @@ struct DiscoverScreen: View {
 
     @ViewBuilder
     private func collectionRow(_ one: APIDiscoverCollection) -> some View {
-        let target = library.items.first(where: { $0.id == one.itemId })
-        if let target {
+        // 点合集先进**目录**，不再直接落到某一集的详情页：
+        // 合集是「一部作品」，详情页是「一集」，把作品当一集打开，
+        // 用户根本不知道还有别的集（原话：不应该先出来视频目录吗）。
+        if one.itemId.isEmpty {
+            collectionLabel(one)
+        } else {
             NavigationLink {
-                DetailScreen(item: target)
+                CollectionScreen(itemId: one.itemId,
+                                 seasonId: one.seasonId,
+                                 title: one.title,
+                                 cover: one.cover,
+                                 total: one.total)
             } label: {
                 collectionLabel(one)
             }
             .buttonStyle(.plain)
-        } else {
-            collectionLabel(one)
         }
     }
 
@@ -799,6 +805,9 @@ private struct SubSheet: View {
     var onRemove: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var library: LibraryStore
+    /// 点哪一条就在这儿播，不跳浏览器。
+    @State private var playing: APIDiscoverItem?
 
     var body: some View {
         NavigationStack {
@@ -829,9 +838,7 @@ private struct SubSheet: View {
 
                     ForEach(sub.videos, id: \.videoId) { video in
                         Button {
-                            if let url = URL(string: video.url) {
-                                UIApplication.shared.open(url)
-                            }
+                            playing = previewItem(video)
                         } label: {
                             HStack(spacing: Metric.space3) {
                                 AsyncImage(url: URL(string: video.cover)) { phase in
@@ -862,6 +869,15 @@ private struct SubSheet: View {
                             .padding(.horizontal, Metric.pagePad)
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            if let url = URL(string: video.url) {
+                                Button {
+                                    UIApplication.shared.open(url)
+                                } label: {
+                                    Label("在浏览器打开", systemImage: "safari")
+                                }
+                            }
+                        }
                     }
 
                     if sub.videos.isEmpty {
@@ -900,7 +916,26 @@ private struct SubSheet: View {
                     Button("完成") { dismiss() }
                 }
             }
+            // 在外层 sheet 里再开一层：iOS 16 起支持，比「先关掉再开播放页」顺。
+            .sheet(item: $playing) { one in
+                DiscoverPlayerScreen(item: one)
+                    .environmentObject(library)
+            }
         }
+    }
+
+    private func previewItem(_ video: APISubVideo) -> APIDiscoverItem {
+        var one = APIDiscoverItem()
+        one.id = video.videoId
+        one.videoId = video.videoId
+        one.platform = sub.platform
+        one.title = video.title
+        one.cover = video.cover
+        one.author = sub.name
+        one.avatar = sub.avatar
+        one.views = video.views
+        one.url = video.url
+        return one
     }
 }
 

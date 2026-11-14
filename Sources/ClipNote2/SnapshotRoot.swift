@@ -26,7 +26,7 @@ struct SnapshotRoot: View {
         self.state = state
         self.appearance = appearance
         _tab = State(initialValue: state == "me" ? 2
-                     : (state.hasPrefix("discover") ? 1 : 0))
+                     : ((state.hasPrefix("discover") || state == "collection") ? 1 : 0))
 
         // 每次启动用独立的临时目录：否则上一次截图种下的「已下载」
         // 会留在 Documents 里，把这一次的「未下载」状态带脏。
@@ -165,6 +165,11 @@ struct SnapshotRoot: View {
         // 验三件事：筛选栏始终在（切「合集」也回得去）、热榜能渲染、合集入口可见。
         if state.hasPrefix("discover") {
             lib.seedDiscoverFeed(SnapshotRoot.sampleDiscoverFeed)
+        }
+
+        // 合集目录截图：验「点合集先进目录」，行内有集数、时间、播放量、正在看标记。
+        if state == "collection" {
+            lib.seedSeason(SnapshotRoot.sampleSeason)
         }
 
         // 脑图：塞一棵三层树。注意分支名刻意都不带时间词——
@@ -358,7 +363,12 @@ struct SnapshotRoot: View {
             .tag(0)
 
             NavigationStack {
-                DiscoverScreen(initialCategory: state == "discover-collections" ? "合集" : nil)
+                if state == "collection" {
+                    CollectionScreen(itemId: "season-preview", seasonId: "season-preview",
+                                     title: "AI 生产力", cover: "", total: 24)
+                } else {
+                    DiscoverScreen(initialCategory: state == "discover-collections" ? "合集" : nil)
+                }
             }
             .tabItem { Label("发现", systemImage: "sparkles") }
             .tag(1)
@@ -631,5 +641,36 @@ struct SnapshotRoot: View {
                                categories: ["全部", "AI", "编程", "科技", "科普", "商业", "合集"],
                                sections: sections, collections: collections, blockedCats: [],
                                hot: hot, mine: [], keywords: ["AI"])
+    }()
+
+    /// 合集目录样本：9 集，两集已存，倒数第二集是「正在看」。
+    ///
+    /// 条数刻意压在一屏多一点：截图要同时拍到标题、集数统计和行内标记，
+    /// 太长就只能拍到半页列表，「目录长什么样」反而看不见。
+    static let sampleSeason: APISeason = {
+        let titles = ["AI 帮你写代码，Cursor 到底值不值得上手",
+                      "大模型参数越多越好吗？一次讲清楚",
+                      "把 Claude 接进自己的工作流",
+                      "RAG 到底解决了什么问题",
+                      "微调和提示词，先选哪个",
+                      "向量数据库入门：从原理到选型",
+                      "Agent 的边界在哪里",
+                      "本地跑模型的三种办法",
+                      "盘点一周 AI 大事（11 月）"]
+        var eps: [APISeasonEpisode] = []
+        for (i, title) in titles.enumerated() {
+            var ep = APISeasonEpisode()
+            ep.videoId = String(format: "BV1season%02d", i + 1)
+            ep.title = title
+            // 从 9 月起每三天一集，最后一集最近
+            ep.created = 1_790_000_000 - (titles.count - i) * 259_200
+            ep.views = 42_000 + i * 3_700
+            ep.url = "https://www.bilibili.com/video/\(ep.videoId)"
+            ep.itemId = i == 1 ? "seed0000000001" : ""
+            ep.current = i == titles.count - 2
+            eps.append(ep)
+        }
+        return APISeason(ok: true, seasonId: "season-preview", title: "AI 生产力",
+                         index: eps.count, total: eps.count, episodes: eps)
     }()
 }
