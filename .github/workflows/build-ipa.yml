@@ -45,7 +45,7 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
-            MARKETING_VERSION=8.0.0 \
+            MARKETING_VERSION="$(awk -F'"' '/MARKETING_VERSION:/{print $2; exit}' project.yml)" \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
