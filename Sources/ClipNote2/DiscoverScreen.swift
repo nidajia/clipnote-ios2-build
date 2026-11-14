@@ -14,11 +14,16 @@ import SwiftUI
 struct DiscoverScreen: View {
     @EnvironmentObject private var library: LibraryStore
 
+    /// 截图用：预设初始分类。正常启动为 nil，落在「全部」。
+    init(initialCategory: String? = nil) {
+        _category = State(initialValue: initialCategory ?? "全部")
+    }
+
     @State private var feed: APIDiscoverFeed?
     @State private var subs: [APISubscription] = []
     @State private var loading = false
     @State private var errorText = ""
-    @State private var category = "全部"
+    @State private var category: String
     @State private var blocking: APIDiscoverItem?
     @State private var showBlockSheet = false
     @State private var showBlockedList = false

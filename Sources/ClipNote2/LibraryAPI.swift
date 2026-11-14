@@ -1317,6 +1317,8 @@ final class LibraryStore: ObservableObject {
     private weak var log: LogStore?
     /// 上一次成功的库快照。放 Caches：系统可以回收，丢了也只是多一次联网。
     private let cacheURL: URL?
+    /// 截图/预览用的发现页数据。正常联网时永远为 nil。
+    private var seededFeed: APIDiscoverFeed?
 
     /// `client == nil` 表示不联网（截图与预览）。这时只能通过 `loadFixture` 供数。
     /// `cacheDirectory` 只给测试用，正常传 nil 走 Caches。
@@ -1531,7 +1533,10 @@ final class LibraryStore: ObservableObject {
     // MARK: 发现页与订阅
 
     func discoverFeed(refresh: Bool = false) async throws -> APIDiscoverFeed {
-        guard let client else { throw ClipNoteClient.Failure.transport("离线模式") }
+        guard let client else {
+            if let seededFeed { return seededFeed }
+            throw ClipNoteClient.Failure.transport("离线模式")
+        }
         return try await client.discoverFeed(refresh: refresh)
     }
 
@@ -1843,6 +1848,17 @@ final class LibraryStore: ObservableObject {
             ? "" : "https://www.bilibili.com/video/\(videoId)"
         items[index].authorNote = note
         items[index].authorAvatar = avatar
+    }
+
+    /// 截图/预览用：塞评论区数据。
+    func seedComments(id: String, comments: [APIComment]) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].comments = comments
+    }
+
+    /// 截图/预览用：塞发现页数据（分类、热榜、合集）。
+    func seedDiscoverFeed(_ feed: APIDiscoverFeed) {
+        seededFeed = feed
     }
 
     /// 保存笔记。返回是否成功。

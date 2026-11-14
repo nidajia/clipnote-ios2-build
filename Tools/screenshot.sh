@@ -123,6 +123,9 @@ shot section-picker     section-picker     light
 shot home-notes         home-notes         light
 shot segments           segments           light
 shot infographic        infographic        light
+# 发现页：验筛选栏始终在（切「合集」也回得去）、热榜能渲染、合集入口可见
+shot discover              discover              light
+shot discover-collections  discover-collections  light
 # 本机转写面板（sheet，只能作为根呈现）。
 # 模拟器上真跑只会停在「这台设备暂时不行」，所以这几张全走 preview 注入。
 # 除了「转写中 / 完成」，另外四张是**失败路径**：真机上它们要么看运气

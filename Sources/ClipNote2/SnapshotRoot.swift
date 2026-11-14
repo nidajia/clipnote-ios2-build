@@ -25,7 +25,8 @@ struct SnapshotRoot: View {
     init(state: String, appearance: ColorScheme?) {
         self.state = state
         self.appearance = appearance
-        _tab = State(initialValue: state == "me" ? 1 : 0)
+        _tab = State(initialValue: state == "me" ? 2
+                     : (state.hasPrefix("discover") ? 1 : 0))
 
         // 每次启动用独立的临时目录：否则上一次截图种下的「已下载」
         // 会留在 Documents 里，把这一次的「未下载」状态带脏。
@@ -152,6 +153,18 @@ struct SnapshotRoot: View {
             lib.seedAuthor(id: id, author: "", authorId: "", videoId: "",
                            note: "讲存储很扎实，适合看架构")
             lib.seedNote(id: id, note: "他的三组对照实验部分可以直接套到我们下季度的容量评估里。\n另外开头的那个提问方式值得学。")
+        }
+
+        // 评论区截图：种几条带楼层、表情、时间、点赞的评论，验「评论区快照」区块
+        // 能渲染（不再只有空壳）。评论数刻意超过 20 条，顺带验「加载更多」不会被 20 条覆盖。
+        if state == "detail", let id = detail?.id {
+            lib.seedComments(id: id, comments: SnapshotRoot.sampleComments)
+        }
+
+        // 发现页截图：种一份带分类、热榜、合集的 feed。
+        // 验三件事：筛选栏始终在（切「合集」也回得去）、热榜能渲染、合集入口可见。
+        if state.hasPrefix("discover") {
+            lib.seedDiscoverFeed(SnapshotRoot.sampleDiscoverFeed)
         }
 
         // 脑图：塞一棵三层树。注意分支名刻意都不带时间词——
@@ -345,10 +358,16 @@ struct SnapshotRoot: View {
             .tag(0)
 
             NavigationStack {
+                DiscoverScreen(initialCategory: state == "discover-collections" ? "合集" : nil)
+            }
+            .tabItem { Label("发现", systemImage: "sparkles") }
+            .tag(1)
+
+            NavigationStack {
                 MeScreen()
             }
             .tabItem { Label("我", systemImage: "person.fill") }
-            .tag(1)
+            .tag(2)
         }
     }
 
@@ -532,4 +551,85 @@ struct SnapshotRoot: View {
         AIModel(id: "BAAI/bge-reranker-v2-m3", note: "重排模型", chattable: false),
         AIModel(id: "FunAudioLLM/SenseVoiceSmall", note: "语音识别", chattable: false),
     ]
+
+    /// 评论区样本。刻意超过 20 条，且带楼层/点赞/时间——
+    /// 验「评论区快照」区块能渲染，同时证明列表不会被「加载更多」用 20 条覆盖。
+    static let sampleComments: [APIComment] = [
+        APIComment(author: "肥鱼肥鱼大", text: "每天看B站日报的我：椅子、核弹、震惊、瘫坐",
+                   likes: 231, replies: [APICommentReply(author: "路人甲", text: "太真实了")],
+                   replyCount: 8, cid: "c1", created: 1794154512),
+        APIComment(author: "比尔乔布斯", text: "我今天看的新闻是fable 5.5废了，内部很多人跑路。真假啊",
+                   likes: 118, replyCount: 0, cid: "c2", created: 1794475068),
+        APIComment(author: "代码侠", text: "这期讲得真透，收藏了",
+                   likes: 87, replyCount: 3, cid: "c3", created: 1794380000),
+        APIComment(author: "早睡星人", text: "看到一半意识到自己也在追热点，赶紧停下来想清楚",
+                   likes: 64, replyCount: 0, cid: "c4", created: 1794360000),
+        APIComment(author: "产品经理小王", text: "这波 AI 工具比去年强太多了，但落地还是看场景",
+                   likes: 52, replyCount: 1, cid: "c5", created: 1794330000),
+        APIComment(author: "数据猿", text: "补充一个数据点：现在模型的单位成本还在快速下降",
+                   likes: 41, replyCount: 0, cid: "c6", created: 1794310000),
+        APIComment(author: "前端阿强", text: "收藏夹吃灰 +1",
+                   likes: 38, replyCount: 0, cid: "c7", created: 1794280000),
+        APIComment(author: "独立开发者", text: "已经用上了，省了至少一半时间",
+                   likes: 35, replyCount: 2, cid: "c8", created: 1794250000),
+        APIComment(author: "考研党", text: "先码住，考完再回来学",
+                   likes: 29, replyCount: 0, cid: "c9", created: 1794220000),
+        APIComment(author: "夜猫子", text: "凌晨三点看这个，思路清晰得可怕",
+                   likes: 26, replyCount: 0, cid: "c10", created: 1794200000),
+        APIComment(author: "运营老张", text: "第二段那个案例我们公司正好用得上",
+                   likes: 22, replyCount: 0, cid: "c11", created: 1794180000),
+        APIComment(author: "学生小林", text: "老师推荐来看的，确实不错",
+                   likes: 19, replyCount: 0, cid: "c12", created: 1794160000),
+        APIComment(author: "设计狮", text: "封面图就很抓人，点进来没失望",
+                   likes: 17, replyCount: 0, cid: "c13", created: 1794140000),
+        APIComment(author: "算法工程师", text: "想听作者展开讲讲多模态那一块",
+                   likes: 15, replyCount: 1, cid: "c14", created: 1794120000),
+        APIComment(author: "白嫖党", text: "先三连再看",
+                   likes: 12, replyCount: 0, cid: "c15", created: 1794100000),
+        APIComment(author: "知识区常客", text: "这质量放在知识区也是第一梯队",
+                   likes: 9, replyCount: 0, cid: "c16", created: 1794080000),
+        APIComment(author: "路人乙", text: "评论区比视频还精彩",
+                   likes: 8, replyCount: 0, cid: "c17", created: 1794060000),
+        APIComment(author: "研究生小刘", text: "论文综述可以用这个思路",
+                   likes: 6, replyCount: 0, cid: "c18", created: 1794040000),
+        APIComment(author: "创业哥", text: "找投资前先把这个看完",
+                   likes: 5, replyCount: 0, cid: "c19", created: 1794020000),
+        APIComment(author: "潜水艇", text: "看了三遍，每次都有新收获",
+                   likes: 3, replyCount: 0, cid: "c20", created: 1794000000),
+    ]
+
+    /// 发现页样本：分类 + 热榜 + 合集 + 「你存过的」。
+    static let sampleDiscoverFeed: APIDiscoverFeed = {
+        func item(_ id: String, _ title: String, _ cat: String,
+                  _ author: String, _ views: Int, duration: Int) -> APIDiscoverItem {
+            APIDiscoverItem(id: id, platform: "bilibili", title: title, author: author,
+                            views: views, duration: duration, url: "https://www.bilibili.com/video/\(id)",
+                            category: cat, interest: 1)
+        }
+        let hot = [
+            item("BV1a", "AI 帮你写代码，Cursor 到底值不值得上手", "AI", "产品君", 120000, 742),
+            item("BV1b", "大模型参数越多越好吗？一次讲清楚", "AI", "科技袁人", 98000, 630),
+            item("BV1c", "Rust 为什么越来越火", "编程", "代码随想录", 76000, 518),
+            item("BV1d", "半导体行业还能上车吗", "科技", "硬核财经", 88000, 445),
+            item("BV1e", "量子力学的通俗解释", "科普", "李永乐老师", 156000, 900),
+            item("BV1f", "副业怎么选：接单还是做产品", "商业", "商业小纸条", 54000, 380),
+        ]
+        let sections = [
+            APIDiscoverSection(category: "AI", items: Array(hot.prefix(2))),
+            APIDiscoverSection(category: "编程", items: Array(hot[2...2])),
+            APIDiscoverSection(category: "科技", items: Array(hot[3...3])),
+            APIDiscoverSection(category: "科普", items: Array(hot[4...4])),
+            APIDiscoverSection(category: "商业", items: Array(hot[5...5])),
+        ]
+        let collections = [
+            APIDiscoverCollection(seasonId: "s1", itemId: "seed0000000001", title: "AI生产力",
+                                  total: 300, index: 299, episodeTitle: "盘点一周 AI 大事", cover: ""),
+            APIDiscoverCollection(seasonId: "s2", itemId: "seed0000000002", title: "科技每周补全",
+                                  total: 125, index: 124, episodeTitle: "本周科技新闻", cover: ""),
+        ]
+        return APIDiscoverFeed(ok: true, fetchedAt: Int(Date().timeIntervalSince1970 * 1000),
+                               categories: ["全部", "AI", "编程", "科技", "科普", "商业", "合集"],
+                               sections: sections, collections: collections, blockedCats: [],
+                               hot: hot, mine: [], keywords: ["AI"])
+    }()
 }
