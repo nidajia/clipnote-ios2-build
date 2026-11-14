@@ -67,6 +67,8 @@ struct APIComment: Decodable, Equatable, Hashable {
     var cid: String = ""
     /// 所在视频的平台 id（抖音楼层接口要）。
     var postId: String = ""
+    /// 评论时间（秒）。之前没存，评论区只能看到内容看不到「什么时候说的」。
+    var created: Int = 0
 }
 
 /// 评论正文的一个片段：文字或表情图。
@@ -81,6 +83,7 @@ struct APICommentReply: Decodable, Equatable, Hashable {
     var avatar: String = ""
     var text: String = ""
     var likes: Int = 0
+    var created: Int = 0
 }
 
 /// 评论翻页结果（实时拉，不写快照）。
@@ -117,14 +120,37 @@ struct APIDiscoverItem: Decodable, Identifiable, Equatable, Hashable {
     var tname: String = ""
 }
 
+/// 一个分类下的全部内容。
+///
+/// 服务端分组返回，而不是「返回 60 条让客户端筛」——之前那样切到「商业」
+/// 就是空的（商业内容排在 60 名之外）。
+struct APIDiscoverSection: Decodable, Identifiable {
+    var category: String = ""
+    var items: [APIDiscoverItem] = []
+    var id: String { category }
+}
+
 struct APIDiscoverFeed: Decodable {
     var ok: Bool = false
     var fetchedAt: Int = 0
     var categories: [String] = []
+    var sections: [APIDiscoverSection] = []
     var blockedCats: [String] = []
     var hot: [APIDiscoverItem] = []
     var mine: [APIDiscoverItem] = []
     var keywords: [String] = []
+}
+
+/// 发现页点开的预览：只解析出播放地址，不入库。
+struct APIPreview: Decodable {
+    var ok: Bool = false
+    var title: String = ""
+    var author: String = ""
+    var cover: String = ""
+    var duration: Int = 0
+    var platform: String = ""
+    var streamUrl: String = ""
+    var sourceUrl: String = ""
 }
 
 /// 订阅者最新的一条投稿。
@@ -785,9 +811,10 @@ struct ClipNoteClient {
         try await get("/api/v2/items/\(encode(id))/transcript", as: APITranscript.self)
     }
 
-    private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+    private func get<T: Decodable>(_ path: String, as type: T.Type,
+                                   timeout: TimeInterval = 12) async throws -> T {
         guard let url = url(path: path) else { throw Failure.transport("地址拼不出来") }
-        let (data, response) = try await send(url)
+        let (data, response) = try await send(url, timeout: timeout)
         try validate(response: response, data: data)
         do {
             return try JSONDecoder().decode(T.self, from: data)
@@ -825,8 +852,20 @@ struct ClipNoteClient {
 
     /// 发现页信息流。`refresh` 为真时绕过 30 分钟缓存。
     func discoverFeed(refresh: Bool) async throws -> APIDiscoverFeed {
+        // 30 秒：服务端要并行取 B 站三个榜 + 抖音两路，冷启动约 5 秒，
+        // 但网关/网络抖动时 12 秒会把「能拿到」变成「拉不到」。
         try await get("/api/v2/discover/feed?refresh=\(refresh ? 1 : 0)",
-                      as: APIDiscoverFeed.self)
+                      as: APIDiscoverFeed.self, timeout: 30)
+    }
+
+    /// 预览一条链接：只解析播放地址，不入库、不跑流水线。
+    func preview(url link: String) async throws -> APIPreview {
+        try await get("/api/v2/preview?u=\(encoded(link))",
+                      as: APIPreview.self, timeout: 30)
+    }
+
+    private func encoded(_ raw: String) -> String {
+        raw.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? raw
     }
 
     func subscriptions() async throws -> APISubList {
@@ -1160,9 +1199,10 @@ struct ClipNoteClient {
         }
     }
 
-    private func send(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+    private func send(_ url: URL,
+                      timeout: TimeInterval = 12) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
-        request.timeoutInterval = 12
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // 共享码也是缓存键的一部分；不额外处理，第一包不缓存响应
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -1461,6 +1501,20 @@ final class LibraryStore: ObservableObject {
         return try await client.discoverFeed(refresh: refresh)
     }
 
+    /// 预览一条链接（只解析，不入库）。
+    func preview(url link: String) async throws -> APIPreview {
+        guard let client else { throw ClipNoteClient.Failure.transport("离线模式") }
+        return try await client.preview(url: link)
+    }
+
+    /// 收藏一条链接到首页（真的入库）。
+    func quickImport(text: String) async throws {
+        guard let client else { throw ClipNoteClient.Failure.transport("离线模式") }
+        _ = try await client.quickImport(text: text)
+        // 入库后立刻拉一次，否则用户回到首页看不到刚收藏的，会以为失败。
+        await reload()
+    }
+
     func subscriptions() async -> [APISubscription] {
         guard let client else { return [] }
         return (try? await client.subscriptions())?.subs ?? []
@@ -1492,10 +1546,10 @@ final class LibraryStore: ObservableObject {
         return try await client.season(id: id)
     }
 
-    /// 展开一层楼。
-    func replies(id: String, cid: String) async -> [APICommentReply] {
-        guard let client else { return [] }
-        return (try? await client.replies(id: id, cid: cid))?.replies ?? []
+    /// 展开一层楼。返回 nil 表示「接口没拉到」（和「真的没回复」要分开）。
+    func replies(id: String, cid: String) async -> APIReplies? {
+        guard let client else { return nil }
+        return try? await client.replies(id: id, cid: cid)
     }
 
     func blockDiscover(itemId: String, category: String) async {

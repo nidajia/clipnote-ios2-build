@@ -23,11 +23,18 @@ struct DiscoverScreen: View {
     @State private var showBlockSheet = false
     @State private var showBlockedList = false
     @State private var openedSub: APISubscription?
+    /// 正在预览的那条（点卡片 = 应用内直接看，不跳浏览器）。
+    @State private var playing: APIDiscoverItem?
 
     private var hot: [APIDiscoverItem] {
         guard let feed else { return [] }
         guard category != "全部" else { return feed.hot }
-        return feed.hot.filter { $0.category == category }
+        // 用服务端分好组的那一份。之前是从 hot 里 filter，而 hot 只有前 60 条，
+        // 「商业」「学习」排在 60 名之外 → 切过去一片空白。
+        if let sec = feed.sections.first(where: { $0.category == category }) {
+            return sec.items
+        }
+        return []
     }
 
     private var mine: [APIDiscoverItem] {
@@ -85,6 +92,10 @@ struct DiscoverScreen: View {
             BlockSheet(item: one) { cat in
                 Task { await block(one, category: cat) }
             }
+        }
+        .sheet(item: $playing) { one in
+            DiscoverPlayerScreen(item: one)
+                .environmentObject(library)
         }
         .sheet(item: $openedSub) { sub in
             SubSheet(sub: sub) {
@@ -182,6 +193,9 @@ struct DiscoverScreen: View {
         guard let first = sub.videos.first, first.created > 0 else {
             return sub.lastCheckedAt == 0 ? "待同步" : "无更新"
         }
+        // 超过 30 天就别写「245 天前」了——那看起来像 Bug，其实是真的没发新东西。
+        let age = Date().timeIntervalSince1970 - Double(first.created)
+        if age > 86400 * 30 { return "长期未更新" }
         return Self.relative(first.created)
     }
 
@@ -333,6 +347,17 @@ struct DiscoverScreen: View {
             .contentShape(Rectangle())
         }
         .contextMenu {
+            Button {
+                // 收藏 = 真的入库：之后能离线、能写笔记、能进摘要和分段。
+                Task { try? await library.quickImport(text: one.url) }
+            } label: {
+                Label("收藏到首页", systemImage: "plus.circle")
+            }
+            Button {
+                playing = one
+            } label: {
+                Label("在应用内播放", systemImage: "play.circle")
+            }
             Button(role: .destructive) {
                 blocking = one
             } label: {
@@ -419,10 +444,9 @@ struct DiscoverScreen: View {
             .buttonStyle(.plain)
         } else {
             Button {
-                // 不 import，只打开原站：这里是「发现」，不是「收藏」。
-                if let url = URL(string: one.url) {
-                    UIApplication.shared.open(url)
-                }
+                // 点开就在 App 里看（服务端预览解析，不入库）。
+                // 之前是 UIApplication.open → 跳浏览器，用户明确说不要。
+                playing = one
             } label: {
                 content()
             }

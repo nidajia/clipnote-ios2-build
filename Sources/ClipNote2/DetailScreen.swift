@@ -682,7 +682,30 @@ struct DetailScreen: View {
         if !item.durationText.isEmpty {
             text = text.isEmpty ? item.durationText : "\(text) · \(item.durationText)"
         }
+        // 发布时间：之前这一行只有平台和时长，用户根本不知道视频是哪年的。
+        // 用「发布于 2025-11-08」，比「3 天前」更适合老内容。
+        if let published = item.publishedAt {
+            text = text.isEmpty ? "发布于 " + Self.day(published)
+                                : text + " · 发布于 " + Self.day(published)
+        }
         return text
+    }
+
+    /// 2025-11-08 这种固定格式（老内容写「N 天前」没有意义）。
+    static func day(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
+    }
+
+    /// 评论区用的相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期。
+    static func ago(_ ts: Int) -> String {
+        let diff = Date().timeIntervalSince1970 - Double(ts)
+        if diff < 60 { return "刚刚" }
+        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        if diff < 86400 * 30 { return "\(Int(diff / 86400)) 天前" }
+        return day(Date(timeIntervalSince1970: TimeInterval(ts)))
     }
 
     // MARK: - 播放器
@@ -2307,7 +2330,9 @@ struct DetailScreen: View {
             commentsPage = next
             commentsExhausted = !page.hasMore || page.comments.isEmpty
         } catch {
+            // 静默失败会让「按时间」看起来完全没反应——必须说一句。
             commentsExhausted = true
+            notice = "评论加载失败，可能是平台限流，过一会儿再试。"
         }
     }
 
@@ -2319,14 +2344,21 @@ struct DetailScreen: View {
         if loadingReply == one.cid { return }
         loadingReply = one.cid
         defer { loadingReply = "" }
-        let rows = await library.replies(id: current.id, cid: one.cid)
-        if !rows.isEmpty {
-            liveReplies[one.cid] = rows
-        } else {
-            notice = one.replyCount > 0
-                ? "这层回复拉不到，可能已经删了。"
-                : "这层还没有回复。"
+        let result = await library.replies(id: current.id, cid: one.cid)
+        guard let result else {
+            // 网络层就失败了。
+            notice = "拉不到这层回复，检查一下网络再试。"
+            return
         }
+        if !result.replies.isEmpty {
+            liveReplies[one.cid] = result.replies
+            return
+        }
+        // 之前一律说「可能已经删了」——用户看到明明还在的评论被说成删了。
+        // 平台接口失败和「真的没有回复」必须分开说。
+        notice = result.ok
+            ? "这层还没有回复。"
+            : "平台的回复接口暂时不可用，过一会儿再试。"
     }
 
     private func commentCell(_ one: APIComment) -> some View {
@@ -2334,10 +2366,17 @@ struct DetailScreen: View {
             avatar(one.avatar, size: 34)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(one.author)
-                    .font(.cnCaption)
-                    .foregroundStyle(Color.cnInk3)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(one.author)
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                        .lineLimit(1)
+                    if one.created > 0 {
+                        Text("· " + Self.ago(one.created))
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnInk3.opacity(0.8))
+                    }
+                }
 
                 Text(one.text)
                     .font(.cnMeta)
@@ -2395,10 +2434,17 @@ struct DetailScreen: View {
                                     Text(reply.author)
                                         .font(.cnCaption)
                                         .foregroundStyle(Color.cnInk3)
-                                    Text(reply.text)
-                                        .font(.cnCaption)
-                                        .foregroundStyle(Color.cnInk2)
-                                        .fixedSize(horizontal: false, vertical: true)
+                                    HStack(spacing: 3) {
+                                        Text(reply.text)
+                                            .font(.cnCaption)
+                                            .foregroundStyle(Color.cnInk2)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        if reply.created > 0 {
+                                            Text(Self.ago(reply.created))
+                                                .font(.system(size: 9))
+                                                .foregroundStyle(Color.cnInk3)
+                                        }
+                                    }
                                 }
                             }
                         }
