@@ -202,8 +202,8 @@ struct CollectionScreen: View {
             parts.append("已存 \(savedCount) 集")
         }
         if let currentIndex, currentIndex < rawEpisodes.count {
-            parts.append("上次看第 \(number(of: rawEpisodes[currentIndex],
-                                          fallback: currentIndex + 1)) 集")
+            let n = number(of: rawEpisodes[currentIndex], fallback: currentIndex + 1)
+            parts.append("上次看第 \(n) 集")
         }
         return parts.isEmpty ? "目录" : parts.joined(separator: " · ")
     }
