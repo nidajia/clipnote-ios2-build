@@ -2253,7 +2253,7 @@ struct DetailScreen: View {
                     Text("评论区快照")
                         .font(.cnChip)
                         .foregroundStyle(Color.cnInk)
-                    Text("\(displayComments.count) 条 · \(commentsSort == "hot" ? "按热度" : "按时间")")
+                    Text(commentCountText)
                         .font(.cnCaption)
                         .foregroundStyle(Color.cnInk3)
                     Spacer(minLength: 0)
@@ -2344,6 +2344,20 @@ struct DetailScreen: View {
         liveComments.isEmpty ? current.comments : liveComments
     }
 
+    /// 评论区标题里的数量说明。
+    ///
+    /// 只写「40 条」会让用户以为「这视频只有 40 条评论」——实际视频可能有
+    /// 几百上千条，快照只存了前 40。把总数摊开：已存 40 / 共 635 条。
+    private var commentCountText: String {
+        let stored = displayComments.count
+        let total = current.stats?.comments ?? 0
+        let sortLabel = commentsSort == "hot" ? "按热度" : "按时间"
+        if total > stored {
+            return "已存 \(stored) / 共 \(total) 条 · \(sortLabel)"
+        }
+        return "\(stored) 条 · \(sortLabel)"
+    }
+
     /// 拉一页评论。`reset` 为真时从第 1 页重来（切排序时用）。
     private func loadComments(sort: String, reset: Bool) async {
         guard !loadingComments, !library.isOffline else { return }
@@ -2363,9 +2377,9 @@ struct DetailScreen: View {
         let useSnapshot = commentsPage == 0 && sort == "hot" && !current.comments.isEmpty
         let next: Int
         if useSnapshot {
-            // 快照是「按热度前 N 条」，跨了 ceil(N/20) 页。接着翻要先翻到快照
-            // 所在的最后一页（不能 +1 跳页，会把那一页的尾巴漏掉），再按 cid 去重。
-            next = max(1, (current.comments.count + perPage - 1) / perPage)
+            // floor(N/20)+1：快照是「前 N 条」，下一整页从第 floor(N/20)+1 页开始。
+            // 用 ceil 的话 40 条会算成第 2 页（和快照重复），50 条才是第 3 页（碰巧对）。
+            next = max(1, current.comments.count / perPage + 1)
         } else {
             next = commentsPage + 1
         }
