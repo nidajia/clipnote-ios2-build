@@ -66,6 +66,17 @@ struct SnapshotRoot: View {
             }
         }
 
+        // 合集相关字段必须在取 `detail` **之前**种进去：
+        // `detail` 是值拷贝，晚一步改库，传进详情页的还是没有 seasonId 的旧拷贝，
+        // 换集条就因为「这条不属于任何合集」而不渲染（第一次截图就是这么空的）。
+        if state == "detail-season" {
+            lib.seedSeason(SnapshotRoot.sampleSeason)
+            if let id = lib.items.first?.id {
+                lib.seedSeasonInfo(id: id, seasonId: "season-preview", title: "AI 生产力",
+                                   index: 7, total: 9)
+            }
+        }
+
         var detail: Item?
         if state.hasPrefix("detail") {
             detail = state == "detail-note"
@@ -172,15 +183,6 @@ struct SnapshotRoot: View {
             lib.seedSeason(SnapshotRoot.sampleSeason)
         }
 
-        // 详情页「上一集/下一集」那一行：没有剧集数据就不渲染，
-        // 所以要给这个状态单独种一份。
-        if state == "detail-season" {
-            lib.seedSeason(SnapshotRoot.sampleSeason)
-            if let id = lib.items.first?.id {
-                lib.seedSeasonInfo(id: id, seasonId: "season-preview", title: "AI 生产力",
-                                   index: 7, total: 9)
-            }
-        }
 
         // 脑图：塞一棵三层树。注意分支名刻意都不带时间词——
         // 截图同时也在验提示词的目标形态（按概念归类，不是按时间顺序）。

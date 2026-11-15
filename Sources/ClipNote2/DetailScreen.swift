@@ -326,7 +326,8 @@ struct DetailScreen: View {
             }
             // 一集的上下集按钮要在首屏就能用，所以剧集列表提前拉——
             // 以前只有展开「合集」那一栏才拉，用户得滑到底、还得再点一次。
-            if item.seasonTotal > 1, season == nil {
+            // 判据用 seasonId 或 seasonTotal 任一存在：有的存量条目只有前者。
+            if item.seasonTotal > 1 || !item.seasonId.isEmpty, season == nil {
                 await loadSeason()
             }
             await maybeSummarize()
