@@ -70,8 +70,9 @@ struct DetailScreen: View {
     /// 合集剧集（点开才拉）。
     @State private var season: APISeason?
     @State private var seasonOpen = false
-    /// 合集剧集排序："index" 按集数（默认）/ "time" 按发布时间。
-    @State private var seasonSort = "index"
+    /// 合集剧集排序。和目录页共用同一个存储键：
+    /// 在哪儿改过，另一边都是同一个顺序（用户不用设两遍）。
+    @AppStorage(SeasonOrder.storageKey) private var seasonOrderRaw = SeasonOrder.index.rawValue
     /// 「下一集」要跳到的那一条（已入库的走这个，push 进详情）。
     @State private var pushItem: Item?
     /// 合集里「没入库的那一集」，点了就在应用内直接播——不跳浏览器。
@@ -2074,17 +2075,27 @@ struct DetailScreen: View {
                         // 排序切换：用户原话「没法按时间顺序查看」——
                         // 合集动辄上百集，只能顺着集数翻，想找最近更新的很费劲。
                         HStack(spacing: Metric.space3) {
-                            ForEach([("index", "按集数"), ("time", "按时间")], id: \.0) { key, label in
-                                Button {
-                                    seasonSort = key
-                                } label: {
-                                    Text(label)
-                                        .font(.cnCaption)
-                                        .foregroundStyle(seasonSort == key
-                                                         ? Color.cnBrand : Color.cnInk3)
-                                }
-                                .buttonStyle(.plain)
+                            Button {
+                                seasonOrderRaw = SeasonOrder.index.rawValue
+                            } label: {
+                                Text("按集数")
+                                    .font(.cnCaption)
+                                    .foregroundStyle(seasonOrder == .index
+                                                     ? Color.cnBrand : Color.cnInk3)
                             }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                // 已经在按时间：这一下切方向
+                                seasonOrderRaw = seasonOrder.toggledTime.rawValue
+                            } label: {
+                                Text(seasonOrder == .oldest ? "按时间 旧→新" : "按时间 新→旧")
+                                    .font(.cnCaption)
+                                    .foregroundStyle(seasonOrder.isTime
+                                                     ? Color.cnBrand : Color.cnInk3)
+                            }
+                            .buttonStyle(.plain)
+
                             Spacer(minLength: 0)
                             Text("共 \(eps.count) 集")
                                 .font(.system(size: 9))
@@ -2352,15 +2363,12 @@ struct DetailScreen: View {
         season = try? await library.season(id: current.id)
     }
 
-    /// 合集剧集排序。按集数 = 接口原序；按时间 = 按发布时间升序，
-    /// 没有发布时间的排最后（否则 created=0 会全挤到最前面）。
+    private var seasonOrder: SeasonOrder { SeasonOrder.stored(seasonOrderRaw) }
+
+    /// 合集剧集排序。按集数 = 接口原序；按时间 = 正序或倒序，
+    /// 没有发布时间的永远排最后（否则 created=0 会挤到最前面）。
     private func sortedEpisodes(_ episodes: [APISeasonEpisode]) -> [APISeasonEpisode] {
-        guard seasonSort == "time" else { return episodes }
-        return episodes.sorted {
-            let a = $0.created > 0 ? $0.created : Int.max
-            let b = $1.created > 0 ? $1.created : Int.max
-            return a < b
-        }
+        seasonOrder.sorted(episodes)
     }
 
     /// 原视频互动数据。只画非零项——抖音没有播放量，硬画一个「播放 0」

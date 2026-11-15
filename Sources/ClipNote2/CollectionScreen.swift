@@ -27,7 +27,8 @@ struct CollectionScreen: View {
     @State private var season: APISeason?
     @State private var loading = true
     @State private var failed = ""
-    @State private var sort = "index"
+    /// 排序选择存在本地：用户选过「旧→新」，下次进来还是它。
+    @AppStorage(SeasonOrder.storageKey) private var orderRaw = SeasonOrder.index.rawValue
     /// 正在应用内播放的那一组（从某一集开始，可连着往下看）。
     @State private var playing: PlayQueue?
     /// 打开目录后要滚到哪一集（上次看的那集）。
@@ -43,15 +44,10 @@ struct CollectionScreen: View {
         return localEpisodes
     }
 
+    private var order: SeasonOrder { SeasonOrder.stored(orderRaw) }
+
     private var episodes: [APISeasonEpisode] {
-        guard sort == "time" else { return rawEpisodes }
-        // 没有发布时间的排到最后，而不是当成 1970 排最前——
-        // 「最新更新」里第一集是 0 播放的老视频，看着就像排序坏了。
-        return rawEpisodes.sorted {
-            let a = $0.created > 0 ? $0.created : Int.max
-            let b = $1.created > 0 ? $1.created : Int.max
-            return a < b
-        }
+        order.sorted(rawEpisodes)
     }
 
     private var savedCount: Int {
@@ -213,20 +209,17 @@ struct CollectionScreen: View {
 
     // MARK: 排序
 
+    /// 排序：按集数 / 按时间（时间再点一次翻方向）。
+    ///
+    /// 两格而不是三格：「按时间」自己带方向，标签直接写「新→旧」/「旧→新」，
+    /// 再点一下就翻过来。选择存在 AppStorage，下次进来还是上次那个。
     private var sortBar: some View {
-        HStack(spacing: Metric.space3) {
-            ForEach([("index", "按集数"), ("time", "按时间")], id: \.0) { key, label in
-                Button {
-                    sort = key
-                } label: {
-                    Text(label)
-                        .font(.cnChip)
-                        .foregroundStyle(sort == key ? Color.cnBg : Color.cnInk2)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 5)
-                        .background(sort == key ? Color.cnInk : Color.cnCard, in: Capsule())
-                }
-                .buttonStyle(.plain)
+        HStack(spacing: 6) {
+            sortChip(title: "按集数", active: order == .index) {
+                orderRaw = SeasonOrder.index.rawValue
+            }
+            sortChip(title: timeTitle, active: order.isTime) {
+                orderRaw = order.toggledTime.rawValue
             }
             Spacer(minLength: 0)
             Text("\(episodes.count) 集")
@@ -235,6 +228,24 @@ struct CollectionScreen: View {
         }
         .padding(.horizontal, Metric.pagePad)
         .padding(.bottom, Metric.space2)
+    }
+
+    /// 「按时间」这格的文字带着方向：不用点开才知道现在是哪一头。
+    private var timeTitle: String {
+        order == .oldest ? "按时间 旧→新" : "按时间 新→旧"
+    }
+
+    private func sortChip(title: String, active: Bool,
+                          action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.cnChip)
+                .foregroundStyle(active ? Color.cnBg : Color.cnInk2)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 5)
+                .background(active ? Color.cnInk : Color.cnCard, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: 行
