@@ -2345,7 +2345,10 @@ struct DetailScreen: View {
     }
 
     private func loadSeason() async {
-        guard !library.isOffline else { return }
+        // 不要在这里挡 `isOffline`：截图/预览态本来就没有 client，
+        // 但库里有种子剧集，挡掉就等于「合集区块永远停在转圈」，
+        // 连换集按钮也永远不出现（截图第一次就是这么空的）。
+        // 真拿不到时 season 保持 nil，界面显示重试提示。
         season = try? await library.season(id: current.id)
     }
 

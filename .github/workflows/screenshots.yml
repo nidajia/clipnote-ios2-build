@@ -58,12 +58,20 @@ jobs:
         if: always()
         run: ls -la screenshots || echo "screenshots 目录不存在"
 
+      # 正常情况只传 PNG：xcresult 有 20MB+，每次下载它都要等好几分钟，
+      # 而它只有在测试失败、需要看断言上下文时才有用。所以拆成两步。
       - name: 上传截图
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: component-screenshots
-          path: |
-            screenshots/*.png
-            build/Screenshots.xcresult
+          path: screenshots/*.png
           if-no-files-found: warn
+
+      - name: 上传测试结果（仅失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-xcresult
+          path: build/Screenshots.xcresult
+          if-no-files-found: ignore
