@@ -175,11 +175,8 @@ struct CollectionScreen: View {
                                             style: .continuous))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(headTitle)
-                        .font(.cnTitle)
-                        .foregroundStyle(Color.cnInk)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // 标题只在导航栏出现一次：这里再写一遍，
+                    // 顶部两行一模一样的字，看着像没加载完。
                     Text(countLine)
                         .font(.cnCaption)
                         .foregroundStyle(Color.cnInk3)
