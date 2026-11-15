@@ -136,12 +136,16 @@ struct DetailScreen: View {
     /// 再让他找播放键点第二次是多余的。
     var autoPlay: Bool = false
 
-    /// `startsCommentsExpanded` 只给截图用：正常进页面评论区是收起的。
+    /// 截图用：正常进页面评论区是收起的。
+    /// 存成属性——`body` 里要用它决定要不要滚到评论区。
+    private let startsCommentsExpanded: Bool
+
     init(item: Item, initialPrepare: PrepareState? = nil, focusTranscriptAt: Int? = nil,
          autoPlay: Bool = false, startsCommentsExpanded: Bool = false) {
         self.item = item
         self.focusTranscriptAt = focusTranscriptAt
         self.autoPlay = autoPlay
+        self.startsCommentsExpanded = startsCommentsExpanded
         if let initialPrepare {
             _prepare = State(initialValue: initialPrepare)
         }
