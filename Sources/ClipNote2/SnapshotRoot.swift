@@ -176,6 +176,10 @@ struct SnapshotRoot: View {
         // 所以要给这个状态单独种一份。
         if state == "detail-season" {
             lib.seedSeason(SnapshotRoot.sampleSeason)
+            if let id = lib.items.first?.id {
+                lib.seedSeasonInfo(id: id, seasonId: "season-preview", title: "AI 生产力",
+                                   index: 7, total: 9)
+            }
         }
 
         // 脑图：塞一棵三层树。注意分支名刻意都不带时间词——
@@ -616,19 +620,24 @@ struct SnapshotRoot: View {
 
     /// 发现页样本：分类 + 热榜 + 合集 + 「你存过的」。
     static let sampleDiscoverFeed: APIDiscoverFeed = {
+        // created 不能省：列表右侧的「x 小时前」就是靠它显示的，
+        // 没有它就等于这张截图证明不了「页面能看出内容有多新」。
         func item(_ id: String, _ title: String, _ cat: String,
-                  _ author: String, _ views: Int, _ duration: Int) -> APIDiscoverItem {
+                  _ author: String, _ views: Int, _ duration: Int,
+                  _ hoursAgo: Int = 3) -> APIDiscoverItem {
             APIDiscoverItem(id: id, platform: "bilibili", title: title, author: author,
-                            views: views, duration: duration, url: "https://www.bilibili.com/video/\(id)",
+                            views: views, duration: duration,
+                            created: Int(Date().timeIntervalSince1970) - hoursAgo * 3600,
+                            url: "https://www.bilibili.com/video/\(id)",
                             category: cat, interest: 1)
         }
         let hot = [
-            item("BV1a", "AI 帮你写代码，Cursor 到底值不值得上手", "AI", "产品君", 120000, 742),
-            item("BV1b", "大模型参数越多越好吗？一次讲清楚", "AI", "科技袁人", 98000, 630),
-            item("BV1c", "Rust 为什么越来越火", "编程", "代码随想录", 76000, 518),
-            item("BV1d", "半导体行业还能上车吗", "科技", "硬核财经", 88000, 445),
-            item("BV1e", "量子力学的通俗解释", "科普", "李永乐老师", 156000, 900),
-            item("BV1f", "副业怎么选：接单还是做产品", "商业", "商业小纸条", 54000, 380),
+            item("BV1a", "AI 帮你写代码，Cursor 到底值不值得上手", "AI", "产品君", 120000, 742, 2),
+            item("BV1b", "大模型参数越多越好吗？一次讲清楚", "AI", "科技袁人", 98000, 630, 5),
+            item("BV1c", "Rust 为什么越来越火", "编程", "代码随想录", 76000, 518, 9),
+            item("BV1d", "半导体行业还能上车吗", "科技", "硬核财经", 88000, 445, 14),
+            item("BV1e", "量子力学的通俗解释", "科普", "李永乐老师", 156000, 900, 21),
+            item("BV1f", "副业怎么选：接单还是做产品", "商业", "商业小纸条", 54000, 380, 30),
         ]
         let sections = [
             APIDiscoverSection(category: "AI", items: Array(hot.prefix(2))),

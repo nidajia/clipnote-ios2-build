@@ -1894,6 +1894,17 @@ final class LibraryStore: ObservableObject {
         seededSeason = season
     }
 
+    /// 截图用：把某一条标成「属于某个合集」，让详情页的换集条出现。
+    /// 真实数据里这几个字段是服务端给的；样例库里没有，只能补。
+    func seedSeasonInfo(id: String, seasonId: String, title: String,
+                        index: Int, total: Int) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        items[i].seasonId = seasonId
+        items[i].seasonTitle = title
+        items[i].seasonIndex = index
+        items[i].seasonTotal = total
+    }
+
     /// 保存笔记。返回是否成功。
     @discardableResult
     func saveNote(id: String, note: String) async -> Bool {
