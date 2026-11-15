@@ -72,8 +72,11 @@ struct DetailScreen: View {
     @State private var seasonOpen = false
     /// 合集剧集排序："index" 按集数（默认）/ "time" 按发布时间。
     @State private var seasonSort = "index"
+    /// 「下一集」要跳到的那一条（已入库的走这个，push 进详情）。
+    @State private var pushItem: Item?
     /// 合集里「没入库的那一集」，点了就在应用内直接播——不跳浏览器。
-    @State private var previewEpisode: APIDiscoverItem?
+    /// 带整组剧集：播放页里能直接上一集/下一集。
+    @State private var previewQueue: PlayQueue?
     /// 自动起播只做一次（页面重新出现不该又播一遍）。
     @State private var didAutoPlay = false
 
@@ -182,6 +185,9 @@ struct DetailScreen: View {
             if !current.segments.isEmpty {
                 segmentRail
             }
+
+            // 换集按钮放首屏：合集一集接一集看，不该为了找下一集往下滑。
+            seasonNavBar
         }
     }
 
@@ -318,8 +324,21 @@ struct DetailScreen: View {
                 didAutoPlay = true
                 await startPlayback()
             }
+            // 一集的上下集按钮要在首屏就能用，所以剧集列表提前拉——
+            // 以前只有展开「合集」那一栏才拉，用户得滑到底、还得再点一次。
+            if item.seasonTotal > 1, season == nil {
+                await loadSeason()
+            }
             await maybeSummarize()
             await maybeLoadSegments()
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { pushItem != nil },
+            set: { if !$0 { pushItem = nil } }
+        )) {
+            if let pushItem {
+                DetailScreen(item: pushItem, autoPlay: true)
+            }
         }
         .navigationDestination(isPresented: $showOutline) {
             OutlineScreen(item: current)
@@ -435,11 +454,11 @@ struct DetailScreen: View {
             }
         }
         // 合集里「还没存下来」的那一集：应用内在线播放，不再因为没入库就甩去浏览器。
-        .sheet(item: $previewEpisode, onDismiss: {
+        .sheet(item: $previewQueue, onDismiss: {
             // 播放页里可能刚收藏了这一集，回来把「已存」小图标刷新一下。
             if seasonOpen { Task { await loadSeason() } }
-        }) { one in
-            DiscoverPlayerScreen(item: one)
+        }) { q in
+            DiscoverPlayerScreen(item: q.current, queue: q)
                 .environmentObject(library)
         }
         .sheet(isPresented: $editingAuthorNote) {
@@ -2150,7 +2169,7 @@ struct DetailScreen: View {
                     // 当前这一集就在下面播着，点它不要重复解析
                     Task { await startPlayback() }
                 } else {
-                    previewEpisode = previewItem(ep)
+                    previewQueue = playQueue(startingAt: ep)
                 }
             } label: {
                 label
@@ -2183,6 +2202,101 @@ struct DetailScreen: View {
         one.views = ep.views
         one.url = ep.url
         return one
+    }
+
+    /// 从某一集开始播，并把整组剧集带上（播放页里能直接换集）。
+    private func playQueue(startingAt ep: APISeasonEpisode) -> PlayQueue? {
+        guard let season, !season.episodes.isEmpty else { return nil }
+        let list = season.episodes.map(previewItem)
+        guard let index = season.episodes.firstIndex(where: {
+            $0.videoId == ep.videoId
+        }) else { return nil }
+        return PlayQueue(items: list, index: index)
+    }
+
+    // MARK: - 上一集 / 下一集
+
+    /// 合集里当前这一集的上下文：序号、总数、前后两条。
+    private var seasonNav: (index: Int, total: Int,
+                            prev: APISeasonEpisode?, next: APISeasonEpisode?)? {
+        guard let season, season.episodes.count > 1 else { return nil }
+        let eps = season.episodes
+        guard let i = eps.firstIndex(where: { $0.videoId == current.videoId })
+                ?? eps.firstIndex(where: { $0.current }) else { return nil }
+        return (i, eps.count,
+                i > 0 ? eps[i - 1] : nil,
+                i + 1 < eps.count ? eps[i + 1] : nil)
+    }
+
+    /// 播放器正下方的换集条。
+    ///
+    /// 以前换集只有一条路：滑到页面最下面的合集列表里找。用户的原话是
+    /// 「每次我还要滑到最下面然后找内容」。放在首屏，一集接一集看。
+    @ViewBuilder
+    private var seasonNavBar: some View {
+        if let nav = seasonNav {
+            HStack(spacing: Metric.space2) {
+                seasonStepButton("上一集", chevron: "chevron.left", ep: nav.prev)
+                Spacer(minLength: 0)
+                Text("第 \(nav.index + 1)/\(nav.total) 集")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+                Spacer(minLength: 0)
+                seasonStepButton("下一集", chevron: "chevron.right",
+                                 ep: nav.next, trailing: true)
+            }
+            .padding(.horizontal, Metric.pagePad)
+            .padding(.vertical, Metric.space2)
+            .background(Color.cnBg)
+        }
+    }
+
+    @ViewBuilder
+    private func seasonStepButton(_ title: String, chevron: String,
+                                  ep: APISeasonEpisode?,
+                                  trailing: Bool = false) -> some View {
+        if let ep {
+            Button {
+                go(to: ep)
+            } label: {
+                HStack(spacing: 4) {
+                    if !trailing {
+                        Image(systemName: chevron)
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    Text(title).font(.cnChip)
+                    if trailing {
+                        Image(systemName: chevron)
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(Color.cnBrand)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color.cnBrandSoft, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        } else {
+            // 到头了：留一个灰占位，免得「第 N/M 集」在两侧挤压下左右跳。
+            Text(title)
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk3.opacity(0.55))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color.cnCard, in: Capsule())
+        }
+    }
+
+    /// 换集：已入库的进详情（自动起播），没入库的在应用内播。
+    /// 和目录页同一套规则（`EpisodeRouting`），不另写一份 if。
+    private func go(to ep: APISeasonEpisode) {
+        let saved = library.items.first { $0.id == ep.itemId }
+        if let saved,
+           EpisodeRouting.route(itemId: ep.itemId, isInLibrary: true) == .openSavedItem {
+            pushItem = saved
+        } else if let queue = playQueue(startingAt: ep) {
+            previewQueue = queue
+        }
     }
 
     /// 「更多操作」：导出、下载。

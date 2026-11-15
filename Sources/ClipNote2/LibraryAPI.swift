@@ -107,6 +107,8 @@ struct APIDiscoverItem: Decodable, Identifiable, Equatable, Hashable {
     var views: Int = 0
     var likes: Int = 0
     var duration: Int = 0
+    /// 发布时间（秒）。0 表示服务端没给——不能当成 1970 去显示。
+    var created: Int = 0
     var url: String = ""
     /// 服务端分类：AI / 编程 / 科技 / 科普 / 商业 / 学习 / 其他。
     var category: String = ""

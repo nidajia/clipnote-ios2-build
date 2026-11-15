@@ -172,6 +172,12 @@ struct SnapshotRoot: View {
             lib.seedSeason(SnapshotRoot.sampleSeason)
         }
 
+        // 详情页「上一集/下一集」那一行：没有剧集数据就不渲染，
+        // 所以要给这个状态单独种一份。
+        if state == "detail-season" {
+            lib.seedSeason(SnapshotRoot.sampleSeason)
+        }
+
         // 脑图：塞一棵三层树。注意分支名刻意都不带时间词——
         // 截图同时也在验提示词的目标形态（按概念归类，不是按时间顺序）。
         if state == "outline", let id = lib.items.first?.id {

@@ -111,7 +111,7 @@ struct DiscoverScreen: View {
             }
         }
         .task {
-            if feed == nil { await load(refresh: false) }
+            await refreshIfStale()
         }
         .onChange(of: category) { _ in
             extra = []
@@ -436,7 +436,8 @@ struct DiscoverScreen: View {
     }
 
     private func hotRow(_ one: APIDiscoverItem) -> some View {
-        cardLink(one) {
+        let ago = one.created > 0 ? Self.shortAge(one.created) : ""
+        return cardLink(one) {
             HStack(alignment: .top, spacing: Metric.space3) {
                 cover(one, width: 92, height: 56)
 
@@ -466,6 +467,13 @@ struct DiscoverScreen: View {
                                 .foregroundStyle(Color.cnInk3)
                         }
                         Spacer(minLength: 0)
+                        if !ago.isEmpty {
+                            // 发布时间：让「这一批是不是新的」一眼可见。
+                            // 没有这一项，用户没法判断页面到底刷没刷。
+                            Text(ago)
+                                .font(.cnCaption)
+                                .foregroundStyle(Color.cnInk3)
+                        }
                         if one.inLibrary {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 11))
@@ -663,6 +671,22 @@ struct DiscoverScreen: View {
 
     // MARK: 动作
 
+    /// 进页面时按「内容多新」决定要不要再拉一次。
+    ///
+    /// 以前只有 `feed == nil` 才拉：切回这个 Tab 永远是上次那一批。
+    /// 用户的原话是「昨天和今天每次打开内容还是那些」。
+    /// 现在：没有内容 → 拉；上次拉取超过 10 分钟 → **静默**再拉
+    /// （不清屏、不打断滚动，失败也保留旧内容）。
+    private func refreshIfStale() async {
+        guard let feed else {
+            await load(refresh: false)
+            return
+        }
+        let age = Date().timeIntervalSince1970 - Double(feed.fetchedAt) / 1000
+        guard age > 600 else { return }
+        await load(refresh: false)
+    }
+
     private func load(refresh: Bool) async {
         guard !loading else { return }
         loading = true
@@ -716,6 +740,17 @@ struct DiscoverScreen: View {
         if diff < 3600 { return "\(max(1, Int(diff / 60))) 分钟前" }
         if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
         return "\(Int(diff / 86400)) 天前"
+    }
+
+    /// 列表右侧那一小行「多久之前」。超过一周就不显示了——
+    /// 「23 天前」对一个「前沿」列表没有任何用处，只会占位置。
+    static func shortAge(_ ts: Int) -> String {
+        let diff = Date().timeIntervalSince1970 - Double(ts)
+        if diff < 0 { return "" }
+        if diff < 3600 { return "\(max(1, Int(diff / 60))) 分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        if diff < 86400 * 7 { return "\(Int(diff / 86400)) 天前" }
+        return ""
     }
 
     static func agoText(_ ms: Int) -> String {

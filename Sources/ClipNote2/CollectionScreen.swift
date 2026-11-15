@@ -28,8 +28,8 @@ struct CollectionScreen: View {
     @State private var loading = true
     @State private var failed = ""
     @State private var sort = "index"
-    /// 正在应用内播放的那一集（没入库的走这里）。
-    @State private var playing: APIDiscoverItem?
+    /// 正在应用内播放的那一组（从某一集开始，可连着往下看）。
+    @State private var playing: PlayQueue?
     /// 打开目录后要滚到哪一集（上次看的那集）。
     @State private var scrollTarget: String?
 
@@ -146,8 +146,8 @@ struct CollectionScreen: View {
         .sheet(item: $playing, onDismiss: {
             // 播放页里可能刚「收藏到首页」，回来把「已存」标记刷新一下。
             Task { await load(force: true) }
-        }) { one in
-            DiscoverPlayerScreen(item: one)
+        }) { q in
+            DiscoverPlayerScreen(item: q.current, queue: q)
                 .environmentObject(library)
         }
     }
@@ -257,7 +257,7 @@ struct CollectionScreen: View {
         } else {
             // 跳站要用户显式选（长按菜单 / 播放页里的「浏览器」按钮）。
             Button {
-                playing = previewItem(ep)
+                playing = playQueue(startingAt: ep)
             } label: {
                 rowLabel(ep, number: number)
             }
@@ -376,6 +376,15 @@ struct CollectionScreen: View {
         if let target, rawEpisodes.count > 30 {
             scrollTarget = target
         }
+    }
+
+    /// 从某一集开始播，并把整组带上（播放页里能直接上一集/下一集）。
+    private func playQueue(startingAt ep: APISeasonEpisode) -> PlayQueue? {
+        let list = episodes
+        guard let index = list.firstIndex(where: { $0.videoId == ep.videoId }) else {
+            return nil
+        }
+        return PlayQueue(items: list.map(previewItem), index: index)
     }
 
     private func previewItem(_ ep: APISeasonEpisode) -> APIDiscoverItem {

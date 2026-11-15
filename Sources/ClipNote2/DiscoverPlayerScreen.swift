@@ -10,8 +10,31 @@ import SwiftUI
 /// 关键约束：**不入库、不跑流水线**。走 `/api/v2/preview`，
 /// 只解析播放地址（B 站约 1 秒，抖音走第三方），不写入同步快照、
 /// 不触发下载和转写。想留下的内容由用户点「收藏」显式决定。
+/// 「一组可连续播放的剧集」。
+///
+/// 合集目录里点开某一集时带上整组：播放页里就能上一集/下一集，
+/// 不必退回目录、再滑到那一行。
+struct PlayQueue: Identifiable, Equatable {
+    var items: [APIDiscoverItem]
+    var index: Int
+    var id: String {
+        current.id
+    }
+
+    /// 当前播的那一条。索引越界时退回第一条，绝不让取值崩。
+    var current: APIDiscoverItem {
+        if items.indices.contains(index) { return items[index] }
+        return items.first ?? APIDiscoverItem()
+    }
+}
+
 struct DiscoverPlayerScreen: View {
+    /// 队列为空时就是单条预览。
     var item: APIDiscoverItem
+    var queue: [APIDiscoverItem]
+
+    /// 当前播到队列里的第几条（队列为空时恒为 0）。
+    @State private var idx: Int
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: LibraryStore
@@ -24,6 +47,19 @@ struct DiscoverPlayerScreen: View {
     @State private var saved = false
     @State private var notice = ""
 
+    init(item: APIDiscoverItem, queue: PlayQueue? = nil) {
+        self.item = item
+        self.queue = queue?.items ?? []
+        _idx = State(initialValue: queue?.index ?? 0)
+    }
+
+    /// 正在播的那一条。队列换了就跟着换。
+    private var current: APIDiscoverItem {
+        queue.indices.contains(idx) ? queue[idx] : item
+    }
+
+    private var hasQueue: Bool { queue.count > 1 }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -31,19 +67,23 @@ struct DiscoverPlayerScreen: View {
             VStack(spacing: 0) {
                 playerArea
 
+                if hasQueue {
+                    queueBar
+                }
+
                     VStack(alignment: .leading, spacing: Metric.space3) {
-                        Text(item.title)
+                        Text(current.title)
                             .font(.cnRowTitle)
                             .foregroundStyle(.white)
                             .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
 
                         HStack(spacing: 6) {
-                            Text(item.author)
+                            Text(current.author)
                                 .font(.cnCaption)
                                 .foregroundStyle(.white.opacity(0.6))
-                            if item.views > 0 {
-                                Text("· \(DiscoverScreen.compact(item.views)) 次播放")
+                            if current.views > 0 {
+                                Text("· \(DiscoverScreen.compact(current.views)) 次播放")
                                     .font(.cnCaption)
                                     .foregroundStyle(.white.opacity(0.6))
                             }
@@ -79,7 +119,7 @@ struct DiscoverPlayerScreen: View {
                             .buttonStyle(.plain)
                             .disabled(saving || saved)
 
-                            if let url = URL(string: item.url) {
+                            if let url = URL(string: current.url) {
                                 Link(destination: url) {
                                     HStack(spacing: 5) {
                                         Image(systemName: "safari")
@@ -118,7 +158,59 @@ struct DiscoverPlayerScreen: View {
             .accessibilityLabel("关闭")
         }
         .task { await load() }
+        // 换集：先把旧的掐掉，再重新解析这一集的地址。
+        // 不掐会两条音轨一起响（详情页踩过同样的坑）。
+        .onChange(of: idx) { _ in
+            player?.pause()
+            player = nil
+            preview = nil
+            saved = false
+            notice = ""
+            Task { await load() }
+        }
         .onDisappear { player?.pause() }
+    }
+
+    /// 队列里换集的按钮条：第 N/M 集 + 上一集/下一集。
+    private var queueBar: some View {
+        HStack(spacing: Metric.space2) {
+            stepButton(title: "上一集", chevron: "chevron.left", to: idx - 1)
+
+            Spacer(minLength: 0)
+            Text("第 \(idx + 1)/\(queue.count) 集")
+                .font(.cnCaption)
+                .foregroundStyle(.white.opacity(0.65))
+            Spacer(minLength: 0)
+
+            stepButton(title: "下一集", chevron: "chevron.right", to: idx + 1, trailing: true)
+        }
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func stepButton(title: String, chevron: String, to target: Int,
+                            trailing: Bool = false) -> some View {
+        let enabled = queue.indices.contains(target)
+        Button {
+            idx = target
+        } label: {
+            HStack(spacing: 4) {
+                if !trailing {
+                    Image(systemName: chevron).font(.system(size: 10, weight: .semibold))
+                }
+                Text(title).font(.cnChip)
+                if trailing {
+                    Image(systemName: chevron).font(.system(size: 10, weight: .semibold))
+                }
+            }
+            .foregroundStyle(enabled ? Color.white : Color.white.opacity(0.3))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Color.white.opacity(enabled ? 0.14 : 0.06), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 
     @ViewBuilder
@@ -145,7 +237,7 @@ struct DiscoverPlayerScreen: View {
                             .foregroundStyle(.white.opacity(0.8))
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
-                        if let url = URL(string: item.url) {
+                        if let url = URL(string: current.url) {
                             Link("去原站看", destination: url)
                                 .font(.cnChip)
                                 .foregroundStyle(Color.cnBrand)
@@ -167,7 +259,7 @@ struct DiscoverPlayerScreen: View {
         loading = true
         errorText = ""
         do {
-            let result = try await library.preview(url: item.url)
+            let result = try await library.preview(url: current.url)
             preview = result
             guard !result.streamUrl.isEmpty, let url = URL(string: result.streamUrl) else {
                 throw ClipNoteClient.Failure.transport("这条没有可播放的视频流")
@@ -189,7 +281,7 @@ struct DiscoverPlayerScreen: View {
         saving = true
         defer { saving = false }
         do {
-            _ = try await library.quickImport(text: item.url)
+            _ = try await library.quickImport(text: current.url)
             saved = true
             notice = ""
         } catch {
