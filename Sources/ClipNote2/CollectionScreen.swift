@@ -183,6 +183,12 @@ struct CollectionScreen: View {
                     Text(countLine)
                         .font(.cnCaption)
                         .foregroundStyle(Color.cnInk3)
+                    // 一句话把规则写在页面上：点=应用内播，长按才跳站。
+                    // 同时也是这一版的「长相」——旧包不会有这一行。
+                    Text("点任意一集直接在应用内播放 · 要跳原站请长按")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.cnInk3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
@@ -238,8 +244,12 @@ struct CollectionScreen: View {
 
     @ViewBuilder
     private func episodeRow(_ ep: APISeasonEpisode, number: Int) -> some View {
-        // 已入库：进详情页并自动起播——那里有笔记、分段、评论，离线也能看。
-        if let saved = library.items.first(where: { $0.id == ep.itemId }) {
+        // 去处只有两种，且由 `EpisodeRouting` 统一判定（有单测锁住）：
+        // 已入库 → 详情页并自动起播（有笔记、分段、评论，离线也能看）；
+        // 其余一律应用内播放。**外部打开不在这条路径上**。
+        let saved = library.items.first { $0.id == ep.itemId }
+        if let saved,
+           EpisodeRouting.route(itemId: ep.itemId, isInLibrary: true) == .openSavedItem {
             NavigationLink {
                 DetailScreen(item: saved, autoPlay: true)
             } label: {
@@ -248,7 +258,6 @@ struct CollectionScreen: View {
             .buttonStyle(.plain)
             .contextMenu { externalMenu(ep) }
         } else {
-            // 没入库：应用内在线播放。绝不默认跳浏览器——
             // 跳站要用户显式选（长按菜单 / 播放页里的「浏览器」按钮）。
             Button {
                 playing = previewItem(ep)
@@ -391,5 +400,27 @@ struct CollectionScreen: View {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: date)
+    }
+}
+
+/// 点某一集之后去哪。
+///
+/// 只有两种去处，**没有第三种**：已存的进详情页（自动起播），其余在应用内播。
+/// 单独抽出来是为了能被单测锁住——真机上出现过「点一集就跳浏览器」，
+/// 根因就是这里曾有过第三个分支：没入库就直接 `UIApplication.shared.open`。
+enum EpisodeRoute: Equatable {
+    case openSavedItem
+    case playInApp
+}
+
+enum EpisodeRouting {
+    /// - Parameters:
+    ///   - itemId: 服务端标的「这一集在库里」的条目 id（空串表示没存）
+    ///   - isInLibrary: 这个 id 是否真能在当前库里找到（快照可能过期）
+    static func route(itemId: String, isInLibrary: Bool) -> EpisodeRoute {
+        // 顺序有意义：**只有 id 非空且库里真能找到**才进详情。
+        // id 有值但本地没有（快照过期）时退回应用内播放，而不是去浏览器。
+        guard !itemId.isEmpty, isInLibrary else { return .playInApp }
+        return .openSavedItem
     }
 }

@@ -683,7 +683,7 @@ struct DetailScreen: View {
                 HStack(spacing: 5) {
                     Image(systemName: hasLink ? "arrow.up.right.square" : "link.badge.plus")
                         .font(.system(size: 10, weight: .semibold))
-                    Text(hasLink ? "原视频" : "补原始链接")
+                    Text(hasLink ? "在原站打开原视频" : "补原始链接")
                         .font(.cnCaption)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
