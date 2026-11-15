@@ -87,6 +87,11 @@ struct DetailScreen: View {
     @State private var liveComments: [APIComment] = []
     @State private var commentsPage = 0
     @State private var commentsSort = "hot"
+    /// 评论框里的错误。单独一份、显示在框内——
+    /// 之前用页面级的 notice，提示挂在页面最底部，用户只看到「点了没反应」。
+    @State private var commentsError = ""
+    /// 请求代号：切排序时旧请求的结果必须丢掉，否则会盖回上一屏。
+    @State private var commentsGeneration = 0
     @State private var loadingComments = false
     @State private var commentsExhausted = false
     /// 分段导航里高亮哪一段。只反映「上次点了哪块」，不跟播放进度走——
@@ -131,13 +136,17 @@ struct DetailScreen: View {
     /// 再让他找播放键点第二次是多余的。
     var autoPlay: Bool = false
 
+    /// `startsCommentsExpanded` 只给截图用：正常进页面评论区是收起的。
     init(item: Item, initialPrepare: PrepareState? = nil, focusTranscriptAt: Int? = nil,
-         autoPlay: Bool = false) {
+         autoPlay: Bool = false, startsCommentsExpanded: Bool = false) {
         self.item = item
         self.focusTranscriptAt = focusTranscriptAt
         self.autoPlay = autoPlay
         if let initialPrepare {
             _prepare = State(initialValue: initialPrepare)
+        }
+        if startsCommentsExpanded {
+            _commentsExpanded = State(initialValue: true)
         }
     }
 
@@ -269,11 +278,21 @@ struct DetailScreen: View {
     private var showsSummary: Bool { item.summary.count >= 20 }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                aboveFoldBlock
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    aboveFoldBlock
 
-                bodyBlock
+                    bodyBlock
+                }
+            }
+            // 截图用：`startsCommentsExpanded` 为真时把页面滚到评论框。
+            // 正常进页面这个分支永远不会走（默认 false）。
+            .onAppear {
+                guard startsCommentsExpanded else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                    proxy.scrollTo("commentsBox", anchor: .top)
+                }
             }
         }
         .background(Color.cnBg)
@@ -2111,6 +2130,9 @@ struct DetailScreen: View {
                                 }
                             }
                         }
+                        // 换排序立刻重建：只靠 ForEach 换顺序，复用行为会让列表
+                        // 看起来没动（和目录页同一个问题）。
+                        .id(seasonOrderRaw)
                     } else {
                         HStack(spacing: 6) {
                             RingSpinner(size: 12, color: .cnBrand)
@@ -2436,6 +2458,7 @@ struct DetailScreen: View {
                     Text("评论区快照")
                         .font(.cnChip)
                         .foregroundStyle(Color.cnInk)
+                        .id("commentsBox")
                     Text(commentCountText)
                         .font(.cnCaption)
                         .foregroundStyle(Color.cnInk3)
@@ -2461,47 +2484,24 @@ struct DetailScreen: View {
                     HStack(spacing: Metric.space3) {
                         ForEach([("hot", "按热度"), ("new", "按时间")], id: \.0) { key, label in
                             Button {
-                                Task { await loadComments(sort: key, reset: true) }
+                                switchCommentSort(key)
                             } label: {
                                 Text(label)
                                     .font(.cnCaption)
-                                    .foregroundStyle(commentsSort == key ? Color.cnBrand : Color.cnInk3)
+                                    .foregroundStyle(commentsSort == key
+                                                     ? Color.cnBrand : Color.cnInk3)
                             }
                             .buttonStyle(.plain)
                         }
                         Spacer(minLength: 0)
-                    }
-
-                    // LazyVStack 而不是 VStack：评论动辄 50+ 条，每条带头像、
-                    // 表情、楼层。VStack 会一次性把所有 cell 都建出来，
-                    // 滚动时明显卡顿；Lazy 只渲染可见范围。
-                    LazyVStack(alignment: .leading, spacing: Metric.space3) {
-                        ForEach(Array(displayComments.enumerated()), id: \.offset) { index, one in
-                            if index > 0 {
-                                Divider().overlay(Color.cnHairlineSoft)
-                            }
-                            commentCell(one)
+                        if commentsSort == "new" {
+                            Text("最新在最前")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.cnInk3)
                         }
                     }
 
-                    if !commentsExhausted {
-                        Button {
-                            Task { await loadComments(sort: commentsSort, reset: false) }
-                        } label: {
-                            HStack(spacing: 5) {
-                                if loadingComments {
-                                    RingSpinner(size: 12, color: .cnBrand)
-                                }
-                                Text(loadingComments ? "正在加载…" : "加载更多")
-                                    .font(.cnCaption)
-                            }
-                            .foregroundStyle(Color.cnBrand)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(loadingComments)
-                    }
+                    commentBox
                 } else {
                     // 收起时给一句「里面有什么」，否则用户不知道值不值得展开。
                     Text("视频被删之后，这里还能看到当时大家在说什么。")
@@ -2543,9 +2543,20 @@ struct DetailScreen: View {
 
     /// 拉一页评论。`reset` 为真时从第 1 页重来（切排序时用）。
     private func loadComments(sort: String, reset: Bool) async {
-        guard !loadingComments, !library.isOffline else { return }
+        guard !library.isOffline else {
+            commentsError = "离线模式下只能看已经存下来的评论。"
+            return
+        }
+        // 切排序（reset）时不受「正在加载」限制：用户要的是点一下立刻有反应，
+        // 旧请求的结果靠 generation 丢掉，不会盖回上一屏。
+        if loadingComments, !reset { return }
+        commentsGeneration += 1
+        let generation = commentsGeneration
         loadingComments = true
-        defer { loadingComments = false }
+        commentsError = ""
+        defer {
+            if generation == commentsGeneration { loadingComments = false }
+        }
         if reset {
             commentsSort = sort
             liveComments = []
@@ -2568,6 +2579,7 @@ struct DetailScreen: View {
         }
         do {
             let page = try await library.comments(id: current.id, page: next, sort: sort)
+            guard generation == commentsGeneration else { return }
             if useSnapshot {
                 var merged = current.comments
                 var seen = Set(merged.map(\.cid).filter { !$0.isEmpty })
@@ -2585,18 +2597,125 @@ struct DetailScreen: View {
             commentsPage = next
             commentsExhausted = !page.hasMore || page.comments.isEmpty
         } catch let failure as ClipNoteClient.Failure {
-            // 静默失败会让「按时间」看起来完全没反应——必须说一句。
+            guard generation == commentsGeneration else { return }
+            // 提示必须出现在**评论框里**：挂在页面最底部等于没提示，
+            // 用户只会觉得「按时间点了没反应」。
             if case .http(let status, _, let message) = failure, status == 429 {
-                // 真限流：不要把「加载更多」永久关掉，允许隔一会儿再试。
-                notice = message ?? "评论接口暂时限流，过一会儿再试。"
+                commentsError = message ?? "评论接口暂时限流，过一会儿再试。"
             } else {
                 commentsExhausted = true
-                notice = "评论加载失败：\(failure.displayMessage)"
+                commentsError = "评论加载失败：\(failure.displayMessage)"
             }
         } catch {
+            guard generation == commentsGeneration else { return }
             commentsExhausted = true
-            notice = "评论加载失败，检查一下网络。"
+            commentsError = "评论加载失败，检查一下网络。"
         }
+    }
+
+    // MARK: - 评论框
+
+    /// 评论框：固定高度、自己滚、滚到底自动续页。
+    ///
+    /// 之前是「展开后整页被撑长 + 一个加载更多按钮」：一千多条评论的条目，
+    /// 页面能拉出几十屏，滑到底也看不到新评论（用户原话）。
+    /// 现在照 B 站评论区的做法给一个 360pt 的框，翻页发生在框里，页面长度不跟着变。
+    private var commentBox: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            LazyVStack(alignment: .leading, spacing: Metric.space3) {
+                // 刚切排序、新数据还没回来时：给一个明确的「正在加载」，
+                // 而不是先把快照里的旧评论摆着——那看着就像「点了没反应」。
+                if loadingComments, liveComments.isEmpty, commentsPage == 0 {
+                    HStack(spacing: 6) {
+                        RingSpinner(size: 12, color: .cnBrand)
+                        Text(commentsSort == "new" ? "正在拉最新评论…" : "正在拉评论…")
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnInk3)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                } else {
+                    ForEach(Array(displayComments.enumerated()), id: \.offset) { index, one in
+                        if index > 0 {
+                            Divider().overlay(Color.cnHairlineSoft)
+                        }
+                        commentCell(one)
+                    }
+                }
+                commentBoxFooter
+            }
+            .padding(10)
+        }
+        .frame(height: 360)
+        .background(Color.cnBg, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.cnHairlineSoft, lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    private var commentBoxFooter: some View {
+        if !commentsError.isEmpty {
+            VStack(spacing: 6) {
+                Text(commentsError)
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnRed)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("重试") {
+                    Task { await loadComments(sort: commentsSort, reset: false) }
+                }
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnBrand)
+                .buttonStyle(.plain)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+        } else if loadingComments {
+            HStack(spacing: 6) {
+                RingSpinner(size: 12, color: .cnBrand)
+                Text("正在加载更多…")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk3)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+        } else if commentsExhausted {
+            Text(displayComments.isEmpty ? "没有拉到评论" : "没有更多了")
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnInk3)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+        } else {
+            Button {
+                Task { await loadComments(sort: commentsSort, reset: false) }
+            } label: {
+                Text("继续加载")
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnBrand)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            // 滚到框底就自动续一页：不用点，也不会把整页撑长。
+            .onAppear {
+                guard !loadingComments, commentsError.isEmpty else { return }
+                Task { await loadComments(sort: commentsSort, reset: false) }
+            }
+        }
+    }
+
+    /// 切排序：选中态立刻亮，旧内容立刻清空——「点一下就有反应」。
+    private func switchCommentSort(_ key: String) {
+        let hasData = !displayComments.isEmpty
+        if key == commentsSort, hasData { return }
+        commentsSort = key
+        commentsError = ""
+        liveComments = []
+        commentsPage = 0
+        commentsExhausted = false
+        Task { await loadComments(sort: key, reset: true) }
     }
 
     /// 一条评论（抖音/贴吧那种版式）。

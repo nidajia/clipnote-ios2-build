@@ -76,16 +76,20 @@ struct HomeScreen: View {
         detailPrepare: DetailScreen.PrepareState? = nil,
         showsImport: Bool = false,
         previewSelecting: Bool = false,
-        previewFilter: HomeFilter? = nil
+        previewFilter: HomeFilter? = nil,
+        previewCommentsExpanded: Bool = false
     ) {
         _selected = State(initialValue: initialSelection)
         _showImport = State(initialValue: showsImport)
         _selecting = State(initialValue: previewSelecting)
         if let previewFilter { _filter = State(initialValue: previewFilter) }
         self.detailPrepare = detailPrepare
+        self.previewCommentsExpanded = previewCommentsExpanded
     }
 
     private let detailPrepare: DetailScreen.PrepareState?
+    /// 截图用：详情页一进去就把评论区展开（正常是收起的）。
+    private let previewCommentsExpanded: Bool
 
     private var items: [Item] { library.items }
 
@@ -207,7 +211,8 @@ struct HomeScreen: View {
                 if let selected {
                     DetailScreen(item: selected,
                                  initialPrepare: detailPrepare,
-                                 focusTranscriptAt: focusTranscriptAt)
+                                 focusTranscriptAt: focusTranscriptAt,
+                                 startsCommentsExpanded: previewCommentsExpanded)
                 }
             }
             .task {

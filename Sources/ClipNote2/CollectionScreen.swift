@@ -108,6 +108,9 @@ struct CollectionScreen: View {
                         sortBar
                         // 合集动辄几百集（实测有一部 503 集），逐行建视图会卡；
                         // LazyVStack 只渲染屏幕内的那几行。
+                        // `.id(orderRaw)`：换排序时整块重建。
+                        // 不加这一句，LazyVStack 会按 id 复用原来的行，
+                        // 顺序看起来没变——要退出去再进来才刷新（用户实测）。
                         LazyVStack(spacing: 0) {
                             ForEach(Array(episodes.enumerated()), id: \.element.videoId) { offset, ep in
                                 episodeRow(ep, number: number(of: ep, fallback: offset + 1))
@@ -119,6 +122,7 @@ struct CollectionScreen: View {
                                 }
                             }
                         }
+                        .id(orderRaw)
                     }
                 }
                 .padding(.bottom, Metric.space6)

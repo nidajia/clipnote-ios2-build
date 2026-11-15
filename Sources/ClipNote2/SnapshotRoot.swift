@@ -168,7 +168,7 @@ struct SnapshotRoot: View {
 
         // 评论区截图：种几条带楼层、表情、时间、点赞的评论，验「评论区快照」区块
         // 能渲染（不再只有空壳）。评论数刻意超过 20 条，顺带验「加载更多」不会被 20 条覆盖。
-        if state == "detail", let id = detail?.id {
+        if state == "detail" || state == "detail-comments", let id = detail?.id {
             lib.seedComments(id: id, comments: SnapshotRoot.sampleComments)
         }
 
@@ -368,7 +368,9 @@ struct SnapshotRoot: View {
                     previewSelecting: state == "home-selecting",
                     // 分区筛选态：`@State` 从外部设不了，只能从 init 进来
                     previewFilter: state == "home-section" ? .section("study")
-                        : (state == "home-notes" ? .note : nil)
+                        : (state == "home-notes" ? .note : nil),
+                    // 评论框要展开才看得见：`@State` 从外面设不了，只能从 init 进来
+                    previewCommentsExpanded: state == "detail-comments"
                 )
             }
             .tabItem { Label("首页", systemImage: "house.fill") }

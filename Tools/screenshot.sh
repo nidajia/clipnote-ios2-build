@@ -101,6 +101,8 @@ shot trash        trash   light
 shot detail-idle        detail             light
 # 合集的「上一集 / 下一集」：首屏就能换集，不用滑到底
 shot detail-season      detail-season      light
+# 评论区：固定高度框、框内翻页（滚到评论区再拍）
+shot detail-comments    detail-comments    light
 shot detail-ready       detail-ready       light
 shot detail-note        detail-note        light
 shot detail-downloading detail-downloading light
