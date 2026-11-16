@@ -1661,6 +1661,10 @@ struct DetailScreen: View {
 
     private func generateSummary(force: Bool = false) async {
         guard !library.isOffline, aiState != .running else { return }
+        if network.settled, network.isDown {
+            notice = "离线：摘要要联网才能生成。"
+            return
+        }
         guard force || current.aiSummary.isEmpty else { return }
 
         let config = AIConfigStore.load()
@@ -1701,6 +1705,10 @@ struct DetailScreen: View {
 
     private func generateSegments(force: Bool = false) async {
         guard !library.isOffline, segmentState != .running else { return }
+        if network.settled, network.isDown {
+            notice = "离线：分段要联网才能生成。"
+            return
+        }
         guard force || current.segments.isEmpty else { return }
         // 图文没有音轨。真去请求只会拿到「没有字幕」，白等一次还留一条红字。
         guard item.kind != .image else { return }
@@ -3119,6 +3127,21 @@ struct DetailScreen: View {
     @ViewBuilder
     private var downloadSection: some View {
         VStack(alignment: .leading, spacing: Metric.space3) {
+            // 上次下载失败：常驻一行，而不是只弹一条会自动消失的提示。
+            // 用户切走再回来时，`notice` 早没了，界面上就只剩一个「下载到本地」，
+            // 看不出「刚才失败过」——那会让人以为下载成功了。
+            if let failure = downloads.lastFailure, failure.id == item.id,
+               !downloads.isDownloaded(item.id) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("上次没下成：\(failure.message)")
+                        .font(.cnMeta)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.cnRed)
+            }
+
             if !item.playbackAvailable {
                 Text(item.kind == .image
                      ? "这是图文作品，没有视频可下载。点上面的图可以看大图。"
@@ -3164,6 +3187,13 @@ struct DetailScreen: View {
                 Text("下载在后台继续，离开此页不会中断。")
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
+
+            } else if network.settled, network.isDown {
+                // 没网时按下去只会转 30 秒再失败，不如直接说清楚。
+                Text("当前离线，下载不了。联网后在这里点一次，之后就能离线看。")
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+                    .fixedSize(horizontal: false, vertical: true)
 
             } else {
                 PrimaryButton(title: "下载到本地", isLoading: isPreparing) {

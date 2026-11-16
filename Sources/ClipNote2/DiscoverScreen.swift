@@ -13,6 +13,7 @@ import SwiftUI
 /// 4. **屏蔽管理**：长按卡片标的「不感兴趣」都收在这里，可以撤销
 struct DiscoverScreen: View {
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var network: NetworkMonitor
 
     /// 截图用：预设初始分类。正常启动为 nil，落在「全部」。
     init(initialCategory: String? = nil) {
@@ -66,10 +67,20 @@ struct DiscoverScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metric.space5) {
                 if !errorText.isEmpty {
-                    Text(errorText)
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(errorText)
+                            .font(.cnMeta)
+                            .foregroundStyle(Color.cnRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Button("重试") {
+                            Task { await load(refresh: true) }
+                        }
                         .font(.cnMeta)
-                        .foregroundStyle(Color.cnRed)
-                        .padding(.horizontal, Metric.pagePad)
+                        .foregroundStyle(Color.cnBrand)
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, Metric.pagePad)
                 }
 
                 if subs.isEmpty, hot.isEmpty, mine.isEmpty, loading {
@@ -730,7 +741,11 @@ struct DiscoverScreen: View {
         do {
             feed = try await library.discoverFeed(refresh: refresh)
         } catch {
-            errorText = "热榜拉不到，检查一下网络。已经存的内容不受影响。"
+            // 断网和「服务端挂了」是两件事，文案要分开：
+            // 前者用户自己能解决（连上网），后者只能等。
+            errorText = (network.settled && network.isDown)
+                ? "当前离线 · 热榜和关注都需要联网。已下载的条目在首页仍可正常看。"
+                : "热榜拉不到，检查一下网络。已经存的内容不受影响。"
         }
         subs = await library.subscriptions()
         // 关注列表只在「关注那一刻」抓过一次，之后一直不动——
