@@ -749,17 +749,24 @@ struct HomeScreen: View {
                 // 上一版放在 navigationBarLeading，真机上用户找不到（v42）。
                 // 导航栏那块区域的可见性我没法从代码确认，而头部是我们自己画的，
                 // 一定在视线里。功能做得出来却找不到入口，等于没做。
-                if !filtered.isEmpty {
-                    Button(selecting ? "取消" : "选择") {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            selecting.toggle()
-                            picked.removeAll()
-                        }
+                // **不要用 if 包住这个按钮。**
+                //
+                // 输入中文时，第一个拼音字母就会让 `filtered` 变非空，
+                // 视图树多出一个子节点 → 搜索框宽度突变 → 输入法会话被系统结束，
+                // 表现就是「打中文只出英文字母」。和清空按钮是同一个坑。
+                // 位置固定、只改可见性与可点性。
+                Button(selecting ? "取消" : "选择") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        selecting.toggle()
+                        picked.removeAll()
                     }
-                    .font(.cnChip)
-                    .foregroundStyle(selecting ? Color.cnInk3 : Color.cnBrand)
-                    .frame(minWidth: 40, alignment: .trailing)
                 }
+                .font(.cnChip)
+                .foregroundStyle(selecting ? Color.cnInk3 : Color.cnBrand)
+                .frame(minWidth: 40, alignment: .trailing)
+                .opacity(filtered.isEmpty ? 0 : 1)
+                .allowsHitTesting(!filtered.isEmpty)
+                .accessibilityHidden(filtered.isEmpty)
             }
             .padding(.horizontal, Metric.pagePad)
             .padding(.top, Metric.space2)

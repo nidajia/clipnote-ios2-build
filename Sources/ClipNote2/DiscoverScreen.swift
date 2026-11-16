@@ -21,6 +21,8 @@ struct DiscoverScreen: View {
 
     @State private var feed: APIDiscoverFeed?
     @State private var subs: [APISubscription] = []
+    /// 正在同步关注列表（按钮转圈用）。
+    @State private var checkingSubs = false
     @State private var loading = false
     @State private var errorText = ""
     @State private var category: String
@@ -151,17 +153,35 @@ struct DiscoverScreen: View {
     private var subsSection: some View {
         if !subs.isEmpty {
             VStack(alignment: .leading, spacing: Metric.space3) {
-                sectionHeader("关注更新", detail: "\(subs.count) 个")
+                HStack(spacing: 6) {
+                    Text("关注更新")
+                        .font(.cnTitle)
+                        .foregroundStyle(Color.cnInk)
+                    Text("\(subs.count) 个")
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                    Spacer(minLength: 0)
+                    if checkingSubs {
+                        RingSpinner(size: 11, color: .cnBrand)
+                    } else {
+                        // 自动同步之外再给一个明确的入口：
+                        // 「明明更了却没显示」时，用户第一反应是找一个刷新键。
+                        Button {
+                            Task { await forceCheckSubs() }
+                        } label: {
+                            Text("检查更新")
+                                .font(.cnCaption)
+                                .foregroundStyle(Color.cnBrand)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, Metric.pagePad)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Metric.space3) {
                         ForEach(subs) { sub in
-                            Button {
-                                openedSub = sub
-                            } label: {
-                                subCard(sub)
-                            }
-                            .buttonStyle(.plain)
+                            subCard(sub)
                         }
                     }
                     .padding(.horizontal, Metric.pagePad)
@@ -170,9 +190,44 @@ struct DiscoverScreen: View {
         }
     }
 
+    /// 关注卡片：**头像点开作者主页，其余部分进入这个人的更新列表**。
+    ///
+    /// 用户原话「关注的人点击头像应该也可以跳转对应作者主页」——
+    /// 头像本来就是「这个人」的符号，点它去主页比再点开一层列表更直觉。
     private func subCard(_ sub: APISubscription) -> some View {
         VStack(spacing: 6) {
-            ZStack(alignment: .bottomTrailing) {
+            Button {
+                openAuthorPage(sub)
+            } label: {
+                avatarBubble(sub)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("打开 \(sub.name) 的主页")
+
+            Button {
+                openedSub = sub
+            } label: {
+                VStack(spacing: 2) {
+                    Text(sub.name)
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk2)
+                        .lineLimit(1)
+                        .frame(width: 68)
+
+                    Text(latestText(sub))
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.cnInk3)
+                        .lineLimit(1)
+                        .frame(width: 68)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func avatarBubble(_ sub: APISubscription) -> some View {
+        ZStack(alignment: .bottomTrailing) {
                 AsyncImage(url: URL(string: sub.avatar)) { phase in
                     if case .success(let image) = phase {
                         image.resizable().scaledToFill()
@@ -198,19 +253,6 @@ struct DiscoverScreen: View {
                         .overlay(Circle().strokeBorder(Color.cnBg, lineWidth: 2))
                 }
             }
-
-            Text(sub.name)
-                .font(.cnCaption)
-                .foregroundStyle(Color.cnInk2)
-                .lineLimit(1)
-                .frame(width: 68)
-
-            Text(latestText(sub))
-                .font(.system(size: 9))
-                .foregroundStyle(Color.cnInk3)
-                .lineLimit(1)
-                .frame(width: 68)
-        }
     }
 
     private func hasNew(_ sub: APISubscription) -> Bool {
@@ -698,6 +740,32 @@ struct DiscoverScreen: View {
             errorText = "热榜拉不到，检查一下网络。已经存的内容不受影响。"
         }
         subs = await library.subscriptions()
+        // 关注列表只在「关注那一刻」抓过一次，之后一直不动——
+        // 用户看到的就是「明明更新了还显示没更新」。这里顺手同步一次。
+        Task { await refreshSubsIfStale() }
+    }
+
+    /// 上次检查超过 10 分钟就同步查一次（服务端一次最多查 4 个，最久的优先）。
+    private func refreshSubsIfStale() async {
+        guard !subs.isEmpty, !checkingSubs, !library.isOffline else { return }
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        let stale = subs.contains { nowMs - Double($0.lastCheckedAt) > 10 * 60 * 1000 }
+        guard stale else { return }
+        await forceCheckSubs()
+    }
+
+    /// 手动「检查更新」：不看时间，直接查。
+    private func forceCheckSubs() async {
+        guard !checkingSubs, !library.isOffline else { return }
+        checkingSubs = true
+        defer { checkingSubs = false }
+        let fresh = await library.checkSubscriptions()
+        if !fresh.isEmpty { subs = fresh }
+    }
+
+    /// 头像 → 作者主页。地址拿不到（uid 为空）就什么都不做。
+    private func openAuthorPage(_ sub: APISubscription) {
+        PlatformLink.openAuthor(platform: sub.platform, uid: sub.uid)
     }
 
     /// 下滑到底部时继续取。只对具体分类有效——「全部」已经是混合流，
@@ -849,16 +917,26 @@ private struct SubSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Metric.space3) {
                     HStack(spacing: Metric.space3) {
-                        AsyncImage(url: URL(string: sub.avatar)) { phase in
-                            if case .success(let image) = phase {
-                                image.resizable().scaledToFill()
-                            } else {
-                                Circle().fill(Color.cnCard3)
+                        // 头像本身就点得动：直达作者主页（B 站/抖音各自的 scheme）。
+                        Button {
+                            PlatformLink.openAuthor(platform: sub.platform, uid: sub.uid)
+                        } label: {
+                            AsyncImage(url: URL(string: sub.avatar)) { phase in
+                                if case .success(let image) = phase {
+                                    image.resizable().scaledToFill()
+                                } else {
+                                    Circle().fill(Color.cnCard3)
+                                }
                             }
+                            .frame(width: 44, height: 44)
+                            .clipShape(Circle())
                         }
-                        .frame(width: 44, height: 44)
-                        .clipShape(Circle())
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("打开 \(sub.name) 的主页")
 
+                        Button {
+                            PlatformLink.openAuthor(platform: sub.platform, uid: sub.uid)
+                        } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(sub.name)
                                 .font(.cnTitle)
@@ -867,6 +945,9 @@ private struct SubSheet: View {
                                 .font(.cnCaption)
                                 .foregroundStyle(Color.cnInk3)
                         }
+                        .multilineTextAlignment(.leading)
+                        }
+                        .buttonStyle(.plain)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, Metric.pagePad)

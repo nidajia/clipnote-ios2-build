@@ -918,8 +918,11 @@ struct ClipNoteClient {
                        as: APISubList.self)
     }
 
+    /// `sync=1`：让服务端**先查完再返回**。不带这个参数拿到的是旧列表，
+    /// 用户看到的就是「关注的人明明更新了，还显示没更新」。
     func checkSubscriptions() async throws -> APISubList {
-        try await post("/api/v2/discover/subs/check", body: [:], as: APISubList.self)
+        try await post("/api/v2/discover/subs/check?sync=1", body: [:],
+                       as: APISubList.self)
     }
 
     /// 不感兴趣。`category` 记进分类黑名单，`itemId` 屏蔽单条。

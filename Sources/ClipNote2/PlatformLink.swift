@@ -47,6 +47,27 @@ enum PlatformLink {
         return false
     }
 
+    /// 关注列表里的作者主页（只有 uid，没有完整条目）。
+    ///
+    /// B 站用 `bilibili://space/{mid}`——这是**唯一不受改名影响**的地址；
+    /// 抖音用 `snssdk1128://user/profile/{sec_uid}`，接不住就退到网页。
+    @discardableResult
+    static func openAuthor(platform: String, uid: String) -> Bool {
+        let id = uid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return false }
+        switch platform {
+        case "bilibili", "b站", "bili":
+            open(scheme: "bilibili://space/\(id)",
+                 web: "https://space.bilibili.com/\(id)")
+        case "douyin", "抖音":
+            open(scheme: "snssdk1128://user/profile/\(id)",
+                 web: "https://www.douyin.com/user/\(id)")
+        default:
+            return false
+        }
+        return true
+    }
+
     /// 作者主页。
     ///
     /// 只有拿到 `mid` 才跳——`bilibili://space/{mid}` 是**唯一不受改名影响**的地址。
