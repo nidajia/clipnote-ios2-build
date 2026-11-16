@@ -33,7 +33,12 @@ struct AIConfig: Codable, Equatable {
         return URL(string: trimmed + "/images/generations")
     }
 
-    init() {}
+    init(base: String = "", model: String = "", key: String = "", imageModel: String = "") {
+        self.base = base
+        self.model = model
+        self.key = key
+        self.imageModel = imageModel
+    }
 
     /// 手写解码：`imageModel` 是后加的字段，旧存档里没有这个键。
     /// 用合成的解码器会因为缺键整条失败 → 用户的 key 直接丢掉、要重填。
