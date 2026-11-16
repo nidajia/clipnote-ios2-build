@@ -42,6 +42,11 @@ struct HomeScreen: View {
     @Environment(\.colorScheme) private var scheme
 
     @State private var query = ""
+    /// 真正参与筛选的查询。和输入框分开是**为了中文输入法**：
+    /// 组词过程中 `query` 会先变成拼音字母，如果这时就重算列表，
+    /// 整个结果区会在你还没上屏时反复重建，输入法会话被打断，
+    /// 表现就是「打中文只出英文字母」。延迟 200ms 再落到这里。
+    @State private var appliedQuery = ""
     /// 多选模式。选中的 id 存集合，`filtered` 变化不会让已选项悄悄失效。
     @State private var selecting = false
     @State private var picked = Set<String>()
@@ -133,7 +138,7 @@ struct HomeScreen: View {
             list = list.filter { !$0.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         case .downloaded: list = list.filter { downloads.isDownloaded($0.id) }
         }
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let q = appliedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return list }
         // 交给 LibrarySearch：字段清单和输入框文案必须在一个地方，
         // 分开写就会出现「写着能搜标签，实际搜不到」。
@@ -219,6 +224,13 @@ struct HomeScreen: View {
                 // 只读本机已缓存的字幕：搜索是每敲一下就重算的路径，
                 // 不能在这条路径上打网络。
                 transcripts = TranscriptIndex.load(itemIds: library.items.map(\.id))
+            }
+            // 中文输入法：拼音阶段不重算列表，停顿 200ms 再落值。
+            .task(id: query) {
+                guard query != appliedQuery else { return }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled else { return }
+                appliedQuery = query
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -375,9 +387,12 @@ struct HomeScreen: View {
     private var listOrNoResults: some View {
         // 「一条笔记都没有」和「筛选没命中」是两件事。
         // 前者要请用户写一条，后者只要换个条件。
-        if filter == .note, filtered.isEmpty {
+        // 注意这两个条件都带 `appliedQuery.isEmpty`：
+        // 搜索过程中即使没命中，也**不切换整块视图**，只在 List 上叠一层提示。
+        // 之前一没命中就把 List 换掉，输入法正好在这一下被结束。
+        if filter == .note, appliedQuery.isEmpty, filtered.isEmpty {
             NotesEmptyView { showNewNote = true }
-        } else if filtered.isEmpty {
+        } else if appliedQuery.isEmpty, filtered.isEmpty {
             // 有数据但筛不出来，不能复用「还没有条目」的文案
             NoResultsView {
                 query = ""
@@ -500,16 +515,31 @@ struct HomeScreen: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            // 自绘搜索框后，滚动时得自己收键盘（系统搜索框以前管这件事）
-            .scrollDismissesKeyboard(.immediately)
+            // 自绘搜索框后，滚动时得自己收键盘（系统搜索框以前管这件事）。
+            // 用 `.interactively` 而不是 `.immediately`：后者只要内容发生任何
+            // 位移就收，而中文输入时列表会随结果重排——键盘一收，拼音就被
+            // 当成正文提交（「打中文只出英文字母」的第二个来源）。
+            .scrollDismissesKeyboard(.interactively)
             // 行本身不再硬关分隔线，由这里统一定义颜色
             .listRowSeparatorTint(Color.cnCard2)
             .listRowSpacing(0)
+            // 搜索中没命中：叠一层提示，**不把 List 换掉**。
+            .overlay {
+                if !appliedQuery.isEmpty, filtered.isEmpty, filter != .note {
+                    NoResultsView {
+                        query = ""
+                        filter = .all
+                    }
+                    .background(Color.cnBg)
+                }
+            }
         }
     }
 
     private func transcriptHit(for item: Item) -> TranscriptHit? {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 用生效查询（防抖后的）：拼音阶段不该去扫字幕，
+        // 23 条字幕 × 每敲一个字母扫一遍没有意义，还会拖慢输入。
+        let q = appliedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return nil }
         return TranscriptIndex.hits(in: transcripts[item.id] ?? [], query: q, limit: 1).first
     }
@@ -828,12 +858,11 @@ struct HomeScreen: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.cnInk3)
 
-            TextField("搜索标题、作者、标签、分区、笔记", text: $query)
-                .font(.cnBody)
-                .foregroundStyle(Color.cnInk)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.search)
+            // UIKit 壳子：中文组词期间不报值（见 SearchTextField 的注释）。
+            // 用 SwiftUI 的 TextField 时，拼音阶段就会触发重算与重排，
+            // 输入法会话被打断，汉字上不了屏。
+            SearchTextField(text: $query, placeholder: "搜索标题、作者、标签、分区、笔记")
+                .frame(height: 22)
 
             // **不要用 if 包住这个按钮。**
             //
