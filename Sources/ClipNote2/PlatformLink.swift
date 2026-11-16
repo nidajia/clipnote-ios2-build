@@ -60,8 +60,11 @@ enum PlatformLink {
             open(scheme: "bilibili://space/\(id)",
                  web: "https://space.bilibili.com/\(id)")
         case "douyin", "抖音":
-            open(scheme: "snssdk1128://user/profile/\(id)",
-                 web: "https://www.douyin.com/user/\(id)")
+            // 抖音的 App scheme 对参数很挑：`snssdk1128://user/profile/<sec_uid>`
+            // 会被抖音自己拒掉，弹「参数不合法」。而且那段 sec_uid 是第三方接口
+            // 给的，不保证是抖音认的那一版。所以这里**只走网页**：
+            // 抖音网页会自己引导打开 App，参数不会错。
+            open(scheme: nil, web: "https://www.douyin.com/user/\(id)")
         default:
             return false
         }

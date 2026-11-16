@@ -913,6 +913,14 @@ struct ClipNoteClient {
                        as: APISubList.self)
     }
 
+    /// 只刷新一个作者（作者页下拉刷新用），不连带查出别人的额度。
+    func subscription(key: String) async throws -> APISubscription? {
+        struct One: Decodable { var ok: Bool = false; var sub: APISubscription? }
+        let res: One = try await post("/api/v2/discover/subs/one",
+                                      body: ["key": key], as: One.self)
+        return res.sub
+    }
+
     func removeSubscription(key: String) async throws -> APISubList {
         try await post("/api/v2/discover/subs/remove", body: ["key": key],
                        as: APISubList.self)
@@ -1603,6 +1611,11 @@ final class LibraryStore: ObservableObject {
         } catch {
             return "关注失败：\(error.localizedDescription)"
         }
+    }
+
+    func subscription(key: String) async -> APISubscription? {
+        guard let client else { return nil }
+        return try? await client.subscription(key: key)
     }
 
     func removeSubscription(key: String) async {

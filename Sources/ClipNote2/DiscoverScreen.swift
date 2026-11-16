@@ -130,7 +130,7 @@ struct DiscoverScreen: View {
                 .environmentObject(library)
         }
         .sheet(item: $openedSub) { sub in
-            SubSheet(sub: sub) {
+            AuthorSheet(sub: sub) {
                 Task {
                     await library.removeSubscription(key: sub.key)
                     subs = await library.subscriptions()
@@ -195,34 +195,27 @@ struct DiscoverScreen: View {
     /// 用户原话「关注的人点击头像应该也可以跳转对应作者主页」——
     /// 头像本来就是「这个人」的符号，点它去主页比再点开一层列表更直觉。
     private func subCard(_ sub: APISubscription) -> some View {
-        VStack(spacing: 6) {
-            Button {
-                openAuthorPage(sub)
-            } label: {
+        // 整张卡都进**应用内作者页**，不再跳外部：
+        // 用户原话「我不一定非要跳到他们那看，我还可以在软件里看才对呀」。
+        // 去原站的入口只保留在作者页的上方（地址栏那颗）。
+        Button {
+            openedSub = sub
+        } label: {
+            VStack(spacing: 6) {
                 avatarBubble(sub)
+                Text(sub.name)
+                    .font(.cnCaption)
+                    .foregroundStyle(Color.cnInk2)
+                    .lineLimit(1)
+                    .frame(width: 68)
+                Text(latestText(sub))
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.cnInk3)
+                    .lineLimit(1)
+                    .frame(width: 68)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("打开 \(sub.name) 的主页")
-
-            Button {
-                openedSub = sub
-            } label: {
-                VStack(spacing: 2) {
-                    Text(sub.name)
-                        .font(.cnCaption)
-                        .foregroundStyle(Color.cnInk2)
-                        .lineLimit(1)
-                        .frame(width: 68)
-
-                    Text(latestText(sub))
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.cnInk3)
-                        .lineLimit(1)
-                        .frame(width: 68)
-                }
-            }
-            .buttonStyle(.plain)
         }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -763,11 +756,6 @@ struct DiscoverScreen: View {
         if !fresh.isEmpty { subs = fresh }
     }
 
-    /// 头像 → 作者主页。地址拿不到（uid 为空）就什么都不做。
-    private func openAuthorPage(_ sub: APISubscription) {
-        PlatformLink.openAuthor(platform: sub.platform, uid: sub.uid)
-    }
-
     /// 下滑到底部时继续取。只对具体分类有效——「全部」已经是混合流，
     /// 再按分类翻页会重复。
     private func loadMore() async {
@@ -903,141 +891,284 @@ private struct BlockSheet: View {
 }
 
 /// 订阅详情：这个人的最新几条。
-private struct SubSheet: View {
-    var sub: APISubscription
+/// 应用内作者页。
+///
+/// 用户原话：「发现页点击作者们的头像直接能看到他们最近新发的视频，然后上方是
+/// 他们头像点击进入跳转，我不一定非要跳到他们那看，我还可以在软件里看才对呀」。
+/// 所以默认**留在应用内**：上面是身份区（点头像才去原站），下面是 TA 最近的视频，
+/// 点一条就在应用内播。
+private struct AuthorSheet: View {
     var onRemove: () -> Void
+
+    /// 进来时手上那条（可能已经有 videos）；`sub` 是刷新后的版本。
+    @State private var sub: APISubscription
+    @State private var loading = false
+    @State private var notice = ""
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: LibraryStore
-    /// 点哪一条就在这儿播，不跳浏览器。
     @State private var playing: APIDiscoverItem?
+    /// 库里已有的那条：点开走详情页（有摘要、笔记、评论）。
+    @State private var lookedUp: Item?
+
+    init(sub: APISubscription, onRemove: @escaping () -> Void) {
+        _sub = State(initialValue: sub)
+        self.onRemove = onRemove
+    }
+
+    private var platformName: String {
+        sub.platform == "bilibili" ? "B 站" : (sub.platform == "douyin" ? "抖音" : sub.platform)
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Metric.space3) {
-                    HStack(spacing: Metric.space3) {
-                        // 头像本身就点得动：直达作者主页（B 站/抖音各自的 scheme）。
-                        Button {
-                            PlatformLink.openAuthor(platform: sub.platform, uid: sub.uid)
-                        } label: {
-                            AsyncImage(url: URL(string: sub.avatar)) { phase in
-                                if case .success(let image) = phase {
-                                    image.resizable().scaledToFill()
-                                } else {
-                                    Circle().fill(Color.cnCard3)
-                                }
-                            }
-                            .frame(width: 44, height: 44)
-                            .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("打开 \(sub.name) 的主页")
-
-                        Button {
-                            PlatformLink.openAuthor(platform: sub.platform, uid: sub.uid)
-                        } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(sub.name)
-                                .font(.cnTitle)
-                                .foregroundStyle(Color.cnInk)
-                            Text(sub.platform == "bilibili" ? "B 站" : "抖音")
-                                .font(.cnCaption)
-                                .foregroundStyle(Color.cnInk3)
-                        }
-                        .multilineTextAlignment(.leading)
-                        }
-                        .buttonStyle(.plain)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, Metric.pagePad)
-
-                    ForEach(sub.videos, id: \.videoId) { video in
-                        Button {
-                            playing = previewItem(video)
-                        } label: {
-                            HStack(spacing: Metric.space3) {
-                                AsyncImage(url: URL(string: video.cover)) { phase in
-                                    if case .success(let image) = phase {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        Color.cnCard3
-                                    }
-                                }
-                                .frame(width: 80, height: 48)
-                                .clipShape(RoundedRectangle(cornerRadius: 6,
-                                                            style: .continuous))
-
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(video.title)
-                                        .font(.cnMeta)
-                                        .foregroundStyle(Color.cnInk)
-                                        .lineLimit(2)
-                                        .multilineTextAlignment(.leading)
-                                    if video.created > 0 {
-                                        Text(DiscoverScreen.relative(video.created))
-                                            .font(.cnCaption)
-                                            .foregroundStyle(Color.cnInk3)
-                                    }
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, Metric.pagePad)
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            if let url = URL(string: video.url) {
-                                Button {
-                                    UIApplication.shared.open(url)
-                                } label: {
-                                    Label("在浏览器打开", systemImage: "safari")
-                                }
-                            }
-                        }
-                    }
-
-                    if sub.videos.isEmpty {
-                        Text("还没有拉到这个人的投稿，下拉刷新首页后再来。")
-                            .font(.cnMeta)
-                            .foregroundStyle(Color.cnInk3)
-                            .padding(.horizontal, Metric.pagePad)
-                    }
-
-                    Button(role: .destructive) {
-                        onRemove()
-                        dismiss()
-                    } label: {
-                        Text("取消关注")
-                            .font(.cnButton)
+                    header
+                    actionRow
+                    if !notice.isEmpty {
+                        Text(notice)
+                            .font(.cnCaption)
                             .foregroundStyle(Color.cnRed)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(
-                                Color.cnCard,
-                                in: RoundedRectangle(cornerRadius: Metric.radiusButton,
-                                                     style: .continuous)
-                            )
+                            .padding(.horizontal, Metric.pagePad)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, Metric.pagePad)
-                    .padding(.top, Metric.space4)
+                    videoList
+                    removeButton
                 }
                 .padding(.vertical, Metric.space4)
             }
             .background(Color.cnBg)
-            .navigationTitle("关注")
+            .navigationTitle(sub.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
                 }
             }
-            // 在外层 sheet 里再开一层：iOS 16 起支持，比「先关掉再开播放页」顺。
             .sheet(item: $playing) { one in
                 DiscoverPlayerScreen(item: one)
                     .environmentObject(library)
             }
+            .navigationDestination(isPresented: Binding(
+                get: { lookedUp != nil },
+                set: { if !$0 { lookedUp = nil } }
+            )) {
+                if let lookedUp {
+                    DetailScreen(item: lookedUp)
+                }
+            }
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: Metric.space3) {
+            // 头像点一下才去原站——这是**唯一的出口**，不做成默认行为。
+            Button {
+                openHome()
+            } label: {
+                AsyncImage(url: URL(string: sub.avatar)) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        Circle().fill(Color.cnCard3)
+                    }
+                }
+                .frame(width: 56, height: 56)
+                .clipShape(Circle())
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Color.cnInk.opacity(0.85), in: Circle())
+                        .overlay(Circle().strokeBorder(Color.cnBg, lineWidth: 1.5))
+                        .offset(x: 3, y: 3)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("去\(platformName)看 \(sub.name) 的主页")
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(sub.name)
+                    .font(.cnTitle)
+                    .foregroundStyle(Color.cnInk)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text("\(platformName) · 最近 \(sub.videos.count) 条")
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                    if sub.lastCheckedAt > 0 {
+                        Text(Self.checkedText(sub.lastCheckedAt))
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.cnInk3)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Metric.pagePad)
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: Metric.space2) {
+            Button {
+                openHome()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("在\(platformName)打开主页")
+                        .font(.cnChip)
+                }
+                .foregroundStyle(Color.cnBrand)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(Color.cnBrandSoft, in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Task { await refresh() }
+            } label: {
+                HStack(spacing: 4) {
+                    if loading {
+                        RingSpinner(size: 10, color: .cnInk2)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    Text(loading ? "检查中…" : "刷新最近视频")
+                        .font(.cnChip)
+                }
+                .foregroundStyle(Color.cnInk2)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(Color.cnCard, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(loading)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Metric.pagePad)
+    }
+
+    @ViewBuilder
+    private var videoList: some View {
+        if sub.videos.isEmpty {
+            Text("还没拉到这个人的投稿。点上面「刷新最近视频」试一次。")
+                .font(.cnMeta)
+                .foregroundStyle(Color.cnInk3)
+                .padding(.horizontal, Metric.pagePad)
+                .padding(.top, Metric.space2)
+        } else {
+            ForEach(sub.videos, id: \.videoId) { video in
+                Button {
+                    open(video)
+                } label: {
+                    HStack(spacing: Metric.space3) {
+                        AsyncImage(url: URL(string: video.cover)) { phase in
+                            if case .success(let image) = phase {
+                                image.resizable().scaledToFill()
+                            } else {
+                                Color.cnCard3
+                            }
+                        }
+                        .frame(width: 80, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(video.title)
+                                .font(.cnMeta)
+                                .foregroundStyle(Color.cnInk)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            HStack(spacing: 6) {
+                                if video.created > 0 {
+                                    Text(DiscoverScreen.relative(video.created))
+                                        .font(.cnCaption)
+                                        .foregroundStyle(Color.cnInk3)
+                                }
+                                if video.views > 0 {
+                                    Text(DiscoverScreen.compact(video.views) + " 播放")
+                                        .font(.cnCaption)
+                                        .foregroundStyle(Color.cnInk3)
+                                }
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, Metric.pagePad)
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    if let url = URL(string: video.url) {
+                        Button {
+                            UIApplication.shared.open(url)
+                        } label: {
+                            Label("在原站打开这一条", systemImage: "safari")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var removeButton: some View {
+        Button(role: .destructive) {
+            onRemove()
+            dismiss()
+        } label: {
+            Text("取消关注")
+                .font(.cnButton)
+                .foregroundStyle(Color.cnRed)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    Color.cnCard,
+                    in: RoundedRectangle(cornerRadius: Metric.radiusButton, style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.top, Metric.space4)
+    }
+
+    private func openHome() {
+        let ok = PlatformLink.openAuthor(platform: sub.platform, uid: sub.uid)
+        if !ok {
+            notice = "这个作者没有可跳转的主页地址。"
+        }
+    }
+
+    /// 点一条视频：入库过就进详情（有摘要/笔记/评论），没入库就在应用内播。
+    private func open(_ video: APISubVideo) {
+        if let item = library.items.first(where: { $0.videoId == video.videoId }) {
+            playing = nil
+            lookedUp = item
+            return
+        }
+        playing = previewItem(video)
+    }
+
+    private func refresh() async {
+        guard !loading, !library.isOffline else { return }
+        loading = true
+        notice = ""
+        defer { loading = false }
+        if let fresh = await library.subscription(key: sub.key) {
+            sub = fresh
+        } else {
+            notice = "没拉到更新，检查一下网络再试。"
+        }
+    }
+
+    private static func checkedText(_ ms: Int) -> String {
+        let age = Date().timeIntervalSince1970 - Double(ms) / 1000
+        if age < 120 { return "刚检查过" }
+        if age < 3600 { return "\(Int(age / 60)) 分钟前检查" }
+        if age < 86400 { return "\(Int(age / 3600)) 小时前检查" }
+        return "\(Int(age / 86400)) 天前检查"
     }
 
     private func previewItem(_ video: APISubVideo) -> APIDiscoverItem {
