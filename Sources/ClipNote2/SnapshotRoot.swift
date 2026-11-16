@@ -97,7 +97,6 @@ struct SnapshotRoot: View {
                 case "detail-downloading": store.seedDownloading(id, value: 0.62)
                 case "detail-downloaded": store.seedDownloaded(id)
                 default: break
-                default: break
                 }
             }
         }
