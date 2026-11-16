@@ -138,6 +138,8 @@ shot author                author                light
 shot downloads             downloads             light
 # 离线态：首页顶部提示条（真实网络监控 + previewOffline 钉住）
 shot home-offline          home-offline          light
+# 一图胜千言：结果页（背景是占位渐变，版面是真的）
+shot card-image            card-image            light
 # 本机转写面板（sheet，只能作为根呈现）。
 # 模拟器上真跑只会停在「这台设备暂时不行」，所以这几张全走 preview 注入。
 # 除了「转写中 / 完成」，另外四张是**失败路径**：真机上它们要么看运气

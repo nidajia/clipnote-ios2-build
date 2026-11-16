@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 仅用于 CI 截图：通过启动参数直接进入指定状态。
 ///
@@ -337,6 +338,15 @@ struct SnapshotRoot: View {
             } else if state == "home-offline" {
                 // 离线提示条：直接以首页为根，提示条由 previewOffline 钉住
                 NavigationStack { HomeScreen(previewOffline: true) }
+            } else if state == "card-image" {
+                // 一图胜千言的结果页：背景用本地渐变代替真实生图，
+                // 这样 CI 不花钱、也不需要 key，但版面（标题/要点/署名）是真的。
+                if let item = library.items.first {
+                    CardImageSheet(item: item,
+                                   previewImage: SnapshotRoot.sampleCardBackground)
+                } else {
+                    Color.cnBg
+                }
             } else if state == "author" {
                 // 应用内作者页：sheet 只能作为根呈现。
                 // 这张图要能证明「上面是身份 + 去原站入口，下面是最近视频」。
@@ -643,6 +653,25 @@ struct SnapshotRoot: View {
         APIComment(author: "潜水艇", text: "看了三遍，每次都有新收获",
                    likes: 3, replyCount: 0, cid: "c20", created: 1794000000),
     ]
+
+    /// 卡片图的占位背景：一张 1080×1440 的深色渐变。
+    /// 只用于截图——真实路径是模型生成，见 `ImageGen`。
+    static let sampleCardBackground: UIImage = {
+        let size = CGSize(width: 1080, height: 1440)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            let colors = [UIColor(red: 0.10, green: 0.12, blue: 0.22, alpha: 1).cgColor,
+                          UIColor(red: 0.36, green: 0.20, blue: 0.42, alpha: 1).cgColor,
+                          UIColor(red: 0.86, green: 0.45, blue: 0.38, alpha: 1).cgColor]
+            let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                      colors: colors as CFArray,
+                                      locations: [0, 0.55, 1])!
+            context.cgContext.drawLinearGradient(gradient,
+                                                 start: .zero,
+                                                 end: CGPoint(x: size.width, y: size.height),
+                                                 options: [])
+        }
+    }()
 
     /// 作者页截图用：一条 B 站、一条抖音。
     static let sampleSubs: [APISubscription] = {

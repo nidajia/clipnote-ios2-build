@@ -90,6 +90,7 @@ struct DetailScreen: View {
     @State private var commentsSort = "hot"
     /// 评论框里的错误。单独一份、显示在框内——
     /// 之前用页面级的 notice，提示挂在页面最底部，用户只看到「点了没反应」。
+    @State private var showCardImage = false
     @State private var commentsError = ""
     /// 请求代号：切排序时旧请求的结果必须丢掉，否则会盖回上一屏。
     @State private var commentsGeneration = 0
@@ -247,6 +248,8 @@ struct DetailScreen: View {
                     noteRow
 
                     aiSection
+
+                    cardImageRow
 
                     outlineRow
 
@@ -467,6 +470,9 @@ struct DetailScreen: View {
                 // 直接写 pdfURL = nil 会被解析成给那个 let 赋值。
                 PDFShareSheet(url: pdfURL) { self.pdfURL = nil }
             }
+        }
+        .sheet(isPresented: $showCardImage) {
+            CardImageSheet(item: current)
         }
         .sheet(isPresented: $showTemplates) {
             TemplateSheet { _, _ in
@@ -1272,6 +1278,47 @@ struct DetailScreen: View {
     /// 但这一页如果只读拷贝，就永远显示「还没生成」。
     private var current: Item {
         library.items.first { $0.id == item.id } ?? item
+    }
+
+    /// 「一图胜千言」入口。
+    ///
+    /// 放在摘要区**外面**：没生成摘要的条目也该能画图（有标题就够了）。
+    /// 按入口规则，它必须在正文里可见，不能藏进「更多操作」。
+    private var cardImageRow: some View {
+        Button {
+            showCardImage = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.cnBrand)
+                Text("把这条画成一张图")
+                    .font(.cnChip)
+                    .foregroundStyle(Color.cnInk)
+                Spacer(minLength: 0)
+                if AIConfigStore.load().imageConfigured {
+                    Text("AI 生图")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.cnBrand)
+                } else {
+                    Text("先去设置图像模型")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.cnInk3)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.cnInk3)
+            }
+            .padding(.horizontal, Metric.space3)
+            .padding(.vertical, 11)
+            .background(Color.cnCard,
+                        in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+                    .strokeBorder(Color.cnHairline, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder

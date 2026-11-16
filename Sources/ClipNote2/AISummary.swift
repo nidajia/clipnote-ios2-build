@@ -6,9 +6,17 @@ struct AIConfig: Codable, Equatable {
     var base: String = ""
     var model: String = ""
     var key: String = ""
+    /// 图像模型（「一图胜千言」用）。和对话模型分开存：
+    /// 同一个服务商的两类模型价格表不同，混在一个字段里用户没法替换其中一个。
+    var imageModel: String = ""
 
     var isConfigured: Bool {
         !base.trimmed.isEmpty && !model.trimmed.isEmpty && !key.trimmed.isEmpty
+    }
+
+    /// 生图要 base + key + 图像模型三样齐全（对话模型配不配不影响）。
+    var imageConfigured: Bool {
+        !base.trimmed.isEmpty && !key.trimmed.isEmpty && !imageModel.trimmed.isEmpty
     }
 
     /// OpenAI 兼容的 chat/completions 地址
@@ -16,6 +24,25 @@ struct AIConfig: Codable, Equatable {
         let trimmed = base.trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !trimmed.isEmpty else { return nil }
         return URL(string: trimmed + "/chat/completions")
+    }
+
+    /// OpenAI 兼容的 images/generations 地址
+    var imageEndpoint: URL? {
+        let trimmed = base.trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: trimmed + "/images/generations")
+    }
+
+    init() {}
+
+    /// 手写解码：`imageModel` 是后加的字段，旧存档里没有这个键。
+    /// 用合成的解码器会因为缺键整条失败 → 用户的 key 直接丢掉、要重填。
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        base = (try? box.decode(String.self, forKey: .base)) ?? ""
+        model = (try? box.decode(String.self, forKey: .model)) ?? ""
+        key = (try? box.decode(String.self, forKey: .key)) ?? ""
+        imageModel = (try? box.decode(String.self, forKey: .imageModel)) ?? ""
     }
 }
 

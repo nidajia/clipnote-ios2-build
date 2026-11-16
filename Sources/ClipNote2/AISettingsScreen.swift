@@ -44,6 +44,16 @@ struct AISettingsScreen: View {
         _asrModel = State(initialValue: TranscribeModel.presets(for: loaded.base).first ?? "")
     }
 
+    /// 图像模型输入框的占位提示。硅基流动的 Kolors 是已知可用的一个，
+    /// 别的服务商我不确定，就只写通用提示，不编具体名字。
+    private var imageModelHint: String {
+        switch preset {
+        case .siliconflow: return "Kwai-Kolors/Kolors"
+        case .openai: return "gpt-image-1"
+        default: return "（可不填）"
+        }
+    }
+
     var body: some View {
         List {
             Section {
@@ -91,10 +101,23 @@ struct AISettingsScreen: View {
                     .disabled(config.key.isEmpty || config.base.isEmpty)
                     .accessibilityLabel("从服务商读取模型列表")
                 }
+
+                // 图像模型单列一行：它和对话模型是两套价格、两套名字，
+                // 混在一个输入框里用户没法只换其中一个。
+                HStack(spacing: Metric.space2) {
+                    Text("图像")
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnInk3)
+                        .frame(width: 40, alignment: .leading)
+                    TextField(imageModelHint, text: $config.imageModel)
+                        .font(.cnBody)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
             } header: {
                 Text("服务")
             } footer: {
-                Text("填 OpenAI 兼容的地址即可，末尾的 /v1 要带上。点「选择」可以让服务商把模型列表发过来。")
+                Text("填 OpenAI 兼容的地址即可，末尾的 /v1 要带上。点「选择」可以让服务商把模型列表发过来。\n「图像」这一行只有「一图胜千言」用；留空则该入口会提示先配置。")
             }
 
             Section {
