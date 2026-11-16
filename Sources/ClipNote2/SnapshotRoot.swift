@@ -21,6 +21,8 @@ struct SnapshotRoot: View {
     @StateObject private var logs: LogStore
     @StateObject private var sections: SectionStore
     @StateObject private var statuses: StatusStore
+    /// 截图里不启动真实监控（模拟器网络不可控），按状态直接钉住。
+    @StateObject private var network = NetworkMonitor(startImmediately: false)
 
     init(state: String, appearance: ColorScheme?) {
         self.state = state
@@ -77,6 +79,14 @@ struct SnapshotRoot: View {
             }
         }
 
+        if state == "downloads" {
+            // 三条已下载，大小各不同：截图要能看出「按大小/时间排列」而不是三行一样
+            let sizes: [Int64] = [48_200_000, 126_400_000, 12_800_000]
+            for (offset, item) in lib.items.prefix(3).enumerated() {
+                store.seedDownloaded(item.id, byteCount: sizes[offset % sizes.count])
+            }
+        }
+
         var detail: Item?
         if state.hasPrefix("detail") {
             detail = state == "detail-note"
@@ -86,6 +96,7 @@ struct SnapshotRoot: View {
                 switch state {
                 case "detail-downloading": store.seedDownloading(id, value: 0.62)
                 case "detail-downloaded": store.seedDownloaded(id)
+                default: break
                 default: break
                 }
             }
@@ -322,6 +333,11 @@ struct SnapshotRoot: View {
                 } else {
                     Color.cnBg
                 }
+            } else if state == "downloads" {
+                NavigationStack { DownloadsScreen() }
+            } else if state == "home-offline" {
+                // 离线提示条：直接以首页为根，提示条由 previewOffline 钉住
+                NavigationStack { HomeScreen(previewOffline: true) }
             } else if state == "author" {
                 // 应用内作者页：sheet 只能作为根呈现。
                 // 这张图要能证明「上面是身份 + 去原站入口，下面是最近视频」。
@@ -360,6 +376,7 @@ struct SnapshotRoot: View {
         .environmentObject(logs)
         .environmentObject(sections)
         .environmentObject(statuses)
+        .environmentObject(network)
     }
 
     private var tabs: some View {

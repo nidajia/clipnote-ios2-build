@@ -23,9 +23,17 @@ struct MeScreen: View {
             .listRowBackground(Color.cnCard)
 
             Section {
-                // 这两行只显示信息，点不动——所以不给箭头。
+                // 「下载与存储」现在点得开了：能看清单、能逐个删。
+                // 只显示一串「3 条 · 120 MB」而点不动，等于告诉用户
+                // 「有东西占空间」却不给任何处理手段。
+                NavigationLink {
+                    DownloadsScreen()
+                } label: {
+                    settingsRow("下载与存储", storageValue, showsChevron: true)
+                }
+
+                // 「播放」只显示信息，点不动——所以不给箭头。
                 // 带箭头却点不开，比没有箭头更让人困惑。
-                settingsRow("下载与存储", storageValue, showsChevron: false)
                 settingsRow("播放", "自动横屏", showsChevron: false)
                 // 双入口：底部有第三栏，这里再给一条路径。
                 // 理由很实在——Tab 栏在某些情况下会被隐藏（比如停在详情页时

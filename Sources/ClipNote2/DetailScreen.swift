@@ -32,6 +32,7 @@ struct DetailScreen: View {
 
     @EnvironmentObject private var downloads: DownloadStore
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var network: NetworkMonitor
     @EnvironmentObject private var logs: LogStore
     @EnvironmentObject private var sections: SectionStore
     @EnvironmentObject private var statuses: StatusStore
@@ -1893,6 +1894,13 @@ struct DetailScreen: View {
             return
         }
 
+        // 没下载 + 没网：立即说清楚，不要转 30 秒再报「解析不到地址」。
+        // 后者的文案会把用户引向「这条是不是坏了」，而真实原因是没网。
+        if network.settled, network.isDown {
+            notice = "这条没有下载，离线看不了。联网后可以在详情页下载再看。"
+            return
+        }
+
         if let player {
             AudioFocus.shared.adopt(player)
             if let seconds {
@@ -2547,8 +2555,8 @@ struct DetailScreen: View {
 
     /// 拉一页评论。`reset` 为真时从第 1 页重来（切排序时用）。
     private func loadComments(sort: String, reset: Bool) async {
-        guard !library.isOffline else {
-            commentsError = "离线模式下只能看已经存下来的评论。"
+        guard !library.isOffline, !(network.settled && network.isDown) else {
+            commentsError = "当前离线，只能看已经存下来的评论。"
             return
         }
         // 切排序（reset）时不受「正在加载」限制：用户要的是点一下立刻有反应，

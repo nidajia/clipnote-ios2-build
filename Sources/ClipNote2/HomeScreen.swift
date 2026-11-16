@@ -82,7 +82,8 @@ struct HomeScreen: View {
         showsImport: Bool = false,
         previewSelecting: Bool = false,
         previewFilter: HomeFilter? = nil,
-        previewCommentsExpanded: Bool = false
+        previewCommentsExpanded: Bool = false,
+        previewOffline: Bool = false
     ) {
         _selected = State(initialValue: initialSelection)
         _showImport = State(initialValue: showsImport)
@@ -90,11 +91,18 @@ struct HomeScreen: View {
         if let previewFilter { _filter = State(initialValue: previewFilter) }
         self.detailPrepare = detailPrepare
         self.previewCommentsExpanded = previewCommentsExpanded
+        self.previewOffline = previewOffline
     }
 
     private let detailPrepare: DetailScreen.PrepareState?
     /// 截图用：详情页一进去就把评论区展开（正常是收起的）。
     private let previewCommentsExpanded: Bool
+    /// 截图用：强制显示离线提示条。
+    private let previewOffline: Bool
+
+    @EnvironmentObject private var network: NetworkMonitor
+
+    private var offlineNow: Bool { previewOffline || (network.settled && network.isDown) }
 
     private var items: [Item] { library.items }
 
@@ -804,11 +812,35 @@ struct HomeScreen: View {
 
             filterBar
 
+            if offlineNow {
+                offlineBar
+            }
+
             if !library.failedImports.isEmpty {
                 failedImportsBar
             }
         }
         .background(Color.cnBg)
+    }
+
+    /// 离线提示条。
+    ///
+    /// 判据是**真实网络**（NWPathMonitor），不是 `library.isOffline`——
+    /// 后者只代表「这个进程没配网络层」。没有这条，用户在飞行模式里看到的
+    /// 是「列表还在、但点什么都要转很久」，不知道是网断了。
+    private var offlineBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "wifi.slash")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.cnInk3)
+            Text("当前离线 · 显示的是已缓存内容，已下载的条目仍可播放")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.cnInk3)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Metric.pagePad)
+        .padding(.vertical, 5)
+        .background(Color.cnCard2)
     }
 
     /// 快捷导入失败的提示条。
