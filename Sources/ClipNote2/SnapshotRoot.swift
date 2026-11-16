@@ -322,6 +322,12 @@ struct SnapshotRoot: View {
                 } else {
                     Color.cnBg
                 }
+            } else if state == "author" {
+                // 应用内作者页：sheet 只能作为根呈现。
+                // 这张图要能证明「上面是身份 + 去原站入口，下面是最近视频」。
+                NavigationStack {
+                    AuthorSheet(sub: SnapshotRoot.sampleSubs[0]) {}
+                }
             } else if state == "tags" {
                 NavigationStack { TagsScreen() }
             } else if state == "section-picker" {
@@ -621,6 +627,43 @@ struct SnapshotRoot: View {
         APIComment(author: "潜水艇", text: "看了三遍，每次都有新收获",
                    likes: 3, replyCount: 0, cid: "c20", created: 1794000000),
     ]
+
+    /// 作者页截图用：一条 B 站、一条抖音。
+    static let sampleSubs: [APISubscription] = {
+        let now = Int(Date().timeIntervalSince1970)
+        var bili = APISubscription()
+        bili.key = "bilibili:946974"
+        bili.platform = "bilibili"
+        bili.name = "产品君"
+        bili.uid = "946974"
+        bili.lastCheckedAt = Int(Date().timeIntervalSince1970 * 1000) - 4 * 60 * 1000
+        bili.videos = [
+            .init(videoId: "BV1s1", title: "把 AI 塞进剪辑流程：我踩过的五个坑",
+                  cover: "", created: now - 3600 * 5, views: 82000,
+                  url: "https://www.bilibili.com/video/BV1s1"),
+            .init(videoId: "BV1s2", title: "一个人做完整条产品线，我的工具清单",
+                  cover: "", created: now - 86400 * 2, views: 156000,
+                  url: "https://www.bilibili.com/video/BV1s2"),
+            .init(videoId: "BV1s3", title: "为什么我把笔记从 Notion 搬到本地",
+                  cover: "", created: now - 86400 * 6, views: 43000,
+                  url: "https://www.bilibili.com/video/BV1s3"),
+        ]
+        var dy = APISubscription()
+        dy.key = "douyin:MS4wLjABAAAA"
+        dy.platform = "douyin"
+        dy.name = "华夏探秘"
+        dy.uid = "MS4wLjABAAAA"
+        dy.lastCheckedAt = Int(Date().timeIntervalSince1970 * 1000) - 48 * 60 * 1000
+        dy.videos = [
+            .init(videoId: "dy1", title: "古代最能隐忍人物排行榜 #勾践 #司马懿",
+                  cover: "", created: now - 3600 * 7, views: 210000,
+                  url: "https://www.douyin.com/video/dy1"),
+            .init(videoId: "dy2", title: "古装影视剧美女排行榜 #赵灵儿 #白素贞",
+                  cover: "", created: now - 86400, views: 98000,
+                  url: "https://www.douyin.com/video/dy2"),
+        ]
+        return [bili, dy]
+    }()
 
     /// 发现页样本：分类 + 热榜 + 合集 + 「你存过的」。
     static let sampleDiscoverFeed: APIDiscoverFeed = {

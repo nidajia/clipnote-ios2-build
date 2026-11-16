@@ -897,7 +897,7 @@ private struct BlockSheet: View {
 /// 他们头像点击进入跳转，我不一定非要跳到他们那看，我还可以在软件里看才对呀」。
 /// 所以默认**留在应用内**：上面是身份区（点头像才去原站），下面是 TA 最近的视频，
 /// 点一条就在应用内播。
-private struct AuthorSheet: View {
+struct AuthorSheet: View {
     var onRemove: () -> Void
 
     /// 进来时手上那条（可能已经有 videos）；`sub` 是刷新后的版本。
