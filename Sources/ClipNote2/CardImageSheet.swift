@@ -26,7 +26,17 @@ struct CardImageSheet: View {
 
     @State private var phase: Phase = .idle
 
-    private var points: [String] { Array(item.keyPoints.prefix(3)) }
+    /// 卡片上要印的几行字。
+    /// 没有要点时退到摘要的第一句——空着一大片留给用户自己猜是不行的。
+    private var points: [String] {
+        if !item.keyPoints.isEmpty { return Array(item.keyPoints.prefix(3)) }
+        let summary = item.aiSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else { return [] }
+        let firstSentence = summary
+            .split(separator: "。", maxSplits: 1, omittingEmptySubsequences: true)
+            .first.map(String.init) ?? summary
+        return [String(firstSentence.prefix(60))]
+    }
 
     var body: some View {
         NavigationStack {
