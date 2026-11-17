@@ -328,6 +328,8 @@ struct SummaryResult: Equatable {
     var summary: String
     var keyPoints: [String]
     var labels: [String]
+    /// 章节解读（带时间锚点）。分段那条链路产出的，摘要在它没跑时为空。
+    var chapters: [APIChapter] = []
 }
 
 extension SummarizeFailure {
@@ -604,6 +606,10 @@ struct SegmentStats: Equatable {
 struct SegmentOutcome {
     var segments: [APISegment]
     var stats: SegmentStats
+    /// 同一次调用顺带产出的「细解读」和概述——它们和分段用的是同一份转写，
+    /// 分开再调一次模型纯属浪费，而且会出现两套说法。
+    var chapters: [APIChapter] = []
+    var overview: String = ""
 }
 
 /// 从转写里挑几个「值得回看的点」。
@@ -749,7 +755,9 @@ struct Segmenter {
         // 12 段 × 约 100 token = 1200，给 2400 留一倍余量。
         let reply: (text: String, finishReason: String?)
         do {
-            reply = try await jobs.runChatResult(messages: messages, config: config, maxTokens: 2400)
+            // 现在一次要吐三段（概述 + 分段 + 10-15 条章节），
+            // 2400 会在章节中途被截断，截断的表现是「JSON 不完整」。
+            reply = try await jobs.runChatResult(messages: messages, config: config, maxTokens: 4000)
         } catch let failure as AIJobFailure {
             throw SummarizeFailure.from(failure)
         }
@@ -760,32 +768,106 @@ struct Segmenter {
             throw SummarizeFailure.truncated
         }
 
-        let (segments, stats) = try Self.parseDetailed(reply.text, transcript: lines)
+        let (parsed, stats) = try Self.parseDetailed(reply.text, transcript: lines)
+        // 模型经常把每条都写成 t=0（尤其 7B）。这不是「解析失败」，
+        // 是「时间轴没给」——照原样展示就是五条 00:00。
+        // 这里按转写块的起始时间等距补上，宁可粗，也别全挤在 0。
+        let segments = Self.repairTimes(parsed, blocks: blocks)
         var outcome = stats
         outcome.blocks = blocks.count
         outcome.chars = blocks.reduce(0) { $0 + $1.text.count }
-        return SegmentOutcome(segments: segments, stats: outcome)
+        return SegmentOutcome(
+            segments: segments,
+            stats: outcome,
+            chapters: Self.parseChapters(reply.text, transcript: lines, blocks: blocks),
+            overview: Self.parseOverview(reply.text)
+        )
     }
 
     // MARK: - 提示词
 
     private static let instructions = """
-    你是「片记」的分段整理助手。用户会给你一条视频的转写，每行以 [秒] 开头。
+    你是「片记」的视频理解助手。用户会给你一条视频的转写，每行以 [秒] 开头。
 
-    把整条内容按语义转折切成若干段，每段给一个标题和一句理解。
+    你要产出三样东西：一段总体概述、一份**粗分段**（只给标题，供时间轴跳转）、
+    以及一份**细解读**（10 到 15 条，每条带时间、标题、2-3 句说明和一条延伸）。
     只输出一个 JSON 对象，不要任何解释、不要 Markdown 代码块：
-    {"segments":[{"t":0,"title":"…","summary":"…"}]}
+    {"overview":"…","segments":[{"t":0,"title":"…"}],"chapters":[{"t":0,"title":"…","detail":"…","expand":"…"}]}
 
-    要求：
-    - t 必须原样抄某一行的方括号数字，不要自己换算，不要加偏移。第一段用 0。
-    - 段数按内容定：内容少就 4 段，不要为凑数硬拆；最多 9 段。
-    - 段与段之间必须是真正的转折（换话题、换案例、下结论），不是按时间均分。
-    - 标题不超过 14 字，用陈述句；不要写「第一部分」「接下来」这种编号。
-    - summary 是 20 到 45 字的一句理解：这段讲了什么、为什么重要。
-      不要把标题换个说法再写一遍，也不要复述原话。
-    - 转写没有标点、可能有错别字，按上下文理解。不要纠正专有名词，也不要补上原文没有的数字。
-    - 按时间顺序输出。
+    硬性要求：
+    - **t 必须原样抄某一行的方括号数字**，不要自己换算、不要加偏移。
+    - **不同条目的 t 必须不同**。抄同一个 0 等于没有时间轴，这条会被判为不合格。
+    - overview：60 到 100 字，说清「这条视频在讲什么、结论是什么」，
+      不许复述标题，不许写「本期视频介绍了…」这种空话。
+    - segments：4 到 8 条，title 不超过 10 字，必须是具体名词（「第一名：VoiceStudio」
+      「安全审计：一句话查漏洞」），不要写「介绍了一个工具」这种空标题。
+    - chapters：10 到 15 条，覆盖全片，按内容转折切，不是按时间均分。
+      · title ≤ 16 字，具体到人名 / 产品名 / 结论；
+      · detail 40 到 80 字：这段讲了什么 + 为什么重要；
+      · expand ≤ 40 字：一条延伸或可追问的点，没有就留空字符串，不要编造事实。
+    - 转写没有标点、可能有错别字，按上下文理解；不要纠正专有名词，不要补原文没有的数字。
+    - segments 与 chapters 都按时间升序。
     """
+
+    /// 时间轴修复：所有 t 相同（或只有一个非零）时，按转写块等距补齐。
+    static func repairTimes(_ segments: [APISegment],
+                            blocks: [(t: Int, text: String)]) -> [APISegment] {
+        guard segments.count > 1 else { return segments }
+        let distinct = Set(segments.map(\.t))
+        guard distinct.count < 2 else { return segments }
+        guard !blocks.isEmpty else { return segments }
+        var fixed: [APISegment] = []
+        for (index, one) in segments.enumerated() {
+            // 按序号映射到块：第 i 段落到第 round(i * blocks/blocks) 块
+            let slot = min(blocks.count - 1,
+                           Int(Double(index) / Double(max(1, segments.count - 1))
+                               * Double(blocks.count - 1)))
+            var copy = one
+            copy.t = blocks[slot].t
+            fixed.append(copy)
+        }
+        return fixed.sorted { $0.t < $1.t }
+    }
+
+    /// 从同一份回复里取 chapters。解析失败返回空数组（界面回退到旧版式）。
+    static func parseChapters(_ raw: String,
+                              transcript: [APITranscriptLine],
+                              blocks: [(t: Int, text: String)]) -> [APIChapter] {
+        guard let array = JSONSalvage.objects(raw, key: "chapters") else { return [] }
+        var out: [APIChapter] = []
+        var lastT = -1
+        for one in array.prefix(16) {
+            guard let dict = one as? [String: Any] else { continue }
+            let title = (dict["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if title.isEmpty { continue }
+            var t = Int((dict["t"] as? NSNumber)?.doubleValue ?? 0)
+            // 用同一套修复逻辑：t 不递增或撞 0 时，按序号散到转写块上
+            if t <= 0 || t <= lastT {
+                let slot = min(max(0, blocks.count - 1),
+                               Int(Double(out.count) / Double(max(1, array.count - 1))
+                                   * Double(max(0, blocks.count - 1))))
+                t = blocks.isEmpty ? max(0, out.count * 30) : blocks[slot].t
+            }
+            lastT = t
+            out.append(APIChapter(
+                t: t,
+                title: String(title.prefix(40)),
+                detail: String((dict["detail"] as? String ?? "").prefix(200)),
+                expand: String((dict["expand"] as? String ?? "").prefix(120))
+            ))
+        }
+        return out
+    }
+
+    static func parseOverview(_ raw: String) -> String {
+        guard let start = raw.firstIndex(of: "{"),
+              let end = raw.lastIndex(of: "}"), start < end,
+              let data = String(raw[start...end]).data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return "" }
+        return (root["overview"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private static func userContent(
         title: String, duration: Int, blocks: [(t: Int, text: String)]

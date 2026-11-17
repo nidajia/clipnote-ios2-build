@@ -1031,12 +1031,22 @@ struct ClipNoteClient {
     func saveSummary(id: String, result: SummaryResult, by model: String) async throws -> APILibraryItem {
         try await post(
             "/api/v2/items/\(encode(id))/summary",
-            body: [
-                "summary": result.summary,
-                "keyPoints": result.keyPoints,
-                "labels": result.labels,
-                "by": model,
-            ],
+            body: {
+                var body: [String: Any] = [
+                    "summary": result.summary,
+                    "keyPoints": result.keyPoints,
+                    "labels": result.labels,
+                    "by": model,
+                ]
+                // 章节只在有值时提交：空数组会把服务端已有的章节清掉。
+                if !result.chapters.isEmpty {
+                    body["chapters"] = result.chapters.map {
+                        ["t": $0.t, "title": $0.title,
+                         "detail": $0.detail, "expand": $0.expand]
+                    }
+                }
+                return body
+            }(),
             as: APILibraryItem.self
         )
     }

@@ -1898,6 +1898,19 @@ struct DetailScreen: View {
             let saved = await library.saveSegments(
                 id: current.id, segments: outcome.segments, by: config.model
             )
+            // 同一次调用还产出了概述和章节解读：立刻写回，否则「AI 总结」
+            // 仍然是那条只看标题的旧摘要——用户看到的还是它。
+            if !outcome.chapters.isEmpty || !outcome.overview.isEmpty {
+                let summary = SummaryResult(
+                    summary: outcome.overview.isEmpty ? current.aiSummary : outcome.overview,
+                    keyPoints: outcome.chapters.prefix(6).map(\.title),
+                    labels: current.labels,
+                    chapters: outcome.chapters
+                )
+                _ = await library.saveSummary(
+                    id: current.id, result: summary, by: config.model
+                )
+            }
             segmentState = saved ? .idle : .failed("生成成功，但没存上。")
         } catch let failure as SummarizeFailure {
             if case .unparsable(let raw) = failure {
