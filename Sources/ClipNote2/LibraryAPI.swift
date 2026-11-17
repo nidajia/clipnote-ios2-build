@@ -1836,6 +1836,12 @@ final class LibraryStore: ObservableObject {
         items[index].labels = labels
     }
 
+    /// 截图/预览用：塞章节（新版「AI 总结」的正文）。
+    func seedChapters(id: String, chapters: [APIChapter]) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].chapters = chapters
+    }
+
     /// 截图/预览用：同上，塞分段。
     func seedSegments(id: String, segments: [APISegment]) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }

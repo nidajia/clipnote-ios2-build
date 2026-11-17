@@ -120,6 +120,24 @@ struct SnapshotRoot: View {
 
         // 摘要截图：直接塞一份示例，不联网、不调模型（截图里不该有真实调用）
         if state == "detail-summary", let id = detail?.id {
+            // 新总结卡的样子：概述 + 10–15 章。截图里给 5 章足够看版式。
+            lib.seedChapters(id: id, chapters: [
+                APIChapter(t: 0, title: "开场：GitHub 月度热榜",
+                           detail: "先给结论——本月涨星前十里有三个都在治「AI 审美」，说明痛点已经从功能转向观感。"),
+                APIChapter(t: 92, title: "VoiceStudio：本地免费配音",
+                           detail: "支持声音克隆、多语言翻译与有声书朗读，不用注册账号；本地跑，音频不出设备。",
+                           expand: "它的开源地址与显存要求值得单独看一次"),
+                APIChapter(t: 214, title: "安全审计：一句话查漏洞",
+                           detail: "Cloudflare 开源，多个独立 Agent 分工找漏洞并互相验证，最后给分类报告。",
+                           expand: "多 Agent 互证的成本比单模型高多少"),
+                APIChapter(t: 366, title: "Orca：多 Agent 并行工作台",
+                           detail: "Claude、Codex 各自在独立工作区跑，能自动拆分任务再分配——解决的是「排队」而不是「能力」。"),
+                APIChapter(t: 512, title: "Taste：生成官网并做真机测试",
+                           detail: "生成的不只是页面：还能在多设备宽度下自测，把「看起来整齐」变成可验证的结果。",
+                           expand: "它怎么判定「整齐」——规则还是模型"),
+            ])
+        }
+        if state == "detail-summary", let id = detail?.id {
             lib.seedSummary(
                 id: id,
                 summary: "这条片子讨论的是：现在的 AI 热潮与 2000 年互联网泡沫，究竟哪里像、哪里不一样。"
