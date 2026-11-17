@@ -833,11 +833,11 @@ struct Segmenter {
     static func parseChapters(_ raw: String,
                               transcript: [APITranscriptLine],
                               blocks: [(t: Int, text: String)]) -> [APIChapter] {
-        guard let array = JSONSalvage.objects(raw, key: "chapters") else { return [] }
+        let array = JSONSalvage.objects(raw, key: "chapters")
+        guard !array.isEmpty else { return [] }
         var out: [APIChapter] = []
         var lastT = -1
-        for one in array.prefix(16) {
-            guard let dict = one as? [String: Any] else { continue }
+        for dict in array.prefix(16) {
             let title = (dict["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if title.isEmpty { continue }
             var t = Int((dict["t"] as? NSNumber)?.doubleValue ?? 0)
