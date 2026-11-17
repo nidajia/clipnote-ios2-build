@@ -211,11 +211,27 @@ final class DownloadStore: ObservableObject {
 /// 所以必须先搬走再回调。
 final class FileDownloader: NSObject, URLSessionDownloadDelegate {
 
-    private lazy var session: URLSession = URLSession(
-        configuration: .default,
-        delegate: self,
-        delegateQueue: nil
-    )
+    /// 后台会话的标识。**必须固定**：App 被系统回收后重启，只有同名会话
+    /// 才能把「上次没下完的任务」接回来。
+    static let backgroundIdentifier = "com.clipnote.download"
+
+    /// 系统在 `handleEventsForBackgroundURLSession` 里给的 completion handler。
+    /// 要等这一批事件都回调完（`urlSessionDidFinishEvents`）才能调它，
+    /// 否则系统会认为我们没处理完，不会再把后续事件交过来。
+    static var backgroundCompletion: (() -> Void)?
+
+    private lazy var session: URLSession = {
+        // 默认会话在 App 进入后台就停——用户看到的就是「必须亮着屏等它下完」。
+        // 换后台会话后，锁屏 / 切到微信，下载继续。
+        let config = URLSessionConfiguration.background(
+            withIdentifier: FileDownloader.backgroundIdentifier
+        )
+        // 不交给系统「挑时间下」：用户点了下载就是要现在下。
+        config.isDiscretionary = false
+        // 让系统在任务完成时把我们唤醒（而不是等下次打开 App）。
+        config.sessionSendsLaunchEvents = true
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
 
     private var task: URLSessionDownloadTask?
     private var onProgress: ((Double) -> Void)?
@@ -281,5 +297,14 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error { settle(.failure(error)) }
+    }
+
+    /// 后台会话的一批事件处理完了：把系统给的 completion handler 交回去。
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        DispatchQueue.main.async {
+            let handler = FileDownloader.backgroundCompletion
+            FileDownloader.backgroundCompletion = nil
+            handler?()
+        }
     }
 }

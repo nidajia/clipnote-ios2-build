@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 「一图胜千言」的结果页：模型画背景，App 叠文字，最后给一张能分享的竖图。
 struct CardImageSheet: View {
@@ -137,6 +138,18 @@ struct CardImageSheet: View {
 
     private func generate() async {
         phase = .running
+        // 生图要 10-20 秒，期间不能让屏幕锁掉——锁屏会挂起 App，
+        // 请求被掐断，用户看到的就是「网络断开」。这就是用户反馈的那条的根因。
+        UIApplication.shared.isIdleTimerDisabled = true
+        // 外加一个后台任务：短暂切去微信再切回来，请求也不会被立刻杀掉。
+        let bg = UIApplication.shared.beginBackgroundTask(withName: "card-image") { }
+        defer {
+            UIApplication.shared.isIdleTimerDisabled = false
+            if bg != .invalid {
+                UIApplication.shared.endBackgroundTask(bg)
+            }
+        }
+
         let config = AIConfigStore.load()
         // 提示词用**章节正文**，不是标题：用户原话「这个生图不是根据文本内容来的，
         // 好像是标题？那有什么用」。章节是这条内容里信息密度最高的部分。

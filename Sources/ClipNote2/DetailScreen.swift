@@ -91,6 +91,7 @@ struct DetailScreen: View {
     /// 评论框里的错误。单独一份、显示在框内——
     /// 之前用页面级的 notice，提示挂在页面最底部，用户只看到「点了没反应」。
     @State private var showCardImage = false
+    @State private var showChat = false
     @State private var commentsError = ""
     /// 请求代号：切排序时旧请求的结果必须丢掉，否则会盖回上一屏。
     @State private var commentsGeneration = 0
@@ -473,6 +474,9 @@ struct DetailScreen: View {
         }
         .sheet(isPresented: $showCardImage) {
             CardImageSheet(item: current)
+        }
+        .sheet(isPresented: $showChat) {
+            ItemChatSheet(item: current)
         }
         .sheet(isPresented: $showTemplates) {
             TemplateSheet { _, _ in
@@ -1389,6 +1393,26 @@ struct DetailScreen: View {
                     }
                 }
             }
+
+            // 「继续问」放在总结卡内部：读完总结自然想追问，
+            // 入口就在手边，不该让用户回到首页去找「问库」。
+            Button {
+                showChat = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("继续问这条内容")
+                        .font(.cnChip)
+                }
+                .foregroundStyle(Color.cnBg)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(Color.cnInk,
+                            in: RoundedRectangle(cornerRadius: Metric.radiusButton,
+                                                 style: .continuous))
+            }
+            .buttonStyle(.plain)
 
             if !value.labels.isEmpty {
                 HStack(spacing: 6) {
@@ -3285,6 +3309,28 @@ struct DetailScreen: View {
 
                     PrimaryButton(title: playing ? "正在播放" : "在本地播放") {
                         Task { await startPlayback() }
+                    }
+
+                    // 分享本地视频文件。
+                    // 走系统分享面板：微信、QQ 都在里面，也会带上「存储到文件」。
+                    // 用 ShareLink 直接给**文件 URL**（不是视频链接）——用户要的是
+                    // 「把这 40MB 发出去」，发个链接对方还得自己下。
+                    if let local = downloads.localURL(for: item.id) {
+                        ShareLink(item: local) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("分享视频文件")
+                                    .font(.cnChip)
+                            }
+                            .foregroundStyle(Color.cnInk)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.cnCard3,
+                                        in: RoundedRectangle(cornerRadius: Metric.radiusButton,
+                                                             style: .continuous))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 

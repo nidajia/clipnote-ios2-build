@@ -109,6 +109,20 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    /// 后台下载：系统在 App 被唤醒处理下载事件时调这里。
+    /// 先把回调存下来，等 `urlSessionDidFinishEvents` 再交回去。
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        guard identifier == FileDownloader.backgroundIdentifier else {
+            completionHandler()
+            return
+        }
+        FileDownloader.backgroundCompletion = completionHandler
+    }
+
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?

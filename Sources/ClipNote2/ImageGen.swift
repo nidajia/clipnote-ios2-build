@@ -19,7 +19,7 @@ enum ImageGen {
             case .notConfigured:
                 return "还没配图像模型。到「我 → AI 设置」里填一个（硅基流动可用 Kwai-Kolors/Kolors）。"
             case .transport(let message):
-                return "连不上图像服务：\(message)"
+                return "生成时连接中断（\(message)）。别锁屏、别切走，停在这一页再点一次。"
             case .http(let code, let body):
                 return "图像服务返回 \(code)：\(body)"
             case .unparsable(let body):
@@ -75,8 +75,8 @@ enum ImageGen {
                              session: URLSession) async throws -> UIImage {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        // 生图比聊天慢，20 秒不够
-        request.timeoutInterval = 90
+        // 生图比聊天慢：90 秒在弱网下会被掐断，给到 120 秒
+        request.timeoutInterval = 120
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

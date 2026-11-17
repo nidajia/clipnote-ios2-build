@@ -943,6 +943,16 @@ struct ClipNoteClient {
         return res.sub
     }
 
+    /// 围绕单条内容的追问。`history` 只带最近几轮，服务端会截断。
+    func ask(itemId: String, question: String,
+             history: [[String: String]]) async throws -> String {
+        struct Reply: Decodable { var ok: Bool = false; var answer: String = "" }
+        let reply: Reply = try await post("/api/v2/items/\(itemId)/ask",
+                                          body: ["question": question, "history": history],
+                                          as: Reply.self, timeout: 90)
+        return reply.answer
+    }
+
     func removeSubscription(key: String) async throws -> APISubList {
         try await post("/api/v2/discover/subs/remove", body: ["key": key],
                        as: APISubList.self)
@@ -1253,14 +1263,16 @@ struct ClipNoteClient {
     private func post<T: Decodable>(
         _ path: String,
         body: [String: Any],
-        as type: T.Type
+        as type: T.Type,
+        timeout: TimeInterval = 30
     ) async throws -> T {
         guard let url = url(path: path) else { throw Failure.transport("地址拼不出来") }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        // 解析是同步阻塞的（服务端上限 8 秒），客户端要比它宽
-        request.timeoutInterval = 30
+        // 解析是同步阻塞的（服务端上限 8 秒），客户端要比它宽。
+        // 追问要走一次模型调用，调用方可以传更长的超时。
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -1638,6 +1650,22 @@ final class LibraryStore: ObservableObject {
     func subscription(key: String) async -> APISubscription? {
         guard let client else { return nil }
         return try? await client.subscription(key: key)
+    }
+
+    /// 追问：成功给 answer，失败给 failure（界面据此显示一行红字）。
+    func ask(itemId: String, question: String,
+             history: [[String: String]]) async -> (answer: String?, failure: String?) {
+        guard let client else { return (nil, "离线模式下没法追问。") }
+        do {
+            let answer = try await client.ask(itemId: itemId, question: question,
+                                              history: history)
+            if answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return (nil, "模型没回话，换个问法再试。")
+            }
+            return (answer, nil)
+        } catch {
+            return (nil, "没问到结果：\(error.localizedDescription)")
+        }
     }
 
     func removeSubscription(key: String) async {
