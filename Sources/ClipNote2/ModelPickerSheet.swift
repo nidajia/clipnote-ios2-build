@@ -10,9 +10,15 @@ import SwiftUI
 /// 只写「对话模型 / 向量模型」这种粗分类，不写参数量、不写上下文长度——
 /// 猜错一个分类，后果只是列表里藏错一项；写错参数，后果是用户以为能用。
 struct ModelPickerSheet: View {
+    /// 这一屏是给谁挑模型：对话（摘要/笔记 AI）还是图像（一图胜千言）。
+    /// 同一个 `/models` 列表里两类模型混在一起，不区分的话用户会挑到
+    /// 一个能聊天但不会画图的模型，然后在生成时收到 404。
+    enum Purpose { case chat, image }
+
     var base: String
     var key: String
     @Binding var selected: String
+    var purpose: Purpose = .chat
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var logs: LogStore
@@ -22,9 +28,11 @@ struct ModelPickerSheet: View {
 
     /// `initialModels` 只给截图用：真机上一定要先点「读取模型列表」，
     /// 因为这一屏的价值就在于「列表是从服务商那里真拿到的」。
-    init(base: String, key: String, selected: Binding<String>, initialModels: [AIModel]? = nil) {
+    init(base: String, key: String, selected: Binding<String>,
+         purpose: Purpose = .chat, initialModels: [AIModel]? = nil) {
         self.base = base
         self.key = key
+        self.purpose = purpose
         _selected = selected
         _state = State(initialValue: initialModels.map { LoadState.loaded($0) } ?? .idle)
     }
@@ -57,7 +65,9 @@ struct ModelPickerSheet: View {
                 // 只有读到列表之后，这个开关才有意义。
                 // 关闭按钮交给导航栏自带的返回——不再自己画一个。
                 if case .loaded = state {
-                    Button(showAll ? "只看对话" : "显示全部") {
+                    Button(showAll
+                           ? (purpose == .chat ? "只看对话" : "只看图像")
+                           : "显示全部") {
                         showAll.toggle()
                     }
                     .font(.cnChip)
@@ -71,10 +81,11 @@ struct ModelPickerSheet: View {
     /// 有了数字，用户一眼就能告诉我卡在哪一环。
     private var titleText: String {
         if case .loaded(let models) = state {
-            let count = showAll ? models.count : models.filter(\.chattable).count
-            return "选择模型（\(count)）"
+            let count = showAll ? models.count : models.filter(matches).count
+            let prefix = purpose == .chat ? "选择模型" : "选择图像模型"
+            return "\(prefix)（\(count)）"
         }
-        return "选择模型"
+        return purpose == .chat ? "选择模型" : "选择图像模型"
     }
 
     // MARK: - 三态
@@ -184,7 +195,9 @@ struct ModelPickerSheet: View {
             } footer: {
                 Text(showAll
                      ? "备注是按模型名猜的用途，不是服务商给的能力说明。"
-                     : "默认只显示能对话的模型；向量、重排、语音、图片模型已隐藏。")
+                     : (purpose == .chat
+                        ? "默认只显示能对话的模型；向量、重排、语音、图片模型已隐藏。"
+                        : "这里只列能生图的模型；图片模型是按名字认的，认不出来时点「显示全部」自己找。"))
                     .font(.cnCaption)
                     .foregroundStyle(Color.cnInk3)
             }
@@ -194,11 +207,15 @@ struct ModelPickerSheet: View {
         .overlay {
             if visible.isEmpty {
                 VStack(spacing: Metric.space2) {
-                    Text(keyword.isEmpty ? "列表里没有能聊天的模型" : "没有匹配「\(keyword)」的模型")
+                    Text(keyword.isEmpty
+                         ? (purpose == .chat ? "列表里没有能聊天的模型" : "列表里没有认出来的图像模型")
+                         : "没有匹配「\(keyword)」的模型")
                         .font(.cnChip)
                         .foregroundStyle(Color.cnInk3)
                     if keyword.isEmpty {
-                        Button("显示全部（含向量、语音、图片模型）") {
+                        Button(purpose == .chat
+                               ? "显示全部（含向量、语音、图片模型）"
+                               : "显示全部（含对话、向量、语音模型）") {
                             showAll = true
                         }
                         .font(.cnCaption)
@@ -218,7 +235,7 @@ struct ModelPickerSheet: View {
                     // 等宽：模型名之间只差一两个字符（7B / 72B），
                     // 比例字体下很难一眼看出区别
                     .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(model.chattable ? Color.cnInk : Color.cnInk3)
+                    .foregroundStyle(matches(model) ? Color.cnInk : Color.cnInk3)
                     .lineLimit(2)
                 Text(model.note)
                     .font(.cnMeta)
@@ -235,8 +252,12 @@ struct ModelPickerSheet: View {
         .contentShape(Rectangle())
     }
 
+    private func matches(_ model: AIModel) -> Bool {
+        purpose == .chat ? model.chattable : model.image
+    }
+
     private func filtered(_ models: [AIModel]) -> [AIModel] {
-        var list = showAll ? models : models.filter(\.chattable)
+        var list = showAll ? models : models.filter(matches)
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             list = list.filter { $0.id.localizedCaseInsensitiveContains(trimmed) }

@@ -167,6 +167,8 @@ struct AIModel: Identifiable, Equatable {
     var note: String
     /// 能不能拿来聊天。不能的默认收起来。
     var chattable: Bool
+    /// 能不能生图。「一图胜千言」的模型选择器只列这一类。
+    var image: Bool = false
 }
 
 enum ModelCatalog {
@@ -219,7 +221,8 @@ enum ModelCatalog {
             if name.isEmpty || seen.contains(name) { continue }
             seen.insert(name)
             let info = note(for: name)
-            out.append(AIModel(id: name, note: info.note, chattable: info.chattable))
+            out.append(AIModel(id: name, note: info.note,
+                               chattable: info.chattable, image: info.image))
         }
         guard !out.isEmpty else {
             throw SummarizeFailure.unparsable("列表是空的")
@@ -233,12 +236,13 @@ enum ModelCatalog {
 
     /// 按名字猜用途。这是**猜测**，不是接口给的事实——
     /// 所以文案里只说「对话模型」这种粗分类，不说参数量、不说上下文长度。
-    static func note(for id: String) -> (note: String, chattable: Bool) {
+    static func note(for id: String) -> (note: String, chattable: Bool, image: Bool) {
         let lower = id.lowercased()
 
-        func kind(_ text: String, chattable: Bool = true) -> (String, Bool) {
+        func kind(_ text: String, chattable: Bool = true,
+                  image: Bool = false) -> (String, Bool, Bool) {
             let vendor = vendorName(lower)
-            return (vendor.isEmpty ? text : "\(vendor) · \(text)", chattable)
+            return (vendor.isEmpty ? text : "\(vendor) · \(text)", chattable, image)
         }
 
         // 先判重排：`bge-reranker` 里也含 `bge`，顺序反了会被认成向量模型
@@ -255,9 +259,13 @@ enum ModelCatalog {
         if lower.contains("tts") || lower.contains("cosyvoice") || lower.contains("audio") {
             return kind("语音合成", chattable: false)
         }
-        if lower.contains("flux") || lower.contains("sdxl") || lower.contains("stable-diffusion")
-            || lower.contains("kolors") || lower.contains("image") {
-            return kind("图片生成", chattable: false)
+        // 图片生成：多认几个常见的家族名。前面几条（向量/语音）先判，
+        // 否则 `qwen-image` 之类的名字会被更早的规则吃掉。
+        let imageHints = ["flux", "sdxl", "stable-diffusion", "kolors", "image",
+                          "dall-e", "dalle", "cogview", "wanx", "seedream",
+                          "seededit", "ideogram", "midjourney", "kandinsky", "playground"]
+        if imageHints.contains(where: { lower.contains($0) }) {
+            return kind("图片生成", chattable: false, image: true)
         }
         if lower.contains("reasoner") || lower.contains("-r1") || lower.contains("thinking")
             || lower.contains("-think") {

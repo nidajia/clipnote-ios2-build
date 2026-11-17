@@ -288,6 +288,18 @@ struct SnapshotRoot: View {
                         initialModels: SnapshotRoot.sampleModels
                     )
                 }
+            } else if state == "ai-models-image" {
+                // 图像模型选择器：只列能生图的那一类。
+                // 这张图要能证明「它确实把对话/向量模型挡在外面了」。
+                NavigationStack {
+                    ModelPickerSheet(
+                        base: AIProviderPreset.siliconflow.base,
+                        key: "sk-preview",
+                        selected: .constant("Kwai-Kolors/Kolors"),
+                        purpose: .image,
+                        initialModels: SnapshotRoot.sampleImageModels
+                    )
+                }
             } else if state == "note-new" {
                 // 新建笔记的默认形态：大标题 + 三个小标题，光标在文末。
                 // 这张图要能证明「点进来就有结构」，而不是一张白纸。
@@ -612,6 +624,18 @@ struct SnapshotRoot: View {
     ]
 
     /// 模型列表样本。挑的都是真实存在的 id，备注按本地的名字规则推。
+    /// 图像模型选择器的样本：混合列表，靠 `image` 标记筛选。
+    /// 故意混进对话和向量模型——不混就证明不了「筛掉了」。
+    static let sampleImageModels: [AIModel] = [
+        AIModel(id: "Kwai-Kolors/Kolors", note: "图片生成", chattable: false, image: true),
+        AIModel(id: "black-forest-labs/FLUX.1-schnell", note: "图片生成",
+                chattable: false, image: true),
+        AIModel(id: "stabilityai/stable-diffusion-3-medium", note: "图片生成",
+                chattable: false, image: true),
+        AIModel(id: "Qwen/Qwen2.5-7B-Instruct", note: "通义千问 · 对话模型", chattable: true),
+        AIModel(id: "BAAI/bge-m3", note: "向量模型", chattable: false),
+    ]
+
     static let sampleModels: [AIModel] = [
         AIModel(id: "Qwen/Qwen2.5-7B-Instruct", note: "通义千问 · 对话模型", chattable: true),
         AIModel(id: "Qwen/Qwen2.5-72B-Instruct", note: "通义千问 · 对话模型", chattable: true),

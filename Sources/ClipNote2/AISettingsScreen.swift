@@ -10,6 +10,7 @@ struct AISettingsScreen: View {
     @State private var status: Status = .idle
     @State private var revealKey = false
     @State private var showModels = false
+    @State private var showImageModels = false
     /// 进详情页要不要自动总结。默认关：AI 花的是用户自己的额度，
     /// 只是路过看一眼不该先扣一次调用。
     @AppStorage("clipnote.autoSummary") private var autoSummary = false
@@ -113,6 +114,19 @@ struct AISettingsScreen: View {
                         .font(.cnBody)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                    // 和对话模型一样给「选择」：模型名是 `Kwai-Kolors/Kolors`
+                    // 这种串，不该让人凭记忆手抄。
+                    Button {
+                        showImageModels = true
+                    } label: {
+                        Text("选择")
+                            .font(.cnChip)
+                            .foregroundStyle(config.key.isEmpty || config.base.isEmpty
+                                             ? Color.cnInk3 : Color.cnBrand)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(config.key.isEmpty || config.base.isEmpty)
+                    .accessibilityLabel("从服务商读取图像模型列表")
                 }
             } header: {
                 Text("服务")
@@ -228,6 +242,14 @@ struct AISettingsScreen: View {
                 base: config.base,
                 key: config.key,
                 selected: $config.model
+            )
+        }
+        .navigationDestination(isPresented: $showImageModels) {
+            ModelPickerSheet(
+                base: config.base,
+                key: config.key,
+                selected: $config.imageModel,
+                purpose: .image
             )
         }
     }
