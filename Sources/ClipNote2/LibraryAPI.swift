@@ -314,6 +314,22 @@ struct APIAnnotation: Decodable, Equatable, Hashable {
     }
 }
 
+/// 「AI 总结」里的一条章节：带时间锚点的解读。
+///
+/// 和 `APISegment` 的区别（这不是冗余）：
+/// - segment 是**导航**，只有标题，作用是在时间轴上跳；
+/// - chapter 是**解读**，有 detail（这段讲了什么）和 expand（可延伸的点）。
+/// 两者粒度也不同：分段 4–8 条，章节 10–15 条。
+struct APIChapter: Decodable, Equatable, Hashable, Identifiable {
+    var t: Int = 0
+    var title: String = ""
+    var detail: String = ""
+    /// 一条延伸 / 可追问的点，可能为空。
+    var expand: String = ""
+
+    var id: String { "\(t)-\(title)" }
+}
+
 struct APISegment: Decodable, Equatable, Hashable, Identifiable {
     var title: String
     var t: Int
@@ -435,6 +451,10 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     /// 段数不固定（5±3），所以界面不能假设「一定有 5 段」。
     var segments: [APISegment] = []
     var segmentsAt: Int = 0
+    /// 「AI 总结」的章节解读。老条目为空，界面回退到「摘要 + 要点」的样子。
+    var chapters: [APIChapter] = []
+    /// 1 = 旧版摘要，2 = 章节式总结。
+    var summaryV: Int = 1
     var bookmarks: [APIBookmark] = []
     var bookmarksAt: Int = 0
     /// 作者。`authorId` 可能为空（老数据没有 mid），跳主页要降级成搜索。
@@ -543,6 +563,8 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         labels = try c.decodeIfPresent([String].self, forKey: .labels) ?? []
         segments = try c.decodeIfPresent([APISegment].self, forKey: .segments) ?? []
         segmentsAt = try c.decodeIfPresent(Int.self, forKey: .segmentsAt) ?? 0
+        chapters = try c.decodeIfPresent([APIChapter].self, forKey: .chapters) ?? []
+        summaryV = try c.decodeIfPresent(Int.self, forKey: .summaryV) ?? 1
         bookmarks = try c.decodeIfPresent([APIBookmark].self, forKey: .bookmarks) ?? []
         bookmarksAt = try c.decodeIfPresent(Int.self, forKey: .bookmarksAt) ?? 0
         author = try c.decodeIfPresent(String.self, forKey: .author) ?? ""

@@ -8,8 +8,11 @@ struct OutlineNode: Decodable, Hashable {
     var title: String
     var note: String
     var children: [OutlineNode]
+    /// 第一层是章节，带时间锚点（秒）。点它应该能跳回视频那一刻。
+    /// 老数据没有这个字段，所以是可选的。
+    var t: Int?
 
-    enum CodingKeys: String, CodingKey { case title, note, children }
+    enum CodingKeys: String, CodingKey { case title, note, children, t }
 
     init(title: String, note: String = "", children: [OutlineNode] = []) {
         self.title = title
@@ -22,6 +25,7 @@ struct OutlineNode: Decodable, Hashable {
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         children = try c.decodeIfPresent([OutlineNode].self, forKey: .children) ?? []
+        t = try c.decodeIfPresent(Int.self, forKey: .t)
     }
 
     /// 导出成 Markdown 大纲。脑图的价值有一半在「能贴到笔记软件里」。

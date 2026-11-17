@@ -1342,7 +1342,7 @@ struct DetailScreen: View {
             HStack(spacing: 5) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
-                Text("AI 摘要")
+                Text("AI 总结")
                     .font(.cnCaption)
                 // 模板名直接露在标题行：换模板是「改结构」，
                 // 属于这一块内容的属性，不该藏进二级菜单。
@@ -1369,7 +1369,12 @@ struct DetailScreen: View {
                 .lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !value.keyPoints.isEmpty {
+            // 旧条目只有 keyPoints；新条目有 chapters（带时间的解读）。
+            // 两条路都留着：不然升级后老内容会变成空白卡。
+            if !value.chapters.isEmpty {
+                Divider().overlay(Color.cnHairlineSoft)
+                chaptersBlock(value.chapters)
+            } else if !value.keyPoints.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(value.keyPoints, id: \.self) { point in
                         HStack(alignment: .top, spacing: 6) {
@@ -1682,6 +1687,63 @@ struct DetailScreen: View {
                 .font(.cnCaption)
                 .foregroundStyle(Color.cnInk3)
                 .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// 章节列表：每条 = 时间徽章 + 标题 + 2–3 句解读 + 一条延伸。
+    ///
+    /// 整行可点，点了从那一刻开始播——用户读到这里想看画面，不该再去顶上的
+    /// 进度条上找位置。
+    private func chaptersBlock(_ chapters: [APIChapter]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(chapters) { one in
+                Button {
+                    Task { await startPlayback(at: one.t) }
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(Self.mmss(one.t))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.cnBrand)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.cnBrandSoft, in: Capsule())
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(one.title)
+                                .font(.cnRowTitle)
+                                .foregroundStyle(Color.cnInk)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if !one.detail.isEmpty {
+                                Text(one.detail)
+                                    .font(.cnMeta)
+                                    .foregroundStyle(Color.cnInk2)
+                                    .lineSpacing(3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if !one.expand.isEmpty {
+                                HStack(alignment: .top, spacing: 4) {
+                                    Image(systemName: "sparkle")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .padding(.top, 2)
+                                    Text(one.expand)
+                                        .font(.cnCaption)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .foregroundStyle(Color.cnInk3)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("从 \(Self.mmss(one.t)) 开始：\(one.title)")
+
+                if one.id != chapters.last?.id {
+                    Divider().overlay(Color.cnHairlineSoft)
+                }
             }
         }
     }

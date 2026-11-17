@@ -138,8 +138,18 @@ struct CardImageSheet: View {
     private func generate() async {
         phase = .running
         let config = AIConfigStore.load()
+        // 提示词用**章节正文**，不是标题：用户原话「这个生图不是根据文本内容来的，
+        // 好像是标题？那有什么用」。章节是这条内容里信息密度最高的部分。
+        let material: String
+        if !item.chapters.isEmpty {
+            material = item.chapters.prefix(6)
+                .map { "\($0.title)：\($0.detail)" }
+                .joined(separator: "。")
+        } else {
+            material = item.aiSummary
+        }
         let prompt = ImageGen.backgroundPrompt(title: item.title,
-                                               summary: item.aiSummary,
+                                               summary: material,
                                                points: item.keyPoints)
         do {
             let background = try await ImageGen.generate(prompt: prompt, config: config)
