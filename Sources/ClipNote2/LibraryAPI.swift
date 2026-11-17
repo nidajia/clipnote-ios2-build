@@ -500,7 +500,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, kind, title, metaLine, durationText, durationSeconds
         case summary, cover, playback, publishedAt, source, deletedAt
-        case aiSummary, keyPoints, labels, segments, segmentsAt
+        case aiSummary, keyPoints, labels, segments, segmentsAt, chapters, summaryV
         case bookmarks, bookmarksAt
         case author, authorId, videoId, sourceURL, authorNote, authorNoteAt
         case authorAvatar, note, noteAt, outline, outlineAt

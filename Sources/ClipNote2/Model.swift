@@ -65,6 +65,9 @@ struct Item: Identifiable, Hashable {
     /// 为什么还要它：`updatedAt` 是这次新加的字段，**存量条目上都是 0**。
     /// 只认 updatedAt 的话，用户以前写的笔记永远不显示时间——那正是他抱怨的点。
     var noteAt: Date?
+    /// 「AI 总结」的章节解读（10–15 条，带时间锚点）。
+    /// 老条目为空 → 详情页回退到「摘要 + 要点」。
+    var chapters: [APIChapter] = []
     /// AI 脑图。
     var outline: [OutlineNode] = []
     /// 对某几句的批注。
@@ -108,6 +111,7 @@ struct Item: Identifiable, Hashable {
         self.keyPoints = api.keyPoints
         self.labels = api.labels
         self.segments = api.segments
+        self.chapters = api.chapters
         self.bookmarks = api.bookmarks
         self.author = api.author
         self.authorId = api.authorId
