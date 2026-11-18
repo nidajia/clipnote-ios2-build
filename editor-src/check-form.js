@@ -71,6 +71,27 @@ setTimeout(() => {
     ok(!backToText.includes("```"), "再点一次退回正文——手机上没有 Esc，必须有退路");
   }
 
+  const linkBtn = d.querySelector('.cn-tb-btn[data-cmd="link"]');
+  const beforeLink = w.__getMarkdown();
+  linkBtn.click();
+  const input = d.querySelector('#cn-link-url');
+  const form = input.form;
+  const submit = () => form.querySelector('[type="submit"]').click();
+  submit();
+  ok(form.isConnected && input.getAttribute('aria-invalid') === 'true', '空链接不关闭弹层，错误关联到输入框');
+  input.value = '不是网址';
+  submit();
+  ok(form.isConnected && w.__getMarkdown() === beforeLink, '无效链接不改变正文');
+  input.value = 'https://example.com/article';
+  input.dispatchEvent(new w.Event('input', { bubbles: true }));
+  ok(!input.hasAttribute('aria-invalid'), '改正链接后清除错误');
+  const imeEnter = new w.KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true });
+  input.dispatchEvent(imeEnter);
+  ok(imeEnter.defaultPrevented && form.isConnected, '输入法组词期间的回车不提交');
+  submit();
+  ok(!form.isConnected && w.__getMarkdown().includes('https://example.com/article'), '有效链接插入后移除弹层');
+  w.__replaceAll(beforeLink);
+
   const undoBtn = d.querySelector('.cn-tb-btn[data-cmd="undo"]');
   const redoBtn = d.querySelector('.cn-tb-btn[data-cmd="redo"]');
   ok(!!undoBtn && !!redoBtn, "撤销 / 重做按钮存在");

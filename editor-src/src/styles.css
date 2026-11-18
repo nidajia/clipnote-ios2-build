@@ -86,7 +86,8 @@ body {
 }
 
 body {
-  font: 15px/1.7 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  font: 1rem/1.7 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  overflow-wrap: break-word;
   color: var(--ink);
   overflow: hidden;
 }
@@ -117,7 +118,7 @@ body {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  height: 45px;
+  min-height: 52px;
   padding: 0 6px;
   background: var(--toolbar-bg);
   border-top: 1px solid var(--line);
@@ -137,9 +138,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  margin: 0 3px;
+  width: 44px;
+  height: 44px;
+  margin: 0 1px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -175,7 +176,7 @@ body {
   top: 0;
   right: 0;
   width: 36px;
-  height: 45px;
+  bottom: 0;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.18s ease;
@@ -268,17 +269,36 @@ body {
   background: var(--brand-soft);
 }
 
+.cn-tb-popup form {
+  width: min(17rem, calc(100vw - 30px));
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.cn-tb-popup label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.cn-link-error:not(:empty) {
+  margin-bottom: 8px;
+  color: var(--ink);
+  border-inline-start: 2px solid var(--brand);
+  padding-inline-start: 8px;
+}
+
 .cn-tb-input {
   display: block;
   box-sizing: border-box;
-  width: 208px;
-  max-width: 100%;
-  margin: 4px 4px 8px;
+  width: 100%;
+  min-height: 48px;
+  margin: 0 0 8px;
   padding: 8px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   font: inherit;
-  font-size: 14px;
+  font-size: max(1rem, 1em);
   color: var(--ink);
 }
 

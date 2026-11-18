@@ -38,6 +38,8 @@ struct NoteScreen: View {
     /// 笔记内 AI。
     @StateObject private var webBox = WebViewBox()
     @State private var aiConfig = AIConfigStore.load()
+    @State private var showAISettings = false
+    @State private var showAIActions = false
     @State private var aiRunning = false
     @State private var aiPreview: NoteAIPreview?
     @State private var aiError: String?
@@ -128,6 +130,9 @@ struct NoteScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             keyboardUp = false
         }
+        .sheet(isPresented: $showAISettings, onDismiss: { aiConfig = AIConfigStore.load() }) {
+            NavigationStack { AISettingsScreen() }
+        }
         .sheet(item: $preflight) { plan in
             NoteAIPreflightSheet(
                 preflight: plan,
@@ -181,9 +186,33 @@ struct NoteScreen: View {
                 .padding(.horizontal, Metric.pagePad)
                 .padding(.bottom, 6)
             }
-            if !keyboardUp || aiPreview != nil {
-                NoteAIBar(configured: aiConfig.isConfigured, running: aiRunning) { action in
-                    Task { await prepare(action) }
+            if !keyboardUp, editorReady, aiPreview == nil {
+                if aiConfig.isConfigured {
+                    DisclosureGroup("AI 写作工具", isExpanded: $showAIActions) {
+                        NoteAIBar(configured: true, running: aiRunning) { action in
+                            Task { await prepare(action) }
+                        }
+                    }
+                    .font(.cnChip)
+                    .padding(.horizontal, Metric.pagePad)
+                    .padding(.vertical, 10)
+                } else {
+                    Button {
+                        showAISettings = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Label("AI 写作工具", systemImage: "sparkles")
+                                .foregroundStyle(Color.cnInk)
+                            Spacer(minLength: 8)
+                            Text("配置模型")
+                                .foregroundStyle(Color.cnBrand)
+                        }
+                        .font(.cnChip)
+                        .padding(.horizontal, Metric.pagePad)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }

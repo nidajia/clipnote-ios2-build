@@ -94,7 +94,7 @@ export function createToolbar(view, handlers = {}) {
   const popups = [];
 
   const closeAllPopups = () => {
-    popups.forEach((p) => p.classList.remove("open"));
+    popups.splice(0).forEach((p) => p.remove());
     el.querySelectorAll(".cn-tb-btn[aria-expanded='true']")
       .forEach((b) => b.setAttribute("aria-expanded", "false"));
   };
@@ -237,7 +237,50 @@ export function createToolbar(view, handlers = {}) {
       ok.type = "button";
       ok.className = "cn-tb-primary";
       ok.textContent = "插入";
-      ok.addEventListener("click", () => {
+      const form = document.createElement("form");
+      form.noValidate = true;
+      const label = document.createElement("label");
+      label.htmlFor = input.id = "cn-link-url";
+      label.textContent = "链接地址（必填）";
+      input.name = "url";
+      input.required = true;
+      const error = document.createElement("div");
+      error.id = "cn-link-error";
+      error.className = "cn-link-error";
+      error.setAttribute("role", "status");
+      const problem = () => {
+        if (!input.value.trim()) return "请输入链接地址。";
+        try {
+          const url = new URL(input.value.trim());
+          if (["https:", "http:"].includes(url.protocol) && url.hostname) return "";
+        } catch (_) { /* 由下方提供可纠正的提示 */ }
+        return "请输入以 https:// 或 http:// 开头的网页链接。";
+      };
+      const showError = (message) => {
+        error.textContent = message;
+        if (message) {
+          input.setAttribute("aria-invalid", "true");
+          input.setAttribute("aria-describedby", error.id);
+        } else {
+          input.removeAttribute("aria-invalid");
+          input.removeAttribute("aria-describedby");
+        }
+      };
+      input.addEventListener("input", () => {
+        if (!problem()) showError("");
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) event.preventDefault();
+      });
+      ok.type = "submit";
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const message = problem();
+        if (message) {
+          showError(message);
+          input.focus();
+          return;
+        }
         cmd.setLink(input.value)(view.state, view.dispatch, view);
         closeAllPopups();
         view.focus();
@@ -251,8 +294,16 @@ export function createToolbar(view, handlers = {}) {
         view.focus();
       });
       actions.append(ok, cancel);
-      panel.append(input, actions);
-      setTimeout(() => input.focus(), 0);
+      form.append(label, input, error, actions);
+      panel.append(form);
+      panel.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !event.isComposing) {
+          event.preventDefault();
+          closeAllPopups();
+          anchor.focus();
+        }
+      });
+      setTimeout(() => { if (input.isConnected) input.focus(); }, 0);
     }
 
     popupLayer.appendChild(panel);
