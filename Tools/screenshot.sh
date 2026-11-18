@@ -85,3 +85,11 @@ shot detail-downloading-light detail-downloading light
 shot detail-downloading-dark detail-downloading dark
 shot detail-downloaded-light detail-downloaded light
 shot detail-downloaded-dark detail-downloaded dark
+shot home-light home light
+shot home-dark home dark
+shot detail-summary-light detail-summary light
+shot detail-summary-dark detail-summary dark
+shot detail-summary-chapter-light detail-summary-2 light
+shot detail-summary-chapter-dark detail-summary-2 dark
+shot note-editor-light note-editor light
+shot note-editor-dark note-editor dark

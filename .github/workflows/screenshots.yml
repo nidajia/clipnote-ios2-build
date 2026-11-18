@@ -9,7 +9,7 @@ name: Component Screenshots
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, codex/ui-reading-candidate]
 
 jobs:
   screenshots:

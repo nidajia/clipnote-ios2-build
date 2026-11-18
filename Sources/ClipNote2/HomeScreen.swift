@@ -207,7 +207,7 @@ struct HomeScreen: View {
             .refreshable { await library.reload() }
             .background(Color.cnBg)
             .navigationTitle("片记")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             // 不用 `.searchable`：iOS 16 下它的抽屉高度与大标题折叠会互相触发。
             // 列表内容刚好卡在「勉强可滚动」的边界时，导航栏会**不需要任何输入**
             // 就持续上下抽动，而导入按钮正夹在那两者中间（真机复现）。
@@ -533,7 +533,7 @@ struct HomeScreen: View {
             .listRowSpacing(0)
             // 搜索中没命中：叠一层提示，**不把 List 换掉**。
             .overlay {
-                if !appliedQuery.isEmpty, filtered.isEmpty, filter != .note {
+                if !appliedQuery.isEmpty, filtered.isEmpty {
                     NoResultsView {
                         query = ""
                         filter = .all
@@ -801,16 +801,32 @@ struct HomeScreen: View {
                 }
                 .font(.cnChip)
                 .foregroundStyle(selecting ? Color.cnInk3 : Color.cnBrand)
-                .frame(minWidth: 40, alignment: .trailing)
-                .opacity(filtered.isEmpty ? 0 : 1)
-                .allowsHitTesting(!filtered.isEmpty)
-                .accessibilityHidden(filtered.isEmpty)
+                .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                .opacity(filtered.isEmpty && !selecting ? 0 : 1)
+                .allowsHitTesting(!filtered.isEmpty || selecting)
+                .accessibilityHidden(filtered.isEmpty && !selecting)
             }
             .padding(.horizontal, Metric.pagePad)
             .padding(.top, Metric.space2)
             .padding(.bottom, Metric.space1)
 
             filterBar
+
+            HStack {
+                Text(appliedQuery.isEmpty ? (filterChips.first { $0.filter == filter }?.title ?? "收藏库") : "搜索结果")
+                    .font(.cnRowTitle)
+                    .foregroundStyle(Color.cnInk)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                if !items.isEmpty {
+                    Text("\(filtered.count) 条")
+                        .font(.cnMeta.monospacedDigit())
+                        .foregroundStyle(Color.cnInk2)
+                }
+            }
+            .padding(.horizontal, Metric.pagePad)
+            .padding(.vertical, Metric.space2)
+            Divider().overlay(Color.cnHairlineSoft)
 
             if offlineNow {
                 offlineBar
@@ -916,11 +932,12 @@ struct HomeScreen: View {
             .accessibilityLabel("清空搜索")
         }
         .padding(.horizontal, 10)
-        .frame(height: 36)
-        .background(
-            Color.cnCard2,
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
+        .frame(minHeight: 44)
+        .background(Color.cnCard, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12).strokeBorder(Color.cnHairline, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
     }
 
     /// 钉在顶部的筛选条，不随列表滚动。

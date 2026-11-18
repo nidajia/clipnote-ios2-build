@@ -283,8 +283,12 @@ body {
 }
 
 .cn-tb-input:focus {
-  outline: none;
   border-color: var(--brand);
+}
+
+#cn-app :is(button, input, .ProseMirror):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
 }
 
 .cn-tb-actions {
