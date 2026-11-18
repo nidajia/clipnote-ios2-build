@@ -85,6 +85,54 @@ final class ContentSummaryTests: XCTestCase {
         let noSource = try await SummaryTranscriptLoader.load(remote: { [] }, cached: [])
         XCTAssertTrue(noSource.isEmpty)
     }
+    func testVeryLongSingleLineIsSplitWithoutLosingUnicodeOrTime() {
+        let text = String(repeating: "开头👩‍💻结尾", count: 800)
+        let chunks = ContentSummarizer.transcriptChunks([APITranscriptLine(t: 7, text: text)])
+        XCTAssertGreaterThan(chunks.count, 1)
+        XCTAssertEqual(chunks.flatMap { $0 }.map(\.text).joined(), text)
+        XCTAssertTrue(chunks.allSatisfy { chunk in
+            chunk.allSatisfy { $0.t == 7 } && chunk.reduce(0) { $0 + "[\($1.t)] \($1.text)\n".utf8.count } <= 4500
+        })
+    }
+
+    func testPartialRemoteUsesFullerLocalAndRejectsShortCacheAsComplete() throws {
+        let remote = try JSONDecoder().decode(APITranscript.self, from: Data(#"{"lines":[{"t":0,"text":"开头"},{"t":220,"text":"中段"}],"durationSeconds":1200,"partial":true}"#.utf8))
+        let cache = LocalTranscript(itemId: "x", lines: [TranscriptLine(t: 2, text: "开头"),
+                                                         TranscriptLine(t: 620, text: "中段"),
+                                                         TranscriptLine(t: 1190, text: "尾段")],
+                                    durationSeconds: 1200, createdAt: Date(), locale: "zh-CN")
+        let chosen = SummaryTranscriptInput.choose(remote: remote, cached: cache, itemDuration: 1200)
+        XCTAssertEqual(chosen.lines.last?.t, 1190)
+        XCTAssertFalse(chosen.partial)
+        XCTAssertTrue(SummaryTranscriptInput.choose(remote: remote, cached: nil, itemDuration: 1200).partial)
+        let incompleteCache = LocalTranscript(itemId: "x", lines: [TranscriptLine(t: 210, text: "还没到结尾")],
+                                              durationSeconds: 220, createdAt: Date(), locale: "zh-CN")
+        XCTAssertTrue(SummaryTranscriptInput.choose(remote: nil, cached: incompleteCache, itemDuration: 1200).partial)
+    }
+
+    func testLongVideoSendsEveryChunkAndProgrammaticallyKeepsChapterTimes() async throws {
+        let long = (0..<12).map { index in
+            APITranscriptLine(t: index * 300, text: "主题锚点\(index)-" + String(repeating: "正文", count: 450))
+        }
+        var sent: [String] = []
+        let transport = AIJobTransport(create: { body in
+            let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
+            let user = try XCTUnwrap(messages.last?["content"])
+            sent.append(user)
+            let raw = user.contains("正文：")
+                ? #"{"title":"可核查观点","detail":"解释原因并对照正文给出的实例。","expand":"还有哪些证据？"}"#
+                : #"{"summary":"这段视频的核心结论来自各个章节","keyPoints":["实例支持结论"],"labels":[],"chapters":[]}"#
+            return AIJobSnapshot(id: "test", status: "done", text: raw)
+        }, status: { _ in throw AIJobFailure.gone })
+        let subject = ContentSummarizer(config: AIConfig(base: "https://example.test/v1", model: "test", key: "test"),
+                                        jobs: AIJobClient(transport: transport))
+        let result = try await subject.summarize(title: "长片", lines: long, duration: 3600)
+        XCTAssertEqual(result.chapters.map(\.t), long.map(\.t))
+        XCTAssertEqual(sent.count, long.count + 1)
+        for index in long.indices { XCTAssertTrue(sent[index].contains("主题锚点\(index)-")) }
+        XCTAssertTrue(sent.last?.contains("[3300]") == true)
+    }
+
     func testChapterTreeKeepsTwelveRootsZeroTimeAndMatchingConcepts() throws {
         let chapters = try ContentSummarizer.parse(reply(), lines: lines, duration: 720).chapters
         let nodes = Outliner.chapterTree(chapters)

@@ -171,6 +171,7 @@ struct DetailScreen: View {
         case running
         case needsSetup
         case needsTranscript
+        case partialTranscript(Int)
         case failed(String)
     }
 
@@ -429,7 +430,7 @@ struct DetailScreen: View {
                 let summarizing = transcribeForSummary
                 transcribeForSummary = false
                 Task {
-                    if summarizing { await generateSummary(force: true) }
+                    if summarizing { await generateSummary(force: true, allowTranscription: false) }
                     else {
                         segmentState = .idle
                         await generateSegments(force: true)
@@ -1341,6 +1342,18 @@ struct DetailScreen: View {
         VStack(alignment: .leading, spacing: Metric.space3) {
             if aiState == .running { runningCard }
             else if case .failed(let message) = aiState { failedCard(message) }
+            else if case .partialTranscript(let last) = aiState {
+                VStack(alignment: .leading, spacing: Metric.space2) {
+                    Text("文字稿只覆盖到 \(Self.mmss(last))，可能缺少后段。旧总结已保留。")
+                        .font(.cnMeta).foregroundStyle(Color.cnInk3)
+                    Button("补转写并生成总结") {
+                        transcribeForSummary = true
+                        showTranscribe = true
+                    }
+                    .font(.cnChip).foregroundStyle(Color.cnBrand)
+                }
+                .padding(Metric.space4)
+            }
             else if aiState == .needsTranscript {
                 VStack(alignment: .leading, spacing: Metric.space2) {
                     Text("没有可用的文字稿，先转写音轨再总结。旧总结会保留。")
@@ -1822,11 +1835,21 @@ struct DetailScreen: View {
             let lines: [APITranscriptLine]
             let text: String
             if current.kind == .video {
-                let cached = LocalTranscriptStore.shared.load(id: current.id)?.apiLines ?? []
-                lines = try await SummaryTranscriptLoader.load(remote: {
-                    try await library.transcript(for: current.id).lines
-                }, cached: cached)
+                let cached = LocalTranscriptStore.shared.load(id: current.id)
+                let remote: APITranscript?
+                do { remote = try await library.transcript(for: current.id) }
+                catch is CancellationError { throw CancellationError() }
+                catch {
+                    guard let cached, !cached.apiLines.isEmpty else { throw error }
+                    remote = nil
+                }
+                let source = SummaryTranscriptInput.choose(remote: remote, cached: cached, itemDuration: current.durationSeconds)
+                lines = source.lines
                 text = ""
+                if source.partial, let last = lines.last {
+                    aiState = .partialTranscript(last.t)
+                    return
+                }
                 guard !lines.isEmpty else {
                     aiState = .needsTranscript
                     if allowTranscription {
