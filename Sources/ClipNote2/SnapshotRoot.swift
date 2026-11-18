@@ -323,6 +323,10 @@ struct SnapshotRoot: View {
                 } else {
                     Color.cnBg
                 }
+            } else if (state == "detail-downloading" || state == "detail-downloaded"), let item = detailItem {
+                NavigationStack {
+                    DetailScreen(item: item, snapshotScrollTarget: "moreOperations", startsMoreExpanded: true)
+                }
             } else if state.hasPrefix("detail-summary"), let item = library.items.first(where: { $0.id == detailItem?.id }) {
                 NavigationStack {
                     DetailScreen(item: item, snapshotScrollTarget: summaryScrollTarget,

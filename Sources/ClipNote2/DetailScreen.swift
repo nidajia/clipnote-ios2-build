@@ -147,12 +147,14 @@ struct DetailScreen: View {
 
     init(item: Item, initialPrepare: PrepareState? = nil, focusTranscriptAt: Int? = nil,
          autoPlay: Bool = false, startsCommentsExpanded: Bool = false,
-         snapshotScrollTarget: String? = nil, initialAIState: AIState? = nil) {
+         snapshotScrollTarget: String? = nil, initialAIState: AIState? = nil,
+         startsMoreExpanded: Bool = false) {
         self.item = item
         self.focusTranscriptAt = focusTranscriptAt
         self.autoPlay = autoPlay
         self.startsCommentsExpanded = startsCommentsExpanded
         self.snapshotScrollTarget = snapshotScrollTarget
+        if startsMoreExpanded { _showMore = State(initialValue: true) }
         if let initialAIState { _aiState = State(initialValue: initialAIState) }
         if let initialPrepare {
             _prepare = State(initialValue: initialPrepare)
@@ -269,6 +271,7 @@ struct DetailScreen: View {
                     // 导出、下载是「偶尔用一次」的动作，收进折叠区。
                     // 页面里原来还有一个独立的「导出」行，和这里重复，已删。
                     moreSection
+                        .id("moreOperations")
 
                     if let notice {
                         Text(notice)
