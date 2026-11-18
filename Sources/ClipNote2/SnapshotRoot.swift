@@ -105,7 +105,7 @@ struct SnapshotRoot: View {
 
         var detail: Item?
         if state.hasPrefix("detail") {
-            detail = state == "detail-note"
+            detail = (state == "detail-note" || state == "detail-summary-note")
                 ? lib.items.first { $0.kind == .note }
                 : lib.items.first
             if let id = detail?.id {
@@ -118,37 +118,15 @@ struct SnapshotRoot: View {
         }
         self.detailItem = detail
 
-        // 摘要截图：直接塞一份示例，不联网、不调模型（截图里不该有真实调用）
-        if state == "detail-summary", let id = detail?.id {
-            // 新总结卡的样子：概述 + 10–15 章。截图里给 5 章足够看版式。
-            lib.seedChapters(id: id, chapters: [
-                APIChapter(t: 0, title: "开场：GitHub 月度热榜",
-                           detail: "先给结论——本月涨星前十里有三个都在治「AI 审美」，说明痛点已经从功能转向观感。"),
-                APIChapter(t: 92, title: "VoiceStudio：本地免费配音",
-                           detail: "支持声音克隆、多语言翻译与有声书朗读，不用注册账号；本地跑，音频不出设备。",
-                           expand: "它的开源地址与显存要求值得单独看一次"),
-                APIChapter(t: 214, title: "安全审计：一句话查漏洞",
-                           detail: "Cloudflare 开源，多个独立 Agent 分工找漏洞并互相验证，最后给分类报告。",
-                           expand: "多 Agent 互证的成本比单模型高多少"),
-                APIChapter(t: 366, title: "Orca：多 Agent 并行工作台",
-                           detail: "Claude、Codex 各自在独立工作区跑，能自动拆分任务再分配——解决的是「排队」而不是「能力」。"),
-                APIChapter(t: 512, title: "Taste：生成官网并做真机测试",
-                           detail: "生成的不只是页面：还能在多设备宽度下自测，把「看起来整齐」变成可验证的结果。",
-                           expand: "它怎么判定「整齐」——规则还是模型"),
-            ])
-        }
-        if state == "detail-summary", let id = detail?.id {
-            lib.seedSummary(
-                id: id,
-                summary: "这条片子讨论的是：现在的 AI 热潮与 2000 年互联网泡沫，究竟哪里像、哪里不一样。"
-                    + "结论不是「一定会崩」，而是估值与收入之间的缺口比当年更难解释。",
-                keyPoints: [
-                    "估值跑在收入前面，且集中在少数几家公司",
-                    "与 2000 年不同：这次的基础设施是真实在用的",
-                    "资本开支的回收周期比市场预期更长",
-                ],
-                labels: ["AI", "投资", "互联网史"]
-            )
+        // 同一篇正文的概述与十二章；分屏验证完整内容，不与别的题材混用。
+        if state.hasPrefix("detail-summary"), let id = detail?.id {
+            lib.seedSummary(id: id,
+                summary: "AI 基础设施已有真实需求，但估值与现金回收速度仍有缺口。判断泡沫要同时看收入、资本开支和客户付费，不能只猜市场拐点。",
+                keyPoints: ["区分真实使用量与可持续收入", "检查资本开支回收与现金流", "用经营证据检验估值假设"],
+                labels: ["AI", "投资"])
+            if state != "detail-summary-note" {
+                lib.seedChapters(id: id, chapters: Self.sampleChapters)
+            }
         }
 
         // 分段截图：摘要 + 分段同时给，验的是「摘要卡里怎么塞下分段」
@@ -228,8 +206,7 @@ struct SnapshotRoot: View {
         }
 
 
-        // 脑图：塞一棵三层树。注意分支名刻意都不带时间词——
-        // 截图同时也在验提示词的目标形态（按概念归类，不是按时间顺序）。
+        // 脑图和总结读取同一份已保存章节。
         if state == "outline", let id = lib.items.first?.id {
             lib.seedSummary(
                 id: id,
@@ -237,7 +214,7 @@ struct SnapshotRoot: View {
                 keyPoints: ["估值跑在收入前面"],
                 labels: ["AI", "投资"]
             )
-            lib.seedOutline(id: id, outline: SnapshotRoot.sampleOutline)
+            lib.seedChapters(id: id, chapters: Self.sampleChapters)
         }
 
         // 书签：分段和旗子同时给，验的是「两种东西能不能一眼分开」
@@ -339,6 +316,11 @@ struct SnapshotRoot: View {
                 } else {
                     Color.cnBg
                 }
+            } else if state.hasPrefix("detail-summary"), let item = library.items.first(where: { $0.id == detailItem?.id }) {
+                NavigationStack {
+                    DetailScreen(item: item, snapshotScrollTarget: summaryScrollTarget,
+                                 initialAIState: summaryPreviewState)
+                }
             } else if state == "outline" {
                 if let item = library.items.first {
                     NavigationStack { OutlineScreen(item: item) }
@@ -432,6 +414,40 @@ struct SnapshotRoot: View {
         .environmentObject(statuses)
         .environmentObject(network)
     }
+
+    private var summaryScrollTarget: String {
+        switch state {
+        case "detail-summary-2": return "chapter-244"
+        case "detail-summary-3": return "chapter-510"
+        case "detail-summary-4": return "chapter-804"
+        case "detail-summary-end": return "chapter-980"
+        default: return "aiSummary"
+        }
+    }
+
+    private var summaryPreviewState: DetailScreen.AIState? {
+        switch state {
+        case "detail-summary-running": return .running
+        case "detail-summary-error": return .failed("生成成功，但总结没有保存，旧内容已保留。请重试。")
+        case "detail-summary-missing": return .needsTranscript
+        default: return nil
+        }
+    }
+
+    static let sampleChapters: [APIChapter] = [
+        APIChapter(t: 0, title: "先区分估值与收入", detail: "市场给出的估值反映未来预期，不等于企业已经赚到的钱。把两条曲线放在一起，才能看清讨论的缺口。", expand: "收入需要增长到什么程度才能支持当前预期？"),
+        APIChapter(t: 78, title: "互联网泡沫的参照", detail: "历史比较提供检查问题的线索，不能直接推出同样的结局。需要逐项核对需求、融资和经营模式。", expand: "哪些相似点能用经营数据验证？"),
+        APIChapter(t: 162, title: "叙事如何影响定价", detail: "当多个投资者依赖相同增长假设，价格容易受到共同预期推动。判断时应把叙事与可验证的订单分开。", expand: "增长假设改变时，估值对哪个变量最敏感？"),
+        APIChapter(t: 244, title: "算力使用是真实需求", detail: "算力与电力确实被消耗，是这一轮基础设施需求的重要证据。真实使用仍需要与客户最终付费能力一起看。", expand: "使用量增长能否转化为稳定付费？"),
+        APIChapter(t: 330, title: "资本开支提前发生", detail: "数据中心建设先支出现金，未来收入逐步兑现。回收周期与市场预期的差异会影响资金压力。", expand: "如果收入兑现变慢，现金还能支持多久？"),
+        APIChapter(t: 418, title: "折旧与现金流的区别", detail: "折旧安排会改变账面利润的呈现，现金支出却已经发生。比较企业时要同时检查利润表和现金流量表。", expand: "采用不同折旧假设会怎样改变利润？"),
+        APIChapter(t: 510, title: "企业客户的预算来源", detail: "企业客户数量增加并不自动说明业务成熟。实验预算与正式生产预算的续费条件可能不同。", expand: "试用结束后有多少客户愿意持续付费？"),
+        APIChapter(t: 608, title: "把增长拆成经营证据", detail: "收入、客户留存与单位成本需要分别核对。单个指标改善还不足以说明整个商业模式已经成立。", expand: "哪个指标最能识别可持续增长？"),
+        APIChapter(t: 706, title: "认真检验乐观论据", detail: "作者也讨论了这次与历史不同的理由。先完整理解乐观假设，再看其成立条件，比直接选边更有用。", expand: "乐观情景依赖的条件有哪些？"),
+        APIChapter(t: 804, title: "承受估值回落的能力", detail: "即使技术趋势成立，企业也可能经历估值调整。需要比较现金储备、偿债压力与继续投入的能力。", expand: "哪些经营条件能帮助企业穿过调整期？"),
+        APIChapter(t: 910, title: "判断不等于预测日期", detail: "识别风险不能精确推出市场何时转向。用明确的经营指标修正判断，比把决定押在某个日期上更稳妥。", expand: "什么证据出现时需要修改判断？"),
+        APIChapter(t: 980, title: "给不确定性留余地", detail: "结尾回到预期与现金的关系，也承认择时可能出错。把假设写清并持续复核，才能避免只寻找支持自己的证据。", expand: "下一次复盘应优先核对哪三项数据？"),
+    ]
 
     private var tabs: some View {
         TabView(selection: $tab) {

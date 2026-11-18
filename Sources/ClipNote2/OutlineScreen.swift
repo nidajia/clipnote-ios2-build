@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import AVKit
 
 /// 脑图页。缩进大纲 + 可折叠 + 可导出 Markdown。
 ///
@@ -12,16 +13,22 @@ struct OutlineScreen: View {
 
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var logs: LogStore
+    @EnvironmentObject private var downloads: DownloadStore
+    @EnvironmentObject private var network: NetworkMonitor
 
     @State private var nodes: [OutlineNode]
     @State private var generating = false
     @State private var failed: String?
     @State private var collapsed = Set<String>()
     @State private var copied = false
+    @State private var player: AVPlayer?
+    @State private var showPlayer = false
+    @State private var preparing: Int?
+    @State private var playbackError: String?
 
     init(item: Item) {
         self.item = item
-        _nodes = State(initialValue: item.outline)
+        _nodes = State(initialValue: item.chapters.isEmpty ? item.outline : Outliner.chapterTree(item.chapters))
     }
 
     private struct Row: Identifiable {
@@ -59,6 +66,15 @@ struct OutlineScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                if !item.chapters.isEmpty {
+                    Text("\(item.chapters.count) 个章节 · 点时间回看 · 内容与总结同步")
+                        .font(.cnMeta).foregroundStyle(Color.cnInk3)
+                        .padding(.horizontal, Metric.pagePad).padding(.top, Metric.space3)
+                }
+                if let playbackError {
+                    Text(playbackError).font(.cnMeta).foregroundStyle(Color.cnRed)
+                        .padding(.horizontal, Metric.pagePad)
+                }
                 if generating {
                     HStack(spacing: Metric.space2) {
                         RingSpinner(size: 14, color: .cnBrand)
@@ -104,7 +120,9 @@ struct OutlineScreen: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 if !nodes.isEmpty && !generating {
                     Menu {
-                        Button("重新生成") { Task { await generate() } }
+                        if item.chapters.isEmpty {
+                            Button("重新生成") { Task { await generate() } }
+                        }
                         Button(copied ? "已复制" : "复制为 Markdown") { copyMarkdown() }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -117,6 +135,12 @@ struct OutlineScreen: View {
             // 进这一页就是「我要看脑图」，没有就顺手生成，
             // 不让人再点一次按钮——那一步没有决策价值。
             if nodes.isEmpty && !generating { await generate() }
+        }
+        .navigationDestination(isPresented: $showPlayer) {
+            if let player { PlayerScreen(item: item, player: player) }
+        }
+        .onChange(of: showPlayer) { showing in
+            if !showing { player?.pause(); player = nil }
         }
     }
 
@@ -151,6 +175,23 @@ struct OutlineScreen: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
+                if let t = row.node.t {
+                    Button {
+                        Task { await play(at: t) }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if preparing == t { ProgressView().scaleEffect(0.6) }
+                            else { Image(systemName: "play.fill") }
+                            Text(DetailScreen.mmss(t))
+                        }
+                        .font(.cnCaption).foregroundStyle(Color.cnBrand)
+                        .padding(.horizontal, 8).frame(minHeight: 32)
+                        .background(Color.cnBrandSoft, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(preparing != nil || !item.playbackAvailable)
+                    .accessibilityLabel("从 \(DetailScreen.mmss(t)) 开始播放：\(row.node.title)")
+                }
                 Text(row.node.title)
                     .font(row.depth == 0 ? .cnChip : .cnCaption)
                     .foregroundStyle(row.depth == 0 ? Color.cnInk : Color.cnInk2)
@@ -193,6 +234,10 @@ struct OutlineScreen: View {
     }
 
     private func generate() async {
+        if !item.chapters.isEmpty {
+            nodes = Outliner.chapterTree(item.chapters)
+            return
+        }
         guard !library.isOffline, !generating else { return }
         let config = AIConfigStore.load()
         guard config.isConfigured else {
@@ -212,7 +257,10 @@ struct OutlineScreen: View {
             )
             nodes = result
             collapsed = []
-            await library.saveOutline(id: item.id, outline: result)
+            guard await library.saveOutline(id: item.id, outline: result) else {
+                failed = "脑图生成了，但没有保存。请重试。"
+                return
+            }
             logs.info("outline.built", "脑图生成完成", meta: [
                 "id": item.id, "top": String(result.count),
             ])
@@ -222,5 +270,37 @@ struct OutlineScreen: View {
         } catch {
             failed = "生成失败：\(error.localizedDescription)"
         }
+    }
+
+    private func play(at t: Int) async {
+        guard preparing == nil, item.playbackAvailable else { return }
+        preparing = t
+        playbackError = nil
+        defer { preparing = nil }
+        do {
+            let url: URL
+            if let local = downloads.localURL(for: item.id) { url = local }
+            else {
+                guard !network.settled || !network.isDown else {
+                    playbackError = "这条尚未下载，联网后才能从时间点播放。"
+                    return
+                }
+                guard let payload = try await library.playback(for: item.id),
+                      payload.isPlayableMedia, let remote = URL(string: payload.url) else {
+                    playbackError = "没有可播放的视频。"
+                    return
+                }
+                url = remote
+            }
+            let value = AVPlayer(url: url)
+            AudioFocus.shared.adopt(value)
+            _ = await value.seek(to: CMTime(seconds: Double(t), preferredTimescale: 600))
+            player = value
+            showPlayer = true
+            value.play()
+            logs.info("outline.jump", "从章节脑图起播", meta: ["id": item.id, "t": String(t)])
+        } catch let failure as ClipNoteClient.Failure {
+            playbackError = failure.displayMessage
+        } catch { playbackError = "取播放地址失败，重试一次。" }
     }
 }

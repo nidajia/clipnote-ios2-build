@@ -445,6 +445,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     var source: APISource?
     /// AI 生成的摘要 / 要点 / 标签。老条目没有，一律空。
     var aiSummary: String = ""
+    var summaryAt: Int = 0
     var keyPoints: [String] = []
     var labels: [String] = []
     /// 分段总结：摘要的下一层，每段带开始时间（秒）。
@@ -500,7 +501,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, kind, title, metaLine, durationText, durationSeconds
         case summary, cover, playback, publishedAt, source, deletedAt
-        case aiSummary, keyPoints, labels, segments, segmentsAt, chapters, summaryV
+        case aiSummary, summaryAt, keyPoints, labels, segments, segmentsAt, chapters, summaryV
         case bookmarks, bookmarksAt
         case author, authorId, videoId, sourceURL, authorNote, authorNoteAt
         case authorAvatar, note, noteAt, outline, outlineAt
@@ -559,6 +560,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         source = try c.decodeIfPresent(APISource.self, forKey: .source)
         deletedAt = try c.decodeIfPresent(Int.self, forKey: .deletedAt)
         aiSummary = try c.decodeIfPresent(String.self, forKey: .aiSummary) ?? ""
+        summaryAt = try c.decodeIfPresent(Int.self, forKey: .summaryAt) ?? 0
         keyPoints = try c.decodeIfPresent([String].self, forKey: .keyPoints) ?? []
         labels = try c.decodeIfPresent([String].self, forKey: .labels) ?? []
         segments = try c.decodeIfPresent([APISegment].self, forKey: .segments) ?? []
@@ -575,6 +577,7 @@ struct APILibraryItem: Decodable, Equatable, Identifiable {
         authorAvatar = try c.decodeIfPresent(String.self, forKey: .authorAvatar) ?? ""
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         outline = try c.decodeIfPresent([OutlineNode].self, forKey: .outline) ?? []
+        outlineAt = try c.decodeIfPresent(Int.self, forKey: .outlineAt) ?? 0
         annotations = (try? c.decodeIfPresent([APIAnnotation].self, forKey: .annotations)) ?? []
         noteAt = try c.decodeIfPresent(Int.self, forKey: .noteAt) ?? 0
         createdAt = try c.decodeIfPresent(Int.self, forKey: .createdAt) ?? 0
@@ -1170,9 +1173,10 @@ struct ClipNoteClient {
     }
 
     static func encodeNode(_ node: OutlineNode) -> [String: Any] {
-        ["title": node.title,
-         "note": node.note,
-         "children": node.children.map(encodeNode)]
+        var body: [String: Any] = ["title": node.title, "note": node.note,
+                                   "children": node.children.map(encodeNode)]
+        if let t = node.t { body["t"] = t }
+        return body
     }
 
     /// 整体替换一条内容的批注。
@@ -1551,6 +1555,22 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    private func acceptSavedItem(_ saved: APILibraryItem) {
+        guard let index = items.firstIndex(where: { $0.id == saved.id }) else { return }
+        items[index] = Item(api: saved)
+    }
+
+    /// 保存后的全库刷新可能断网。先把确认保存的字段合并进磁盘缓存，重启也能读到。
+    private func patchCachedItem(id: String, fields: [String: Any]) {
+        guard let cacheURL, let data = try? Data(contentsOf: cacheURL),
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var cached = root["items"] as? [[String: Any]],
+              let index = cached.firstIndex(where: { $0["id"] as? String == id }) else { return }
+        cached[index].merge(fields) { _, new in new }
+        root["items"] = cached
+        if let data = try? JSONSerialization.data(withJSONObject: root) { saveCache(data) }
+    }
+
     private func saveCache(_ data: Data) {
         guard let cacheURL else { return }
         try? data.write(to: cacheURL, options: .atomic)
@@ -1817,7 +1837,14 @@ final class LibraryStore: ObservableObject {
     func saveSummary(id: String, result: SummaryResult, by model: String) async -> Bool {
         guard let client else { return false }
         do {
-            _ = try await client.saveSummary(id: id, result: result, by: model)
+            let saved = try await client.saveSummary(id: id, result: result, by: model)
+            acceptSavedItem(saved)
+            var fields: [String: Any] = ["aiSummary": saved.aiSummary, "keyPoints": saved.keyPoints,
+                                         "labels": saved.labels, "summaryAt": saved.summaryAt,
+                                         "summaryV": saved.summaryV]
+            fields["chapters"] = saved.chapters.map { ["t": $0.t, "title": $0.title,
+                                                        "detail": $0.detail, "expand": $0.expand] }
+            patchCachedItem(id: id, fields: fields)
             await reload()
             log?.info("summary.saved", "摘要已写回快照", meta: ["id": id, "by": model])
             return true
@@ -1854,7 +1881,11 @@ final class LibraryStore: ObservableObject {
     func saveSegments(id: String, segments: [APISegment], by model: String) async -> Bool {
         guard let client else { return false }
         do {
-            _ = try await client.saveSegments(id: id, segments: segments, by: model)
+            let saved = try await client.saveSegments(id: id, segments: segments, by: model)
+            acceptSavedItem(saved)
+            patchCachedItem(id: id, fields: ["segments": saved.segments.map {
+                ["t": $0.t, "title": $0.title, "summary": $0.summary]
+            }, "segmentsAt": saved.segmentsAt])
             await reload()
             log?.info("segments.saved", "分段已写回快照", meta: [
                 "id": id, "count": String(segments.count), "by": model,
@@ -2040,7 +2071,10 @@ final class LibraryStore: ObservableObject {
     func saveOutline(id: String, outline: [OutlineNode]) async -> Bool {
         guard let client else { return false }
         do {
-            _ = try await client.saveOutline(id: id, outline: outline)
+            let saved = try await client.saveOutline(id: id, outline: outline)
+            acceptSavedItem(saved)
+            patchCachedItem(id: id, fields: ["outline": saved.outline.map(ClipNoteClient.encodeNode),
+                                             "outlineAt": saved.outlineAt])
             await reload()
             log?.info("outline.saved", "脑图已保存", meta: ["id": id])
             return true

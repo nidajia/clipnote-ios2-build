@@ -103,8 +103,11 @@ jobs:
 
       - name: 附上构建信息
         run: |
+          APP=$(ls -d Payload/*.app | head -1)
+          VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")
           {
-            echo "版本 8.0.0 (${{ github.run_number }})"
+            echo "版本 $VER ($BUILD)"
             echo "提交 ${{ github.sha }}"
             echo "构建时间 $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo ""

@@ -14,10 +14,11 @@ struct OutlineNode: Decodable, Hashable {
 
     enum CodingKeys: String, CodingKey { case title, note, children, t }
 
-    init(title: String, note: String = "", children: [OutlineNode] = []) {
+    init(title: String, note: String = "", children: [OutlineNode] = [], t: Int? = nil) {
         self.title = title
         self.note = note
         self.children = children
+        self.t = t
     }
 
     init(from decoder: Decoder) throws {
@@ -31,7 +32,8 @@ struct OutlineNode: Decodable, Hashable {
     /// 导出成 Markdown 大纲。脑图的价值有一半在「能贴到笔记软件里」。
     func markdown(level: Int = 0) -> String {
         let indent = String(repeating: "  ", count: level)
-        var out = "\(indent)- \(title)"
+        let time = t.map { "[\(DetailScreen.mmss($0))] " } ?? ""
+        var out = "\(indent)- \(time)\(title)"
         if !note.isEmpty { out += "：\(note)" }
         out += "\n"
         for child in children {
@@ -41,15 +43,26 @@ struct OutlineNode: Decodable, Hashable {
     }
 }
 
-/// 把内容重组成概念树。
-///
-/// 和分段的分工必须说清楚：
-/// - 分段 = **按时间**线性切分，回答「这条讲了什么，顺序如何」
-/// - 脑图 = **按概念**分层，回答「这些东西彼此是什么关系」
-///
-/// 所以输入不用原字幕：分段已经是对全片的压缩，再喂一遍原字幕
-/// 只是多花钱，不会多出信息。用「摘要 + 分段标题和一句理解 + 标签」足够。
+/// 新总结以章节为主干、解读与追问为叶子；无章节的旧条目保留概念树生成兼容。
 struct Outliner {
+    /// 章节已包含模型对正文的解读，直接构成主干与概念叶子。
+    /// 不再次调用模型，不受旧 outline 接口的六个根节点上限影响；章节本身已持久化。
+    static func chapterTree(_ chapters: [APIChapter]) -> [OutlineNode] {
+        chapters.prefix(15).map { chapter in
+            let concepts = chapter.detail.components(separatedBy: CharacterSet(charactersIn: "。！？；\n"))
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            var leaves = concepts.prefix(3).map { text in
+                OutlineNode(title: String(text.prefix(30)), note: String(text.dropFirst(30)))
+            }
+            if !chapter.expand.isEmpty {
+                leaves.append(OutlineNode(title: "延伸：" + String(chapter.expand.prefix(36)),
+                                          note: String(chapter.expand.dropFirst(36))))
+            }
+            return OutlineNode(title: chapter.title, children: leaves, t: chapter.t)
+        }
+    }
+
     var config: AIConfig
     /// 走服务端任务：脑图比摘要更慢，切到后台断了最难受。
     var jobs: AIJobClient = AIJobClient()
@@ -170,6 +183,7 @@ struct Outliner {
         let note = (dict["note"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return OutlineNode(title: String(title.prefix(40)),
                            note: String(note.prefix(120)),
-                           children: children)
+                           children: children,
+                           t: depth == 0 ? (dict["t"] as? Int).map { max(0, $0) } : nil)
     }
 }

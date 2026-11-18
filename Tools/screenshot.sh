@@ -108,6 +108,13 @@ shot detail-note        detail-note        light
 shot detail-downloading detail-downloading light
 shot detail-downloaded  detail-downloaded  light
 shot detail-summary     detail-summary     light
+# 总结首/中/尾 + 保留旧内容的加载、失败、缺正文态；浅深各一组。
+for appearance in light dark; do
+  for state in detail-summary detail-summary-2 detail-summary-3 detail-summary-4 detail-summary-end detail-summary-running detail-summary-error detail-summary-missing detail-summary-note; do
+    shot "$state-$appearance" "$state" "$appearance"
+  done
+  shot "outline-$appearance" outline "$appearance"
+done
 shot detail-segments    detail-segments    light
 shot detail-bookmarks   detail-bookmarks   light
 shot outline            outline            light

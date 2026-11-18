@@ -28,7 +28,7 @@ struct TranscribeSheet: View {
 
     @State private var stage: Stage = .checking
     @State private var transcriber = OnDeviceTranscriber()
-    @State private var fetcher = FileDownloader()
+    @State private var fetcher = AudioSourceDownloader()
     /// 已跑了多少秒。转写没有百分比，界面能给的唯一诚实信息就是时间。
     @State private var elapsed = 0
     /// 上一次「有动静」的时刻：下载百分比变了、或认出了新字。
@@ -89,6 +89,9 @@ struct TranscribeSheet: View {
         case stalled(seconds: Int, phase: TranscribePhase)
     }
 
+    private var completionTitle = "用它切分段"
+    private var continueAutomatically = false
+
     init(
         item: Item,
         preview: Stage? = nil,
@@ -96,11 +99,15 @@ struct TranscribeSheet: View {
         /// 只给截图用：模拟器上没有 Keychain 配置，云端永远「未配置」，
         /// 那张「云端转写中」的图就拍不出来。真机路径不经过这个参数。
         previewEngine: TranscribeEngine? = nil,
+        completionTitle: String = "用它切分段",
+        continueAutomatically: Bool = false,
         onDone: @escaping (LocalTranscript) -> Void = { _ in }
     ) {
         self.item = item
         self.preview = preview
         self.onDone = onDone
+        self.completionTitle = completionTitle
+        self.continueAutomatically = continueAutomatically
         _stage = State(initialValue: preview ?? .checking)
         _elapsed = State(initialValue: previewElapsed)
         _runningEngine = State(initialValue: previewEngine ?? .onDevice)
@@ -135,6 +142,12 @@ struct TranscribeSheet: View {
         }
         // 面板关掉后看守没有意义，留着只是每秒醒一次。
         .onDisappear { stopMonitor() }
+        .onChange(of: stage) { value in
+            if continueAutomatically, case .done(let transcript) = value {
+                onDone(transcript)
+                dismiss()
+            }
+        }
     }
 
     // MARK: - 头尾
@@ -174,7 +187,7 @@ struct TranscribeSheet: View {
         VStack(spacing: Metric.space2) {
             switch stage {
             case .done(let transcript):
-                PrimaryButton(title: "用它切分段") {
+                PrimaryButton(title: completionTitle) {
                     onDone(transcript)
                     dismiss()
                 }
@@ -804,5 +817,52 @@ struct TranscribeSheet: View {
                 }
             }
         }
+    }
+}
+
+
+/// 转写准备阶段的临时音源下载独立于「下载到本地」索引与后台会话。
+/// 每次完成都先移动系统临时文件，避免 URLSession 回调结束后文件被删除。
+final class AudioSourceDownloader: NSObject, URLSessionDownloadDelegate {
+    private lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main)
+    private var task: URLSessionDownloadTask?
+    private var progress: ((Double) -> Void)?
+    private var finish: ((Result<URL, Error>) -> Void)?
+
+    func download(from url: URL, onProgress: @escaping (Double) -> Void,
+                  onFinish: @escaping (Result<URL, Error>) -> Void) {
+        task?.cancel()
+        progress = onProgress
+        finish = onFinish
+        let next = session.downloadTask(with: url)
+        task = next
+        next.resume()
+    }
+    private func settle(_ result: Result<URL, Error>) {
+        let callback = finish
+        finish = nil
+        progress = nil
+        task = nil
+        callback?(result)
+    }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard task === downloadTask, totalBytesExpectedToWrite > 0 else { return }
+        progress?(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+    }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        guard task === downloadTask else { return }
+        do {
+            let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else { throw URLError(.badServerResponse) }
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent("cn-\(UUID().uuidString).mp4")
+            try FileManager.default.moveItem(at: location, to: destination)
+            settle(.success(destination))
+        } catch { settle(.failure(error)) }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if self.task === task, let error { settle(.failure(error)) }
     }
 }

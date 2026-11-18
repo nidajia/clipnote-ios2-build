@@ -33,7 +33,8 @@ final class DownloadStore: ObservableObject {
 
     private let directory: URL
     private let indexURL: URL
-    private let downloader = FileDownloader()
+    private var downloader: FileDownloader?
+    private let usesBackgroundSession: Bool
     /// 日志由外部注入；截图模式传 nil
     private weak var log: LogStore?
 
@@ -44,8 +45,12 @@ final class DownloadStore: ObservableObject {
         try? fm.createDirectory(at: base, withIntermediateDirectories: true)
         self.indexURL = base.appendingPathComponent("downloads.json")
         self.log = log
+        self.usesBackgroundSession = directory == nil
         load()
         reconcile()
+        recoverCompletedDownloads()
+        // 生产实例启动即重连同名后台会话；测试/截图的临时目录不注册系统后台会话。
+        if usesBackgroundSession { connectDownloader() }
     }
 
     // MARK: - 查询
@@ -78,60 +83,58 @@ final class DownloadStore: ObservableObject {
         progress[k] = 0
         if lastFailure?.id == k { lastFailure = nil }
 
-        downloader.download(from: url) { [weak self] value in
-            self?.progress[k] = value
-        } onFinish: { [weak self] result in
-            guard let self else { return }
-            self.progress[k] = nil
+        connectDownloader()
+        downloader?.download(id: id, from: url)
+    }
 
-            switch result {
-            case .failure(let error):
-                let code = (error as NSError).code
-                // 403 是签名过期，重试同一个地址不会好。这句话要能看懂。
-                let message = code == 403 || code == -1011
-                    ? "视频源拒绝了请求，地址大概已过期。服务端还没接重新解析。"
-                    : (error as NSError).localizedDescription
-                self.lastFailure = DownloadFailure(id: k, message: message)
-                let logger = self.log
-                Task { @MainActor in
-                    logger?.error("download.failed", message, meta: [
-                        "id": k, "code": "\(code)",
-                    ])
+    private func connectDownloader() {
+        guard downloader == nil else { return }
+        downloader = FileDownloader(directory: directory, background: usesBackgroundSession,
+            onProgress: { [weak self] id, value in self?.progress[id] = value },
+            onFinish: { [weak self] id, result in
+                guard let self else { return }
+                self.progress[id] = nil
+                switch result {
+                case .success(let receipt): self.acceptReceipt(receipt)
+                case .failure(let error):
+                    let code = (error as NSError).code
+                    if code == NSURLErrorCancelled { return }
+                    let message = code == 403 || code == 401
+                        ? "视频地址已过期或被拒绝，联网后重新下载。"
+                        : "下载失败：\(error.localizedDescription)"
+                    self.lastFailure = DownloadFailure(id: id, message: message)
+                    Task { @MainActor in self.log?.error("download.failed", message, meta: ["id": id]) }
                 }
-                return
+            })
+        downloader?.restore()
+    }
 
-            case .success(let temporary):
-                let fileName = "\(Self.fileStem(k)).mp4"
-                let destination = self.directory.appendingPathComponent(fileName)
-                try? FileManager.default.removeItem(at: destination)
-                do {
-                    try FileManager.default.moveItem(at: temporary, to: destination)
-                    let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
-                    let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-                    // 109 字节的 CDN 错误页会被 URLSession 当成「下载成功」，
-                    // 于是索引里留下一条 0MB 的假记录：看不了、也没有重试入口。
-                    // 小于 64KB 的一律当失败处理，把残文件删掉。
-                    guard size > 64 * 1024 else {
-                        try? FileManager.default.removeItem(at: destination)
-                        self.lastFailure = DownloadFailure(
-                            id: k,
-                            message: "下载到的不是视频（只有 \(size) 字节），点重试。"
-                        )
-                        return
-                    }
-                    self.records[k] = DownloadRecord(fileName: fileName, byteCount: size, finishedAt: Date())
-                    self.save()
-                    let logger = self.log
-                    Task { @MainActor in
-                        logger?.info("download.finished", "下载完成", meta: [
-                            "id": k, "bytes": "\(size)",
-                        ])
-                    }
-                } catch {
-                    // 移动失败就当这次下载没发生，不要把半截文件写进索引
-                    self.lastFailure = DownloadFailure(id: k, message: "保存文件失败：\(error.localizedDescription)")
-                }
+    /// 系统结束下载时先写持久收据，再更新 UI。进程在两步之间被回收也能重放。
+    private func recoverCompletedDownloads() {
+        let folder = directory.appendingPathComponent("download-receipts")
+        for url in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
+            guard url.pathExtension == "json", let data = try? Data(contentsOf: url),
+                  let receipt = try? JSONDecoder().decode(DownloadReceipt.self, from: data) else { continue }
+            acceptReceipt(receipt)
+        }
+    }
+
+    private func acceptReceipt(_ receipt: DownloadReceipt) {
+        let file = directory.appendingPathComponent(receipt.record.fileName)
+        guard file.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL,
+              receipt.receiptName == URL(fileURLWithPath: receipt.receiptName).lastPathComponent,
+              FileManager.default.fileExists(atPath: file.path) else { return }
+        let previous = records[receipt.id]
+        records[receipt.id] = receipt.record
+        if save() {
+            try? FileManager.default.removeItem(at: receipt.url(in: directory))
+            if let previous, previous.fileName != receipt.record.fileName {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(previous.fileName))
             }
+        }
+        Task { @MainActor in
+            log?.info("download.finished", "下载完成", meta: ["id": receipt.id,
+                                                              "bytes": "\(receipt.record.byteCount)"])
         }
     }
 
@@ -146,7 +149,7 @@ final class DownloadStore: ObservableObject {
     }
 
     func cancel(_ id: String) {
-        downloader.cancelCurrent()
+        downloader?.cancel(id)
         progress[id] = nil
     }
 
@@ -169,9 +172,15 @@ final class DownloadStore: ObservableObject {
         records = decoded
     }
 
-    private func save() {
-        guard let data = try? JSONEncoder().encode(records) else { return }
-        try? data.write(to: indexURL, options: .atomic)
+    @discardableResult
+    private func save() -> Bool {
+        do {
+            try JSONEncoder().encode(records).write(to: indexURL, options: .atomic)
+            return true
+        } catch {
+            lastFailure = DownloadFailure(id: "index", message: "下载索引保存失败，重启后会重新恢复。")
+            return false
+        }
     }
 
     /// 索引与磁盘对账。只在数量变化时回写，避免每次启动都写盘。
@@ -205,106 +214,162 @@ final class DownloadStore: ObservableObject {
 
 // MARK: - 真实下载
 
-/// 把 URLSession 的进度与结果收敛成两个回调。
-///
-/// `didFinishDownloadingTo` 给的临时文件在该回调返回后就会被系统删掉，
-/// 所以必须先搬走再回调。
+struct DownloadReceipt: Codable {
+    var id: String
+    var record: DownloadRecord
+    var receiptName: String
+
+    func url(in directory: URL) -> URL {
+        directory.appendingPathComponent("download-receipts").appendingPathComponent(receiptName)
+    }
+
+    static func stage(id: String, temporary: URL, directory: URL) throws -> DownloadReceipt {
+        let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
+        let bytes = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        guard bytes > 64 * 1024 else {
+            throw NSError(domain: "ClipNoteDownload", code: 422,
+                          userInfo: [NSLocalizedDescriptionKey: "下载到的不是视频（只有 \(bytes) 字节），请重试。"])
+        }
+        let receipt = DownloadReceipt(id: id,
+            record: DownloadRecord(fileName: "\(DownloadStore.fileStem(id))-\(UUID().uuidString).mp4",
+                                   byteCount: bytes, finishedAt: Date()),
+            receiptName: UUID().uuidString + ".json")
+        let folder = directory.appendingPathComponent("download-receipts")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let destination = directory.appendingPathComponent(receipt.record.fileName)
+        try FileManager.default.moveItem(at: temporary, to: destination)
+        do { try JSONEncoder().encode(receipt).write(to: receipt.url(in: directory), options: .atomic) }
+        catch { try? FileManager.default.removeItem(at: destination); throw error }
+        return receipt
+    }
+}
+
+/// taskDescription 由 URLSession 持久化，系统回收进程后仍能把任务归回正确条目。
 final class FileDownloader: NSObject, URLSessionDownloadDelegate {
-
-    /// 后台会话的标识。**必须固定**：App 被系统回收后重启，只有同名会话
-    /// 才能把「上次没下完的任务」接回来。
     static let backgroundIdentifier = "com.clipnote.download"
-
-    /// 系统在 `handleEventsForBackgroundURLSession` 里给的 completion handler。
-    /// 要等这一批事件都回调完（`urlSessionDidFinishEvents`）才能调它，
-    /// 否则系统会认为我们没处理完，不会再把后续事件交过来。
     static var backgroundCompletion: (() -> Void)?
 
-    private lazy var session: URLSession = {
-        // 默认会话在 App 进入后台就停——用户看到的就是「必须亮着屏等它下完」。
-        // 换后台会话后，锁屏 / 切到微信，下载继续。
-        let config = URLSessionConfiguration.background(
-            withIdentifier: FileDownloader.backgroundIdentifier
-        )
-        // 不交给系统「挑时间下」：用户点了下载就是要现在下。
-        config.isDiscretionary = false
-        // 让系统在任务完成时把我们唤醒（而不是等下次打开 App）。
-        config.sessionSendsLaunchEvents = true
-        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
-    }()
+    private let directory: URL
+    private let background: Bool
+    private let onProgress: (String, Double) -> Void
+    private let onFinish: (String, Result<DownloadReceipt, Error>) -> Void
+    private var tasks: [String: URLSessionDownloadTask] = [:]
+    private var cancelledBeforeRestore = Set<String>()
+    private var closedTasks = Set<Int>()
+    private var restored = false
+    private var restoring = false
+    private var pending: [String: URL] = [:]
 
-    private var task: URLSessionDownloadTask?
-    private var onProgress: ((Double) -> Void)?
-    private var onFinish: ((Result<URL, Error>) -> Void)?
-    private var settled = false
-
-    func download(
-        from url: URL,
-        onProgress: @escaping (Double) -> Void,
-        onFinish: @escaping (Result<URL, Error>) -> Void
-    ) {
+    init(directory: URL, background: Bool,
+         onProgress: @escaping (String, Double) -> Void,
+         onFinish: @escaping (String, Result<DownloadReceipt, Error>) -> Void) {
+        self.directory = directory
+        self.background = background
         self.onProgress = onProgress
         self.onFinish = onFinish
-        settled = false
+        super.init()
+    }
+
+    private lazy var session: URLSession = {
+        let config = background
+            ? URLSessionConfiguration.background(withIdentifier: Self.backgroundIdentifier)
+            : URLSessionConfiguration.ephemeral
+        config.isDiscretionary = false
+        config.sessionSendsLaunchEvents = background
+        // 所有任务表和 Store 状态在主队列操作，回调返回前已写完持久收据和索引。
+        return URLSession(configuration: config, delegate: self, delegateQueue: .main)
+    }()
+
+    func restore() {
+        guard !restoring, !restored else { return }
+        restoring = true
+        session.getAllTasks { [weak self] recovered in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for task in recovered {
+                    guard let id = task.taskDescription, let download = task as? URLSessionDownloadTask else {
+                        task.cancel() // 旧包没有归属标记的任务不能误绑定到任何条目。
+                        continue
+                    }
+                    guard task.state != .completed, task.state != .canceling,
+                          !self.closedTasks.contains(task.taskIdentifier) else { continue }
+                    guard !self.cancelledBeforeRestore.contains(id) else {
+                        self.closedTasks.insert(task.taskIdentifier)
+                        task.cancel()
+                        continue
+                    }
+                    self.tasks[id] = download
+                    self.onProgress(id, max(0, Double(task.countOfBytesReceived) / Double(max(1, task.countOfBytesExpectedToReceive))))
+                    if task.state == .suspended { task.resume() }
+                }
+                self.restored = true
+                self.restoring = false
+                let queued = self.pending
+                self.pending = [:]
+                for (id, url) in queued { self.download(id: id, from: url) }
+            }
+        }
+    }
+
+    func download(id: String, from url: URL) {
+        guard restored else {
+            pending[id] = url
+            restore()
+            return
+        }
+        guard tasks[id] == nil else { return }
         let task = session.downloadTask(with: url)
-        self.task = task
+        task.taskDescription = id
+        tasks[id] = task
         task.resume()
     }
 
-    func cancelCurrent() {
-        task?.cancel()
-        task = nil
-        settled = true
-        onProgress = nil
-        onFinish = nil
-    }
-
-    private func settle(_ result: Result<URL, Error>) {
-        guard !settled else { return }
-        settled = true
-        let handler = onFinish
-        onFinish = nil
-        DispatchQueue.main.async { handler?(result) }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let value = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        let handler = onProgress
-        DispatchQueue.main.async { handler?(value) }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {
-        let temporary = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cn-\(UUID().uuidString).mp4")
-        do {
-            try FileManager.default.moveItem(at: location, to: temporary)
-            settle(.success(temporary))
-        } catch {
-            settle(.failure(error))
+    func cancel(_ id: String) {
+        pending[id] = nil
+        if !restored { cancelledBeforeRestore.insert(id) }
+        if let task = tasks.removeValue(forKey: id) {
+            closedTasks.insert(task.taskIdentifier)
+            task.cancel()
         }
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard let id = downloadTask.taskDescription, !closedTasks.contains(downloadTask.taskIdentifier),
+              tasks[id] == nil || tasks[id] === downloadTask,
+              totalBytesExpectedToWrite > 0 else { return }
+        onProgress(id, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        guard let id = downloadTask.taskDescription, !closedTasks.contains(downloadTask.taskIdentifier),
+              tasks[id] == nil || tasks[id] === downloadTask else { return }
+        closedTasks.insert(downloadTask.taskIdentifier)
+        tasks[id] = nil
+        do {
+            let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else {
+                throw NSError(domain: "ClipNoteDownload", code: status,
+                              userInfo: [NSLocalizedDescriptionKey: "视频源返回 \(status)，请重新获取地址。"])
+            }
+            let receipt = try DownloadReceipt.stage(id: id, temporary: location, directory: directory)
+            onFinish(id, .success(receipt))
+        } catch { onFinish(id, .failure(error)) }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error { settle(.failure(error)) }
+        guard let id = task.taskDescription, let error, !closedTasks.contains(task.taskIdentifier),
+              tasks[id] == nil || tasks[id] === task else { return }
+        closedTasks.insert(task.taskIdentifier)
+        tasks[id] = nil
+        onFinish(id, .failure(error))
     }
 
-    /// 后台会话的一批事件处理完了：把系统给的 completion handler 交回去。
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        DispatchQueue.main.async {
-            let handler = FileDownloader.backgroundCompletion
-            FileDownloader.backgroundCompletion = nil
-            handler?()
-        }
+        let handler = Self.backgroundCompletion
+        Self.backgroundCompletion = nil
+        handler?()
     }
 }

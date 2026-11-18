@@ -122,6 +122,7 @@ struct DetailScreen: View {
     @State private var showExport = false
     @State private var showInfographic = false
     @State private var showTranscribe = false
+    @State private var transcribeForSummary = false
     @State private var showSectionPicker = false
     @State private var notice: String?
     @State private var statusObservation: NSKeyValueObservation?
@@ -142,13 +143,17 @@ struct DetailScreen: View {
     /// 截图用：正常进页面评论区是收起的。
     /// 存成属性——`body` 里要用它决定要不要滚到评论区。
     private let startsCommentsExpanded: Bool
+    private var snapshotScrollTarget: String? = nil
 
     init(item: Item, initialPrepare: PrepareState? = nil, focusTranscriptAt: Int? = nil,
-         autoPlay: Bool = false, startsCommentsExpanded: Bool = false) {
+         autoPlay: Bool = false, startsCommentsExpanded: Bool = false,
+         snapshotScrollTarget: String? = nil, initialAIState: AIState? = nil) {
         self.item = item
         self.focusTranscriptAt = focusTranscriptAt
         self.autoPlay = autoPlay
         self.startsCommentsExpanded = startsCommentsExpanded
+        self.snapshotScrollTarget = snapshotScrollTarget
+        if let initialAIState { _aiState = State(initialValue: initialAIState) }
         if let initialPrepare {
             _prepare = State(initialValue: initialPrepare)
         }
@@ -163,6 +168,7 @@ struct DetailScreen: View {
         case idle
         case running
         case needsSetup
+        case needsTranscript
         case failed(String)
     }
 
@@ -298,9 +304,9 @@ struct DetailScreen: View {
             // 截图用：`startsCommentsExpanded` 为真时把页面滚到评论框。
             // 正常进页面这个分支永远不会走（默认 false）。
             .onAppear {
-                guard startsCommentsExpanded else { return }
+                guard let target = snapshotScrollTarget ?? (startsCommentsExpanded ? "commentsBox" : nil) else { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                    proxy.scrollTo("commentsBox", anchor: .top)
+                    proxy.scrollTo(target, anchor: .top)
                 }
             }
         }
@@ -414,9 +420,18 @@ struct DetailScreen: View {
         // 转写完立刻拿文字去切分段——用户点这一步的意图本来就是「想按段落读」，
         // 再让他回去点第二次没有必要。
         .sheet(isPresented: $showTranscribe) {
-            TranscribeSheet(item: current) { _ in
-                segmentState = .idle
-                Task { await generateSegments(force: true) }
+            TranscribeSheet(item: current,
+                            completionTitle: transcribeForSummary ? "生成总结" : "用它切分段",
+                            continueAutomatically: transcribeForSummary) { _ in
+                let summarizing = transcribeForSummary
+                transcribeForSummary = false
+                Task {
+                    if summarizing { await generateSummary(force: true) }
+                    else {
+                        segmentState = .idle
+                        await generateSegments(force: true)
+                    }
+                }
             }
             .presentationDetents([.medium, .large])
         }
@@ -536,7 +551,7 @@ struct DetailScreen: View {
             // 从设置页回来：之前因为没配置而停下的，重新试一次
             guard !presented, aiState == .needsSetup else { return }
             aiState = .idle
-            Task { await maybeSummarize() }
+            Task { await generateSummary(force: true) }
         }
         // 单参数写法：iOS 16 没有「旧值、新值」那个双参数版本
         .onChange(of: downloads.lastFailure) { failure in
@@ -990,8 +1005,8 @@ struct DetailScreen: View {
             .background(Color.cnBrandSoft, in: Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(refreshing)
-        .accessibilityLabel("用当前模型重新生成摘要")
+        .disabled(refreshing || aiState == .running)
+        .accessibilityLabel("用当前模型重新生成总结")
     }
 
     /// 摘要卡角上那个「长图」。
@@ -1086,11 +1101,7 @@ struct DetailScreen: View {
         .accessibilityLabel("把摘要和分段排成一页长图")
     }
 
-    /// 用**当前配置的模型**把这条的 AI 内容重做一遍。
-    ///
-    /// 顺序有讲究：先摘要再分段。摘要是用户点这个按钮想看的，
-    /// 而分段要拉字幕、跑一次长输出，把它放前面会让用户等十几秒才看到摘要变了。
-    /// 分段失败不回滚摘要——两者各自独立，一个挂了不该连累另一个。
+    /// 用当前模型重写正文总结；时间轴分段、书签各自保留。
     private func refreshAI() async {
         guard !library.isOffline, !refreshing else { return }
         let config = AIConfigStore.load()
@@ -1108,9 +1119,6 @@ struct DetailScreen: View {
             "hasSegments": current.segments.isEmpty ? "0" : "1",
         ])
         await generateSummary(force: true)
-        if !current.segments.isEmpty {
-            await generateSegments(force: true)
-        }
     }
 
     // MARK: - 书签
@@ -1327,18 +1335,25 @@ struct DetailScreen: View {
 
     @ViewBuilder
     private var aiSection: some View {
-        if !current.aiSummary.isEmpty {
-            summaryCard(current)
-        } else if aiState == .running {
-            runningCard
-        } else if case .failed(let message) = aiState {
-            failedCard(message)
-        } else if aiState == .needsSetup {
-            setupRow
-        } else {
-            // 手动模式下的常态：给一行入口，不自动花钱
-            startRow
+        VStack(alignment: .leading, spacing: Metric.space3) {
+            if aiState == .running { runningCard }
+            else if case .failed(let message) = aiState { failedCard(message) }
+            else if aiState == .needsTranscript {
+                VStack(alignment: .leading, spacing: Metric.space2) {
+                    Text("没有可用的文字稿，先转写音轨再总结。旧总结会保留。")
+                        .font(.cnMeta).foregroundStyle(Color.cnInk3)
+                    Button("转写并生成总结") {
+                        transcribeForSummary = true
+                        showTranscribe = true
+                    }
+                    .font(.cnChip).foregroundStyle(Color.cnBrand)
+                }
+                .padding(Metric.space4)
+            } else if aiState == .needsSetup { setupRow }
+            else if current.aiSummary.isEmpty { startRow }
+            if !current.aiSummary.isEmpty { summaryCard(current) }
         }
+        .id("aiSummary")
     }
 
     private func summaryCard(_ value: Item) -> some View {
@@ -1414,6 +1429,7 @@ struct DetailScreen: View {
             }
             .buttonStyle(.plain)
 
+            Color.clear.frame(height: 1).id("summaryEnd")
             if !value.labels.isEmpty {
                 HStack(spacing: 6) {
                     // 标签是**入口**不是装饰：点了应该能看到同类内容。
@@ -1454,7 +1470,7 @@ struct DetailScreen: View {
     private var runningCard: some View {
         HStack(spacing: Metric.space3) {
             ActivitySpinner(style: .medium)
-            Text("正在生成摘要…")
+            Text("正在读取正文并生成章节总结…可以切走，回来继续等待")
                 .font(.cnChip)
                 .foregroundStyle(Color.cnInk3)
             Spacer(minLength: 0)
@@ -1468,7 +1484,7 @@ struct DetailScreen: View {
 
     private func failedCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: Metric.space2) {
-            Text("摘要没能生成")
+            Text("总结没能生成")
                 .font(.cnChip)
                 .foregroundStyle(Color.cnInk)
             Text(message)
@@ -1477,7 +1493,7 @@ struct DetailScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
             Button("重试") {
                 aiState = .idle
-                Task { await maybeSummarize() }
+                Task { await generateSummary(force: true) }
             }
             .font(.cnChip)
             .foregroundStyle(Color.cnBrand)
@@ -1531,7 +1547,7 @@ struct DetailScreen: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
-                Text("生成摘要")
+                Text("生成总结")
                     .font(.cnChip)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
@@ -1763,7 +1779,9 @@ struct DetailScreen: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(!current.playbackAvailable)
                 .accessibilityLabel("从 \(Self.mmss(one.t)) 开始：\(one.title)")
+                .id("chapter-\(one.t)")
 
                 if one.id != chapters.last?.id {
                     Divider().overlay(Color.cnHairlineSoft)
@@ -1789,43 +1807,57 @@ struct DetailScreen: View {
     /// 进页面时自动生成一次。默认**不**跑：AI 是用户自己的额度。
     private func maybeSummarize() async {
         guard autoSummary else { return }
-        await generateSummary()
+        await generateSummary(allowTranscription: false)
     }
 
-    private func generateSummary(force: Bool = false) async {
+    private func generateSummary(force: Bool = false, allowTranscription: Bool = true) async {
         guard !library.isOffline, aiState != .running else { return }
         if network.settled, network.isDown {
-            notice = "离线：摘要要联网才能生成。"
+            aiState = .failed("离线：总结需要联网，已有内容会保留。联网后点重试。")
             return
         }
         guard force || current.aiSummary.isEmpty else { return }
-
         let config = AIConfigStore.load()
-        guard config.isConfigured else {
-            aiState = .needsSetup
-            return
-        }
-
+        guard config.isConfigured else { aiState = .needsSetup; return }
         aiState = .running
         do {
-            let result = try await Summarizer(config: config).summarize(
-                title: current.title,
-                description: current.summary,
-                platform: current.metaLine,
-                duration: current.durationText
+            let lines: [APITranscriptLine]
+            let text: String
+            if current.kind == .video {
+                let cached = LocalTranscriptStore.shared.load(id: current.id)?.apiLines ?? []
+                lines = try await SummaryTranscriptLoader.load(remote: {
+                    try await library.transcript(for: current.id).lines
+                }, cached: cached)
+                text = ""
+                guard !lines.isEmpty else {
+                    aiState = .needsTranscript
+                    if allowTranscription {
+                        transcribeForSummary = true
+                        showTranscribe = true
+                    }
+                    return
+                }
+            } else {
+                lines = []
+                text = current.kind == .note ? current.note : current.summary
+            }
+            let result = try await ContentSummarizer(config: config).summarize(
+                title: current.title, lines: lines, duration: current.durationSeconds, text: text
             )
-            let saved = await library.saveSummary(
-                id: current.id, result: result, by: config.model
-            )
-            aiState = saved ? .idle : .failed("生成成功，但没存上。检查网络后再试。")
+            guard await library.saveSummary(id: current.id, result: result, by: config.model) else {
+                throw SummarizeFailure.service("生成成功，但总结没有保存，旧内容已保留。请重试。")
+            }
+            aiState = .idle
+            logs.info("summary.content_saved", "正文总结已保存", meta: [
+                "id": current.id, "chapters": String(result.chapters.count),
+                "lines": String(lines.count), "model": config.model,
+            ])
         } catch let failure as SummarizeFailure {
             aiState = .failed(failure.displayMessage)
-            // 已有摘要时卡片不会切到失败态（旧内容留着更好），
-            // 所以失败必须另找地方说，否则用户以为「点了没反应」
-            notice = failure.displayMessage
+        } catch let failure as ClipNoteClient.Failure {
+            aiState = .failed(failure.displayMessage)
         } catch {
-            aiState = .failed("生成失败：\(error.localizedDescription)")
-            notice = "重写失败：\(error.localizedDescription)"
+            aiState = .failed("总结失败：\(error.localizedDescription)")
         }
     }
 
@@ -1898,19 +1930,6 @@ struct DetailScreen: View {
             let saved = await library.saveSegments(
                 id: current.id, segments: outcome.segments, by: config.model
             )
-            // 同一次调用还产出了概述和章节解读：立刻写回，否则「AI 总结」
-            // 仍然是那条只看标题的旧摘要——用户看到的还是它。
-            if !outcome.chapters.isEmpty || !outcome.overview.isEmpty {
-                let summary = SummaryResult(
-                    summary: outcome.overview.isEmpty ? current.aiSummary : outcome.overview,
-                    keyPoints: outcome.chapters.prefix(6).map(\.title),
-                    labels: current.labels,
-                    chapters: outcome.chapters
-                )
-                _ = await library.saveSummary(
-                    id: current.id, result: summary, by: config.model
-                )
-            }
             segmentState = saved ? .idle : .failed("生成成功，但没存上。")
         } catch let failure as SummarizeFailure {
             if case .unparsable(let raw) = failure {

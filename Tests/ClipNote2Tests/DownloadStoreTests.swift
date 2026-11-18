@@ -84,4 +84,64 @@ final class DownloadStoreTests: XCTestCase {
                        "文件必须落在下载目录内，不能被路径字符带出去")
         XCTAssertFalse(url.lastPathComponent.contains("/"))
     }
+
+    func testFinishedReceiptRecoversAfterProcessDiesBeforeIndexWrite() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let temporary = directory.appendingPathComponent("system-temporary")
+        try Data(repeating: 1, count: 100_000).write(to: temporary)
+        let receipt = try DownloadReceipt.stage(id: "exact/item/id", temporary: temporary, directory: directory)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: receipt.url(in: directory).path))
+        let recovered = DownloadStore(directory: directory)
+        XCTAssertTrue(recovered.isDownloaded("exact/item/id"))
+        XCTAssertEqual(recovered.byteCount(for: "exact/item/id"), 100_000)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: receipt.url(in: directory).path))
+        XCTAssertTrue(DownloadStore(directory: directory).isDownloaded("exact/item/id"))
+    }
+    func testTwoReceiptsRecoverToTheirOwnItems() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for (id, size) in [("first", 80_000), ("second", 120_000)] {
+            let temporary = directory.appendingPathComponent(id)
+            try Data(repeating: 1, count: size).write(to: temporary)
+            _ = try DownloadReceipt.stage(id: id, temporary: temporary, directory: directory)
+        }
+        let recovered = DownloadStore(directory: directory)
+        XCTAssertEqual(recovered.downloadedCount, 2)
+        XCTAssertEqual(recovered.byteCount(for: "first"), 80_000)
+        XCTAssertEqual(recovered.byteCount(for: "second"), 120_000)
+        XCTAssertNotEqual(recovered.localURL(for: "first"), recovered.localURL(for: "second"))
+    }
+    func testSmallErrorBodyNeverBecomesDownloadedVideo() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let temporary = directory.appendingPathComponent("error")
+        try Data("<html>403</html>".utf8).write(to: temporary)
+        XCTAssertThrowsError(try DownloadReceipt.stage(id: "failed", temporary: temporary, directory: directory))
+        XCTAssertFalse(DownloadStore(directory: directory).isDownloaded("failed"))
+    }
+    @MainActor
+    func testConcurrentCallbacksRouteByTaskAndFinishOnlyOnce() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var progress: [String: Double] = [:]
+        var failures: [String] = []
+        let downloader = FileDownloader(directory: directory, background: false,
+            onProgress: { progress[$0] = $1 }, onFinish: { id, _ in failures.append(id) })
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let first = session.downloadTask(with: URL(string: "https://example.test/first")!)
+        let second = session.downloadTask(with: URL(string: "https://example.test/second")!)
+        first.taskDescription = "first"; second.taskDescription = "second"
+        downloader.urlSession(session, downloadTask: first, didWriteData: 10, totalBytesWritten: 10, totalBytesExpectedToWrite: 100)
+        downloader.urlSession(session, downloadTask: second, didWriteData: 75, totalBytesWritten: 75, totalBytesExpectedToWrite: 100)
+        XCTAssertEqual(progress["first"], 0.1)
+        XCTAssertEqual(progress["second"], 0.75)
+        downloader.urlSession(session, task: first, didCompleteWithError: URLError(.timedOut))
+        downloader.urlSession(session, task: first, didCompleteWithError: URLError(.timedOut))
+        XCTAssertEqual(failures, ["first"])
+        downloader.urlSession(session, downloadTask: second, didWriteData: 10, totalBytesWritten: 85, totalBytesExpectedToWrite: 100)
+        XCTAssertEqual(progress["second"], 0.85)
+    }
 }
