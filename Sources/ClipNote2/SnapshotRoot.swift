@@ -187,6 +187,13 @@ struct SnapshotRoot: View {
                            note: "讲存储很扎实，适合看架构")
             lib.seedNote(id: id, note: "他的三组对照实验部分可以直接套到我们下季度的容量评估里。\n另外开头的那个提问方式值得学。")
         }
+        if state == "detail-summary-note", let id = detail?.id {
+            lib.seedNote(id: id, note: "# 笔记工具选型\n\n不看功能对比表，先验证导出是否无损、搜索是否够快、离线是否可用。用一篇长笔记实测，不以工具宣传代替结果。")
+            lib.seedSummary(id: id,
+                summary: "笔记工具选型先检查导出、搜索与离线，用真实长笔记验证，避免只比较功能表。",
+                keyPoints: ["检查导出内容是否完整", "实测检索速度与离线可读", "用真实笔记验证宣传"],
+                labels: ["效率", "产品"])
+        }
 
         // 评论区截图：种几条带楼层、表情、时间、点赞的评论，验「评论区快照」区块
         // 能渲染（不再只有空壳）。评论数刻意超过 20 条，顺带验「加载更多」不会被 20 条覆盖。
@@ -207,7 +214,7 @@ struct SnapshotRoot: View {
 
 
         // 脑图和总结读取同一份已保存章节。
-        if state == "outline", let id = lib.items.first?.id {
+        if state.hasPrefix("outline"), let id = lib.items.first?.id {
             lib.seedSummary(
                 id: id,
                 summary: "这条片子讨论的是：现在的 AI 热潮与 2000 年互联网泡沫，究竟哪里像、哪里不一样。",
@@ -321,9 +328,13 @@ struct SnapshotRoot: View {
                     DetailScreen(item: item, snapshotScrollTarget: summaryScrollTarget,
                                  initialAIState: summaryPreviewState)
                 }
-            } else if state == "outline" {
+            } else if state.hasPrefix("outline") {
                 if let item = library.items.first {
-                    NavigationStack { OutlineScreen(item: item) }
+                    NavigationStack {
+                        OutlineScreen(item: item,
+                                      snapshotTarget: state == "outline-middle" ? "5" : (state == "outline-end" ? "10" : nil),
+                                      initialPlaybackError: state == "outline-error" ? "这条尚未下载，联网后才能从时间点播放。" : nil)
+                    }
                 } else {
                     Color.cnBg
                 }

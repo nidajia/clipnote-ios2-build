@@ -16,7 +16,7 @@ jobs:
     runs-on: macos-15-intel
     # 30 分钟已经不够：单测 + 40 多张整屏截图，实测会顶到上限被取消（run 210 两次）。
     # 提到 45 分钟，给截图阶段留出余量。
-    timeout-minutes: 45
+    timeout-minutes: 55
 
     steps:
       - uses: actions/checkout@v4

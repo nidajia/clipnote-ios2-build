@@ -10,6 +10,7 @@ import AVKit
 /// 真要图形化，应该放到 iPad 或导出到别的工具里做，不是在这块屏幕上硬塞。
 struct OutlineScreen: View {
     var item: Item
+    private let snapshotTarget: String?
 
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var logs: LogStore
@@ -26,8 +27,10 @@ struct OutlineScreen: View {
     @State private var preparing: Int?
     @State private var playbackError: String?
 
-    init(item: Item) {
+    init(item: Item, snapshotTarget: String? = nil, initialPlaybackError: String? = nil) {
         self.item = item
+        self.snapshotTarget = snapshotTarget
+        _playbackError = State(initialValue: initialPlaybackError)
         _nodes = State(initialValue: item.chapters.isEmpty ? item.outline : Outliner.chapterTree(item.chapters))
     }
 
@@ -64,6 +67,7 @@ struct OutlineScreen: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if !item.chapters.isEmpty {
@@ -106,12 +110,19 @@ struct OutlineScreen: View {
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(rows) { row in
-                            rowView(row)
+                            rowView(row).id(row.id)
                         }
                     }
                     .padding(Metric.pagePad)
                 }
             }
+        }
+        .onAppear {
+            guard let snapshotTarget else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                proxy.scrollTo(snapshotTarget, anchor: .top)
+            }
+        }
         }
         .background(Color.cnBg)
         .navigationTitle("AI 脑图")

@@ -103,6 +103,10 @@ struct ContentSummarizer {
             out.append(APIChapter(t: t, title: String(title.prefix(40)),
                                   detail: String(detail.prefix(200)), expand: String(expand.prefix(120))))
         }
+        guard let ending = out.last?.t, let sourceEnd = known.last,
+              Double(ending) >= Double(sourceEnd) * 0.8 else {
+            throw SummarizeFailure.service("章节没有覆盖文字稿结尾，旧总结已保留，请重试。")
+        }
         result.chapters = out
         return result
     }

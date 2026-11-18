@@ -35,6 +35,10 @@ final class ContentSummaryTests: XCTestCase {
         let value = try ContentSummarizer.parse(reply(times: [0, 60]), lines: short, duration: 90)
         XCTAssertEqual(value.chapters.map(\.t), [0, 60])
     }
+    func testRejectsEnoughChaptersThatOnlyCoverTheBeginning() throws {
+        let long = (0..<30).map { APITranscriptLine(t: $0 * 60, text: "主题\($0)") }
+        XCTAssertThrowsError(try ContentSummarizer.parse(reply(), lines: long, duration: 1800))
+    }
     func testTextOnlyDoesNotInventChapters() throws {
         XCTAssertTrue(try ContentSummarizer.parse(reply(), lines: [], duration: 0).chapters.isEmpty)
     }

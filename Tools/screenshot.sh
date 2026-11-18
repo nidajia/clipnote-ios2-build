@@ -113,7 +113,9 @@ for appearance in light dark; do
   for state in detail-summary detail-summary-2 detail-summary-3 detail-summary-4 detail-summary-end detail-summary-running detail-summary-error detail-summary-missing detail-summary-note; do
     shot "$state-$appearance" "$state" "$appearance"
   done
-  shot "outline-$appearance" outline "$appearance"
+  for state in outline outline-middle outline-end outline-error; do
+    shot "$state-$appearance" "$state" "$appearance"
+  done
 done
 shot detail-segments    detail-segments    light
 shot detail-bookmarks   detail-bookmarks   light
