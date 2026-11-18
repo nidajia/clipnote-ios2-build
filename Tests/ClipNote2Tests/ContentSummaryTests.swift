@@ -19,6 +19,9 @@ final class ContentSummaryTests: XCTestCase {
         XCTAssertEqual(result.chapters.map(\.t), lines.map(\.t))
         XCTAssertTrue(result.chapters.allSatisfy { !$0.detail.isEmpty && !$0.expand.isEmpty })
     }
+    func testSparseTranscriptKeepsItsAvailableTimeAnchors() {
+        XCTAssertEqual(TranscriptCompressor.plan(lines).map(\.t), lines.map(\.t))
+    }
     func testRejectsAllZeroRatherThanFabricatingTimes() throws {
         XCTAssertThrowsError(try ContentSummarizer.parse(reply(times: Array(repeating: 0, count: 12)), lines: lines, duration: 720))
     }

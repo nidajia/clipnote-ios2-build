@@ -824,7 +824,7 @@ struct TranscribeSheet: View {
 /// 转写准备阶段的临时音源下载独立于「下载到本地」索引与后台会话。
 /// 每次完成都先移动系统临时文件，避免 URLSession 回调结束后文件被删除。
 final class AudioSourceDownloader: NSObject, URLSessionDownloadDelegate {
-    private lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main)
+    private var session: URLSession?
     private var task: URLSessionDownloadTask?
     private var progress: ((Double) -> Void)?
     private var finish: ((Result<URL, Error>) -> Void)?
@@ -832,9 +832,12 @@ final class AudioSourceDownloader: NSObject, URLSessionDownloadDelegate {
     func download(from url: URL, onProgress: @escaping (Double) -> Void,
                   onFinish: @escaping (Result<URL, Error>) -> Void) {
         task?.cancel()
+        session?.invalidateAndCancel()
         progress = onProgress
         finish = onFinish
-        let next = session.downloadTask(with: url)
+        let current = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main)
+        session = current
+        let next = current.downloadTask(with: url)
         task = next
         next.resume()
     }
@@ -843,6 +846,8 @@ final class AudioSourceDownloader: NSObject, URLSessionDownloadDelegate {
         finish = nil
         progress = nil
         task = nil
+        session?.finishTasksAndInvalidate()
+        session = nil
         callback?(result)
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,

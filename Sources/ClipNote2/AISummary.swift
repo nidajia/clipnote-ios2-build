@@ -552,6 +552,8 @@ enum TranscriptCompressor {
         for line in lines {
             let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if text.isEmpty { continue }
+            // 稀疏 ASR 行可能相隔数十秒，不能把窗口外的下一主题并进上一块。
+            if let begin = start, line.t - begin > window { flush() }
             if start == nil { start = line.t }
             bucket.append(text)
             // 一旦这一桶跨过窗口，就在**下一句**之前收口，
