@@ -2046,7 +2046,8 @@ struct DetailScreen: View {
     }
 
     /// 拿播放地址。已有就复用，没有就取一次；失败后再调用即「手动重试」。
-    private func ensurePlayback(silent: Bool = false) async -> APIPlaybackPayload? {
+    @MainActor
+    private func ensurePlayback(silent: Bool = false, refresh: Bool = false) async -> APIPlaybackPayload? {
         switch prepare {
         case .ready(let payload):
             return payload
@@ -2065,7 +2066,7 @@ struct DetailScreen: View {
         prepare = .loading
         if !silent { notice = nil }
         do {
-            if let payload = try await library.playback(for: item.id) {
+            if let payload = try await library.playback(for: item.id, refresh: refresh) {
                 // 老服务端会把图文封面（webp）当视频地址返回。这个地址一旦
                 // 交给 AVPlayerItem，AVKit 会崩而不是报错，所以先挡在这里。
                 guard payload.isPlayableMedia else {
@@ -3448,8 +3449,8 @@ struct DetailScreen: View {
         case .ready(let payload):
             let summary = payload.sizeSummary
             return summary.isEmpty
-                ? "地址会过期，失效时自动重新解析。"
-                : "\(summary) · 地址失效时自动重新解析。"
+                ? "地址失效后，再次下载时会重新获取。"
+                : "\(summary) · 地址失效后，再次下载时会重新获取。"
         case .failed(let message):
             return "\(message) 点上面的按钮可以重试。"
         case .unsupported(let message):
@@ -3457,12 +3458,17 @@ struct DetailScreen: View {
         case .unavailable:
             return "该内容没有可下载的视频。"
         case .idle, .loading:
-            return "地址会过期，失效时自动重新解析。"
+            return "地址失效后，再次下载时会重新获取。"
         }
     }
 
+    @MainActor
     private func startDownload() async {
-        guard let payload = await ensurePlayback(),
+        guard !isPreparing, !downloads.isDownloaded(item.id),
+              downloads.progressValue(for: item.id) == nil else { return }
+        let refresh = downloads.requiresFreshPlayback(for: item.id)
+        if refresh { prepare = .idle }
+        guard let payload = await ensurePlayback(refresh: refresh),
               let url = URL(string: payload.url) else { return }
         downloads.start(item.id, url: url)
     }

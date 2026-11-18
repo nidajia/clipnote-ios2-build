@@ -154,6 +154,30 @@ final class ClipNoteClientTests: XCTestCase {
         XCTAssertTrue(summary.hasPrefix("720P · 约 "), summary)
     }
 
+    @MainActor
+    func testPlaybackRefreshIsOptInAndPreservesAuthentication() async throws {
+        var requests: [URLRequest] = []
+        StubURLProtocol.handler = { request in
+            requests.append(request)
+            return (200, ["Content-Type": "application/json"], Data(#"{"url":"https://example.test/v.mp4"}"#.utf8))
+        }
+        let store = LibraryStore(client: makeClient(code: "MYCODE"))
+        _ = try await store.playback(for: "a1")
+        _ = try await store.playback(for: "a1", refresh: true)
+        _ = try await store.playback(for: "a1")
+
+        XCTAssertEqual(requests.count, 3)
+        for (index, request) in requests.enumerated() {
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(url.path, "/api/v2/items/a1/playback")
+            let query = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+            XCTAssertEqual(query.filter { $0.name == "refresh" }.compactMap(\.value), index == 1 ? ["1"] : [])
+            XCTAssertEqual(query.first { $0.name == "code" }?.value, "MYCODE")
+            XCTAssertEqual(query.first { $0.name == "sharecode" }?.value, "MYCODE")
+        }
+    }
+
     func testPlaybackWithoutQualityStillDecodes() async throws {
         // 服务端可能不给 quality/bytes（比如解析器没返回清晰度）。
         // 这时不能整条解不出来，只是少一行提示。

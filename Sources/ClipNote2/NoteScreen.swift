@@ -19,8 +19,13 @@ struct NoteScreen: View {
     @EnvironmentObject private var logs: LogStore
 
     @State private var text: String
+    @State private var savedText: String
+    @State private var baseNoteAt: Int
     @State private var saving = false
     @State private var failed = false
+    @State private var conflicted = false
+    @State private var confirmLoadCloud = false
+    @State private var restoredDraft = false
 
     @State private var editorReady = false
     @State private var editorError: String?
@@ -55,9 +60,11 @@ struct NoteScreen: View {
         self.item = item
         self.beginAtEnd = beginAtEnd
         _text = State(initialValue: item.note)
+        _savedText = State(initialValue: item.note)
+        _baseNoteAt = State(initialValue: item.noteRevision)
     }
 
-    private var dirty: Bool { text != item.note }
+    private var dirty: Bool { text != savedText }
     /// 库里最新的那条。保存之后 `updatedAt` 会变，而 `item` 是进页面那一刻的副本。
     private var current: Item { library.items.first { $0.id == item.id } ?? item }
     private var useFallback: Bool { editorError != nil || gaveUp }
@@ -68,6 +75,17 @@ struct NoteScreen: View {
                 banner("编辑器没能启动：\(editorError)", canRetry: true)
             } else if gaveUp {
                 banner("编辑器加载超时，已切回纯文本。内容照常保存。", canRetry: true)
+            }
+
+            if conflicted {
+                banner("云端笔记已更新。这份草稿已保留，未覆盖云端版本。")
+                HStack {
+                    Button("复制草稿") { UIPasteboard.general.string = text }
+                    Button("加载云端版本") { confirmLoadCloud = true }
+                }
+                .font(.cnChip)
+                .disabled(saving)
+                .padding(.horizontal, Metric.pagePad)
             }
 
             if let imageError {
@@ -110,13 +128,38 @@ struct NoteScreen: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("保存") { Task { await save() } }
                     .font(.cnChip)
-                    .disabled(!dirty || saving)
+                    .disabled(!dirty || saving || conflicted)
+            }
+        }
+        .onAppear {
+            guard !restoredDraft else { return }
+            restoredDraft = true
+            if let draft = library.conflictedNoteDrafts[item.id] {
+                baseNoteAt = draft.baseNoteAt
+                text = draft.text
+                conflicted = true
+                retryEditor()
+            } else if current.noteRevision > baseNoteAt {
+                // 入口可能持有旧条目；只在开始编辑前换成较新的正文和对应版本。
+                baseNoteAt = current.noteRevision
+                savedText = current.note
+                text = savedText
+                retryEditor()
             }
         }
         .onDisappear {
-            // 直接返回也要留下：用户不会记得点保存，而丢一段自己写的字
-            // 比任何界面问题都严重。dirty 判断保证不会白写一次。
-            if dirty { Task { await save() } }
+            // 直接返回时保存一次；发生冲突后只保留草稿，绝不自动重试。
+            if conflicted {
+                library.conflictedNoteDrafts[item.id] = (text, baseNoteAt)
+            } else if dirty {
+                Task { await save() }
+            }
+        }
+        .alert("用云端版本替换草稿？", isPresented: $confirmLoadCloud) {
+            Button("取消", role: .cancel) {}
+            Button("替换草稿", role: .destructive) { Task { await loadCloudVersion() } }
+        } message: {
+            Text("当前草稿会被替换。你可以先复制草稿，再把需要的内容合并到云端版本。")
         }
         .sheet(isPresented: $pickingPhoto) {
             PhotoPicker { image in
@@ -604,16 +647,45 @@ struct NoteScreen: View {
         return "\(label) \(HomeScreen.stamp(date))"
     }
 
+    @MainActor
     private func save() async {
-        guard dirty, !saving else { return }
+        guard dirty, !saving, !conflicted else { return }
         saving = true
         failed = false
         defer { saving = false }
         let value = text
-        let ok = await library.saveNote(id: item.id, note: value)
-        if !ok { failed = true }
-        logs.info("note.edit", "笔记落盘", meta: [
-            "id": item.id, "chars": String(value.count), "ok": ok ? "1" : "0",
-        ])
+        switch await library.saveNote(id: item.id, note: value, baseNoteAt: baseNoteAt) {
+        case .saved(let noteAt):
+            savedText = value
+            baseNoteAt = noteAt
+        case .conflict:
+            // 保存期间可能还有输入，保留当前草稿而不只是刚发送的正文。
+            library.conflictedNoteDrafts[item.id] = (text, baseNoteAt)
+            conflicted = true
+        case .failed:
+            failed = true
+        }
+    }
+
+    @MainActor
+    private func loadCloudVersion() async {
+        guard conflicted, !saving else { return }
+        saving = true
+        failed = false
+        defer { saving = false }
+        let draft = text
+        do {
+            let latest = try await library.loadCloudNote(id: item.id)
+            // 等待网络期间若有新输入，不用旧确认覆盖新草稿。
+            guard text == draft else { return }
+            text = latest.note
+            savedText = latest.note
+            baseNoteAt = max(0, latest.noteAt)
+            library.conflictedNoteDrafts[item.id] = nil
+            conflicted = false
+            retryEditor()
+        } catch {
+            failed = true
+        }
     }
 }

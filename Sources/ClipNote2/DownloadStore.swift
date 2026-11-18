@@ -14,6 +14,19 @@ struct DownloadFailure: Identifiable, Equatable {
     var message: String
 }
 
+struct DownloadHTTPError: LocalizedError {
+    let statusCode: Int
+
+    init?(response: HTTPURLResponse) {
+        guard !(200..<300).contains(response.statusCode) else { return nil }
+        statusCode = response.statusCode
+    }
+
+    var requiresFreshPlayback: Bool { statusCode == 401 || statusCode == 403 }
+
+    var errorDescription: String? { "视频源返回 \(statusCode)，请重新获取地址。" }
+}
+
 /// 下载与本地文件索引。
 ///
 /// 核心约束：**状态只依赖磁盘**。杀进程重启后 `records` 由 `downloads.json`
@@ -34,6 +47,8 @@ final class DownloadStore: ObservableObject {
     private let directory: URL
     private let indexURL: URL
     private var downloader: FileDownloader?
+    /// 与界面提示分开；其他条目的失败不能覆盖当前条目的地址失效状态。
+    private var stalePlaybackIDs = Set<String>()
     private let usesBackgroundSession: Bool
     /// 日志由外部注入；截图模式传 nil
     private weak var log: LogStore?
@@ -71,6 +86,8 @@ final class DownloadStore: ObservableObject {
 
     func progressValue(for id: String) -> Double? { progress[id] }
 
+    func requiresFreshPlayback(for id: String) -> Bool { stalePlaybackIDs.contains(id) }
+
     // MARK: - 动作
 
     /// 下载一条内容。
@@ -80,6 +97,8 @@ final class DownloadStore: ObservableObject {
     func start(_ id: String, url: URL) {
         let k = id
         guard records[k] == nil, progress[k] == nil else { return }
+        // 调用方此时已拿到地址。取地址失败走不到这里，下一次仍应重新获取。
+        stalePlaybackIDs.remove(k)
         progress[k] = 0
         if lastFailure?.id == k { lastFailure = nil }
 
@@ -91,22 +110,25 @@ final class DownloadStore: ObservableObject {
         guard downloader == nil else { return }
         downloader = FileDownloader(directory: directory, background: usesBackgroundSession,
             onProgress: { [weak self] id, value in self?.progress[id] = value },
-            onFinish: { [weak self] id, result in
-                guard let self else { return }
-                self.progress[id] = nil
-                switch result {
-                case .success(let receipt): self.acceptReceipt(receipt)
-                case .failure(let error):
-                    let code = (error as NSError).code
-                    if code == NSURLErrorCancelled { return }
-                    let message = code == 403 || code == 401
-                        ? "视频地址已过期或被拒绝，联网后重新下载。"
-                        : "下载失败：\(error.localizedDescription)"
-                    self.lastFailure = DownloadFailure(id: id, message: message)
-                    Task { @MainActor in self.log?.error("download.failed", message, meta: ["id": id]) }
-                }
-            })
+            onFinish: { [weak self] id, result in self?.handleCompletion(id: id, result: result) })
         downloader?.restore()
+    }
+
+    func handleCompletion(id: String, result: Result<DownloadReceipt, Error>) {
+        progress[id] = nil
+        switch result {
+        case .success(let receipt):
+            acceptReceipt(receipt)
+        case .failure(let error):
+            if (error as? URLError)?.code == .cancelled { return }
+            let needsRefresh = (error as? DownloadHTTPError)?.requiresFreshPlayback == true
+            if needsRefresh { stalePlaybackIDs.insert(id) }
+            let message = needsRefresh
+                ? "视频地址已过期或被拒绝，联网后重新下载。"
+                : "下载失败：\(error.localizedDescription)"
+            lastFailure = DownloadFailure(id: id, message: message)
+            Task { @MainActor in log?.error("download.failed", message, meta: ["id": id]) }
+        }
     }
 
     /// 系统结束下载时先写持久收据，再更新 UI。进程在两步之间被回收也能重放。
@@ -349,11 +371,10 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
         closedTasks.insert(downloadTask.taskIdentifier)
         tasks[id] = nil
         do {
-            let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
-            guard (200..<300).contains(status) else {
-                throw NSError(domain: "ClipNoteDownload", code: status,
-                              userInfo: [NSLocalizedDescriptionKey: "视频源返回 \(status)，请重新获取地址。"])
+            guard let response = downloadTask.response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
             }
+            if let error = DownloadHTTPError(response: response) { throw error }
             let receipt = try DownloadReceipt.stage(id: id, temporary: location, directory: directory)
             onFinish(id, .success(receipt))
         } catch { onFinish(id, .failure(error)) }
@@ -364,7 +385,13 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
               tasks[id] == nil || tasks[id] === task else { return }
         closedTasks.insert(task.taskIdentifier)
         tasks[id] = nil
-        onFinish(id, .failure(error))
+        if (error as? URLError)?.code != .cancelled,
+           let response = task.response as? HTTPURLResponse,
+           let httpError = DownloadHTTPError(response: response) {
+            onFinish(id, .failure(httpError))
+        } else {
+            onFinish(id, .failure(error))
+        }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

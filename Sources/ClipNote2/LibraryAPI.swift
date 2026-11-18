@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 // MARK: - 服务端形状
@@ -847,9 +848,10 @@ struct ClipNoteClient {
     ///
     /// 409 = 条目在但没有视频流（笔记/图集）。这不是网络错误，是内容属性，
     /// 所以不归到 `Failure`，而是由调用方判断 `available`。
-    func playback(id: String) async throws -> APIPlaybackPayload? {
+    func playback(id: String, refresh: Bool = false) async throws -> APIPlaybackPayload? {
+        let query = refresh ? "?refresh=1" : ""
         do {
-            return try await get("/api/v2/items/\(encode(id))/playback", as: APIPlaybackPayload.self)
+            return try await get("/api/v2/items/\(encode(id))/playback\(query)", as: APIPlaybackPayload.self)
         } catch let failure as Failure {
             if case .http(let status, let code, _) = failure, status == 409, code == "PLAYBACK_UNAVAILABLE" {
                 return nil
@@ -1127,10 +1129,14 @@ struct ClipNoteClient {
         )
     }
 
-    /// 保存我的笔记。
-    func saveNote(id: String, note: String) async throws -> APILibraryItem {
-        try await post("/api/v2/items/\(encode(id))/note",
-                       body: ["note": note], as: APILibraryItem.self)
+    func noteItem(id: String) async throws -> APILibraryItem {
+        try await get("/api/v2/items/\(encode(id))", as: APILibraryItem.self)
+    }
+
+    /// 保存从指定版本编辑的笔记，0 表示尚未保存过正文。
+    func saveNote(id: String, note: String, baseNoteAt: Int) async throws -> (item: APILibraryItem, data: Data) {
+        try await postPayload("/api/v2/items/\(encode(id))/note",
+                              body: ["note": note, "baseNoteAt": baseNoteAt], as: APILibraryItem.self)
     }
 
     /// 提交一个后台任务。服务端立刻返回任务号，真正的模型调用在服务端跑——
@@ -1280,6 +1286,15 @@ struct ClipNoteClient {
         as type: T.Type,
         timeout: TimeInterval = 30
     ) async throws -> T {
+        try await postPayload(path, body: body, as: type, timeout: timeout).item
+    }
+
+    private func postPayload<T: Decodable>(
+        _ path: String,
+        body: [String: Any],
+        as type: T.Type,
+        timeout: TimeInterval = 30
+    ) async throws -> (item: T, data: Data) {
         guard let url = url(path: path) else { throw Failure.transport("地址拼不出来") }
 
         var request = URLRequest(url: url)
@@ -1303,7 +1318,7 @@ struct ClipNoteClient {
             }
             try validate(response: http, data: data)
             do {
-                return try JSONDecoder().decode(T.self, from: data)
+                return (try JSONDecoder().decode(T.self, from: data), data)
             } catch {
                 throw Failure.malformed(String(describing: error))
             }
@@ -1561,12 +1576,22 @@ final class LibraryStore: ObservableObject {
     }
 
     /// 保存后的全库刷新可能断网。先把确认保存的字段合并进磁盘缓存，重启也能读到。
-    private func patchCachedItem(id: String, fields: [String: Any]) {
-        guard let cacheURL, let data = try? Data(contentsOf: cacheURL),
-              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var cached = root["items"] as? [[String: Any]],
-              let index = cached.firstIndex(where: { $0["id"] as? String == id }) else { return }
-        cached[index].merge(fields) { _, new in new }
+    private func patchCachedItem(id: String, fields: [String: Any], inserting itemData: Data? = nil) {
+        guard let cacheURL else { return }
+        let existing = (try? Data(contentsOf: cacheURL)).flatMap {
+            (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any]
+        }
+        var root = existing ?? ["libraryVersion": version, "trashCount": trashCount]
+        var cached = root["items"] as? [[String: Any]] ?? []
+        if let index = cached.firstIndex(where: { $0["id"] as? String == id }) {
+            cached[index].merge(fields) { _, new in new }
+        } else {
+            // 新建后若尚未同步，条目可能不在磁盘上；用原始回包补齐条目。
+            guard let itemData,
+                  let item = (try? JSONSerialization.jsonObject(with: itemData)) as? [String: Any] else { return }
+            cached.insert(item, at: 0)
+            root["count"] = cached.count
+        }
         root["items"] = cached
         if let data = try? JSONSerialization.data(withJSONObject: root) { saveCache(data) }
     }
@@ -1601,11 +1626,11 @@ final class LibraryStore: ObservableObject {
 
     /// 取播放地址。返回 `nil` 表示「这类内容没有视频流」（服务端 409），不是错误。
     /// 截图模式下没有 client，一律返回 nil——于是播放键置灰，界面不会假装能播。
-    func playback(for id: String) async throws -> APIPlaybackPayload? {
+    func playback(for id: String, refresh: Bool = false) async throws -> APIPlaybackPayload? {
         guard let client else { return nil }
         let started = Date()
         do {
-            let payload = try await client.playback(id: id)
+            let payload = try await client.playback(id: id, refresh: refresh)
             if payload == nil {
                 log?.warn("playback.unavailable", "该内容没有视频流", meta: [
                     "id": id, "ms": ms(since: started),
@@ -2018,27 +2043,64 @@ final class LibraryStore: ObservableObject {
         items[i].seasonTotal = total
     }
 
-    /// 保存笔记。返回是否成功。
+    // 返回再打开编辑页时仍能取回冲突草稿；不把草稿写成已同步的笔记。
+    var conflictedNoteDrafts: [String: (text: String, baseNoteAt: Int)] = [:]
+
+    func loadCloudNote(id: String) async throws -> APILibraryItem {
+        guard let client else { throw ClipNoteClient.Failure.transport("离线模式") }
+        let latest = try await client.noteItem(id: id)
+        acceptConfirmedNote(latest)
+        return latest
+    }
+
+    enum NoteSaveResult: Equatable {
+        case saved(noteAt: Int)
+        case conflict
+        case failed
+    }
+
+    /// 只在服务端确认后更新本地快照；冲突由编辑页处理，不重试写入。
     @discardableResult
-    func saveNote(id: String, note: String) async -> Bool {
-        guard let client else { return false }
+    func saveNote(id: String, note: String, baseNoteAt: Int) async -> NoteSaveResult {
+        guard let client else { return .failed }
         do {
-            _ = try await client.saveNote(id: id, note: note)
-            // 先本地回写，再拉全库。
-            // reload() 失败时会保留旧数据——那样「刚保存的笔记」在首页搜索里
-            // 根本查不到，用户只会认为没存上。本地先落一份，搜索立刻可用。
-            if let index = items.firstIndex(where: { $0.id == id }) {
-                items[index].note = note
-            }
+            let (saved, data) = try await client.saveNote(id: id, note: note, baseNoteAt: baseNoteAt)
+            // 先用服务端确认的内容和时间戳更新内存、磁盘，再刷新全库。
+            acceptConfirmedNote(saved, inserting: data)
             await reload()
             log?.info("note.saved", "笔记已保存", meta: [
-                "id": id, "chars": String(note.count),
+                "id": id, "chars": String(saved.note.count),
             ])
-            return true
+            return .saved(noteAt: saved.noteAt)
         } catch {
+            if let failure = error as? ClipNoteClient.Failure,
+               case .http(let status, let code, _) = failure,
+               status == 409, code == "NOTE_CONFLICT" {
+                conflictedNoteDrafts[id] = (note, baseNoteAt)
+                log?.warn("note.conflict", "笔记有更新版本，未覆盖云端", meta: ["id": id])
+                return .conflict
+            }
             log?.error("note.failed", "笔记保存失败", meta: ["id": id])
-            return false
+            return .failed
         }
+    }
+
+    private func acceptConfirmedNote(_ saved: APILibraryItem, inserting data: Data? = nil) {
+        let savedItem = Item(api: saved)
+        if let index = items.firstIndex(where: { $0.id == saved.id }) {
+            guard savedItem.noteRevision >= items[index].noteRevision else { return }
+            var updated = items[index]
+            updated.note = savedItem.note
+            updated.noteAt = savedItem.noteAt
+            updated.noteRevision = savedItem.noteRevision
+            updated.updatedAt = savedItem.updatedAt
+            items[index] = updated
+        } else {
+            items.insert(savedItem, at: 0)
+            phase = .loaded
+        }
+        patchCachedItem(id: saved.id, fields: ["note": saved.note, "noteAt": saved.noteAt,
+                                               "updatedAt": saved.updatedAt], inserting: data)
     }
 
     /// 新建笔记并立刻插到本地列表最前面。

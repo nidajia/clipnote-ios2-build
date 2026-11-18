@@ -88,12 +88,14 @@ final class NoteEditorTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         var received = ""
+        var baseNoteAt: Int?
         StubURLProtocol.handler = { request in
             let path = request.url?.path ?? ""
             if path.hasSuffix("/note") {
                 if let obj = Self.jsonObject(from: request),
                    let note = obj["note"] as? String {
                     received = note
+                    baseNoteAt = obj["baseNoteAt"] as? Int
                 }
                 return (200, ["Content-Type": "application/json"], Self.itemJSON(note: received))
             }
@@ -103,9 +105,10 @@ final class NoteEditorTests: XCTestCase {
         let store = LibraryStore(client: Self.makeClient(), cacheDirectory: dir)
         let text = "## 结论\n\n泡沫不在估值，而在 **现金流**。\n\n```\nburn = cash / months\n```"
 
-        let ok = await store.saveNote(id: "a1", note: text)
+        let result = await store.saveNote(id: "a1", note: text, baseNoteAt: 0)
 
-        XCTAssertTrue(ok, "保存应当成功")
+        XCTAssertEqual(result, .saved(noteAt: 0), "保存应当成功")
+        XCTAssertEqual(baseNoteAt, 0, "首次保存必须带版本 0")
         XCTAssertEqual(received, text, "请求体里的笔记应与编辑器内容逐字一致（不能被裁剪或转义）")
         XCTAssertEqual(store.items.first?.note, text, "保存后列表里的笔记应更新——这就是回环")
     }
@@ -129,14 +132,14 @@ final class NoteEditorTests: XCTestCase {
         }
 
         let store = LibraryStore(client: Self.makeClient(), cacheDirectory: dir)
-        _ = await store.saveNote(id: "a1", note: "")
+        _ = await store.saveNote(id: "a1", note: "", baseNoteAt: 0)
 
         XCTAssertEqual(received, "", "清空也要发出去")
         XCTAssertEqual(store.items.first?.note, "")
     }
 
     @MainActor
-    func testSaveFailureReportsFalse() async throws {
+    func testSaveFailureReportsFailure() async throws {
         let dir = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -146,9 +149,39 @@ final class NoteEditorTests: XCTestCase {
         }
 
         let store = LibraryStore(client: Self.makeClient(), cacheDirectory: dir)
-        let ok = await store.saveNote(id: "a1", note: "写了但存不上")
+        let result = await store.saveNote(id: "a1", note: "写了但存不上", baseNoteAt: 0)
 
-        XCTAssertFalse(ok, "存不上必须返回 false，界面才能提示「没存上」")
+        XCTAssertEqual(result, .failed, "普通失败要与冲突区分")
+    }
+
+    @MainActor
+    func testNoteConflictKeepsDraftAndDoesNotRetryOrChangeCache() async throws {
+        let dir = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { StubURLProtocol.handler = nil }
+        let cache = dir.appendingPathComponent("library-cache.json")
+        let original = Data(#"{"items":[{"id":"a1","title":"标题","note":"旧正文","noteAt":1730000000123}]}"#.utf8)
+        try original.write(to: cache)
+        var requests: [String] = []
+        var body: [String: Any]?
+        StubURLProtocol.handler = { request in
+            requests.append("\(request.httpMethod ?? "") \(request.url?.path ?? "")")
+            body = Self.jsonObject(from: request)
+            return (409, ["Content-Type": "application/json"],
+                    Data(#"{"code":"NOTE_CONFLICT","message":"另一台设备已更新笔记","retryable":false}"#.utf8))
+        }
+        let store = LibraryStore(client: Self.makeClient(), cacheDirectory: dir)
+        let revision = try XCTUnwrap(store.items.first).noteRevision
+        let result = await store.saveNote(id: "a1", note: "未提交的草稿", baseNoteAt: revision)
+
+        XCTAssertEqual(result, .conflict)
+        XCTAssertEqual(requests, ["POST /api/v2/items/a1/note"])
+        XCTAssertEqual(body?["baseNoteAt"] as? Int, 1_730_000_000_123)
+        XCTAssertEqual(body?["note"] as? String, "未提交的草稿")
+        XCTAssertEqual(store.conflictedNoteDrafts["a1"]?.text, "未提交的草稿")
+        XCTAssertEqual(store.conflictedNoteDrafts["a1"]?.baseNoteAt, revision)
+        XCTAssertEqual(store.items.first?.note, "旧正文")
+        XCTAssertEqual(try Data(contentsOf: cache), original)
     }
 
     // MARK: -

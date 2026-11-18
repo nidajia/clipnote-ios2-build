@@ -122,6 +122,33 @@ final class DownloadStoreTests: XCTestCase {
         XCTAssertFalse(DownloadStore(directory: directory).isDownloaded("failed"))
     }
     @MainActor
+    func testOnlyHTTP401And403RequireFreshPlaybackForTheFailedItem() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = DownloadStore(directory: directory)
+        let url = URL(string: "https://example.test/video")!
+
+        for status in [401, 403, 500] {
+            let id = "http-\(status)"
+            let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status,
+                                                        httpVersion: nil, headerFields: nil))
+            let error = try XCTUnwrap(DownloadHTTPError(response: response))
+            store.seedDownloading(id, value: 0.5)
+            store.handleCompletion(id: id, result: .failure(error))
+            XCTAssertNil(store.progressValue(for: id), "失败应结束任务，不会自动重试")
+            XCTAssertEqual(store.lastFailure?.id, id)
+        }
+
+        let unrelated = NSError(domain: "OtherError", code: 403,
+                                userInfo: [NSLocalizedDescriptionKey: "视频地址已过期或被拒绝，联网后重新下载。"])
+        store.handleCompletion(id: "other", result: .failure(unrelated))
+        XCTAssertTrue(store.requiresFreshPlayback(for: "http-401"))
+        XCTAssertTrue(store.requiresFreshPlayback(for: "http-403"))
+        XCTAssertFalse(store.requiresFreshPlayback(for: "http-500"))
+        XCTAssertFalse(store.requiresFreshPlayback(for: "other"))
+    }
+
+    @MainActor
     func testConcurrentCallbacksRouteByTaskAndFinishOnlyOnce() throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
