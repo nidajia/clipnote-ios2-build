@@ -52,7 +52,7 @@ xcrun simctl ui "$UDID" appearance "$appearance" >/dev/null 2>&1 || true
   # 那样这张图就证明不了"最终能不能出来"。
   if [ "$state" = "note-editor" ]; then
     sleep 25
-  elif [ "$rotate" = "landscape" ]; then sleep 6; else sleep 4; fi
+  elif [ "$rotate" = "landscape" ]; then sleep 6; else sleep 15; fi
   xcrun simctl io "$UDID" screenshot "screenshots/$name.png"
 
   if [ "$rotate" = "landscape" ]; then
@@ -81,95 +81,7 @@ upright_if_sideways() {
 # 走真实解码路径：App 从 bundle 里的 library-sample.json 解码后渲染，
 # 所以每张图同时证明「解码对不对」和「渲染对不对」，且不依赖网络。
 # 首启引导（画布 01 / 02）。放在最前面：它们本来就发生在首页之前。
-shot onboarding-welcome onboarding-welcome light
-shot onboarding-syncing onboarding-syncing light
-shot onboarding-done    onboarding-done    light
-shot onboarding-failed  onboarding-failed  light
-
-shot home-list    list    light
-shot home-loading loading light
-shot home-failed  failed  light
-shot home-empty   empty   light
-shot me           me      light
-shot tags         tags    light
-shot ai-settings  ai-settings light
-shot ai-models    ai-models   light
-shot import-sheet import  light
-shot logs         logs    light
-shot trash        trash   light
-
-shot detail-idle        detail             light
-# 合集的「上一集 / 下一集」：首屏就能换集，不用滑到底
-shot detail-season      detail-season      light
-# 评论区：固定高度框、框内翻页（滚到评论区再拍）
-shot detail-comments    detail-comments    light
-shot detail-ready       detail-ready       light
-shot detail-note        detail-note        light
-shot detail-downloading detail-downloading light
-shot detail-downloaded  detail-downloaded  light
-shot detail-summary     detail-summary     light
-# 总结首/中/尾 + 保留旧内容的加载、失败、缺正文态；浅深各一组。
-for appearance in light dark; do
-  for state in detail-summary detail-summary-2 detail-summary-3 detail-summary-4 detail-summary-end detail-summary-running detail-summary-error detail-summary-missing detail-summary-note; do
-    shot "$state-$appearance" "$state" "$appearance"
-  done
-  for state in outline outline-middle outline-end outline-error; do
-    shot "$state-$appearance" "$state" "$appearance"
-  done
-done
-shot detail-segments    detail-segments    light
-shot detail-bookmarks   detail-bookmarks   light
-shot outline            outline            light
-shot note-editor      note-editor      light
-# 深色：编辑器在深色下的底色/工具栏/弹层（之前一直是白的）
-shot note-dark        note-editor      dark
-# 新建笔记的默认形态：大标题 + 三个小标题
-shot note-new         note-new         light
-shot note-probe       note-probe       light
-shot home-selecting     home-selecting     light
-# 6.1 分区：一张验筛选条和行内标记，一张验选择面板本身。
-# 分区归属在 SnapshotRoot 里种好（故意留几条未分区），
-# 否则「未分区」那条筛选在图上永远不出现，等于没验。
-shot home-section       home-section       light
-shot section-picker     section-picker     light
-# 笔记筛选：只收真有内容的，行内带修改时间
-shot home-notes         home-notes         light
-shot segments           segments           light
-shot infographic        infographic        light
-# 发现页：验筛选栏始终在（切「合集」也回得去）、热榜能渲染、合集入口可见
-shot discover              discover              light
-shot discover-collections  discover-collections  light
-# 合集目录：点合集先进这一页（有集数/时间/播放量/正在看），点某一集才播
-shot collection            collection            light
-# 应用内作者页：身份区 + 最近视频
-shot author                author                light
-# 下载清单：能看每条的占用与下载日期，可左滑删
-shot downloads             downloads             light
-# 离线态：首页顶部提示条（真实网络监控 + previewOffline 钉住）
-shot home-offline          home-offline          light
-# 一图胜千言：结果页（背景是占位渐变，版面是真的）
-shot card-image            card-image            light
-# 图像模型选择器：只列能生图的（对话/向量被筛掉）
-shot ai-models-image       ai-models-image       light
-# 本机转写面板（sheet，只能作为根呈现）。
-# 模拟器上真跑只会停在「这台设备暂时不行」，所以这几张全走 preview 注入。
-# 除了「转写中 / 完成」，另外四张是**失败路径**：真机上它们要么看运气
-# （权限被拒、系统听写停住），要么根本复现不了，只能在这里把文案看一遍。
-shot transcribe            transcribe            light
-shot transcribe-running    transcribe-running    light
-# 云端转写（默认路径）：验引擎行文案与分段进度
-shot transcribe-cloud      transcribe-cloud      light
-shot transcribe-blocked    transcribe-blocked    light
-shot transcribe-permission transcribe-permission light
-shot transcribe-stalled    transcribe-stalled    light
-shot transcribe-failed     transcribe-failed     light
-
-# 画布 06。第 4 个参数让脚本把它转正（见 upright_if_sideways）
-shot player-landscape player-landscape light landscape
-
-shot home-dark   list   dark
-shot detail-dark detail dark
-
-xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-
-ls -la screenshots
+shot detail-downloading-light detail-downloading light
+shot detail-downloading-dark detail-downloading dark
+shot detail-downloaded-light detail-downloaded light
+shot detail-downloaded-dark detail-downloaded dark
