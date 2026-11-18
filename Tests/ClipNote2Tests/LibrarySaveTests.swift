@@ -69,7 +69,7 @@ final class LibrarySaveTests: XCTestCase {
             return (500, ["Content-Type": "application/json"], Data(#"{"message":"offline"}"#.utf8))
         }
         let store = LibraryStore(client: client(), cacheDirectory: dir)
-        let ok = await store.saveSegments(id: "a1", segments: [APISegment(t: 10, title: "旧导航", summary: "保留")], by: "test")
+        let ok = await store.saveSegments(id: "a1", segments: [APISegment(title: "旧导航", t: 10, summary: "保留")], by: "test")
         XCTAssertTrue(ok)
         XCTAssertEqual(writes, ["/api/v2/items/a1/segments"])
         XCTAssertEqual(store.items.first?.aiSummary, "新总结", "只接受服务端已保存结果，不另外写总结端点")

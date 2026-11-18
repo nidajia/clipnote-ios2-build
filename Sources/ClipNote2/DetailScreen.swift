@@ -419,7 +419,7 @@ struct DetailScreen: View {
         // 本机转写：入口在「没有字幕」那一态（见 `segmentEntry`）。
         // 转写完立刻拿文字去切分段——用户点这一步的意图本来就是「想按段落读」，
         // 再让他回去点第二次没有必要。
-        .sheet(isPresented: $showTranscribe) {
+        .sheet(isPresented: $showTranscribe, onDismiss: { transcribeForSummary = false }) {
             TranscribeSheet(item: current,
                             completionTitle: transcribeForSummary ? "生成总结" : "用它切分段",
                             continueAutomatically: transcribeForSummary) { _ in
@@ -1709,7 +1709,7 @@ struct DetailScreen: View {
                 .buttonStyle(.plain)
 
                 // 已有分段时给一条重跑路径：换模型、或上一版没覆盖全，都靠它。
-                // 走服务端重跑（重新下载+转写），不依赖本机有没有转过。
+                // 仅重做导航；无文字稿时先转写，不触发旧服务端的总结写入。
                 if !current.segments.isEmpty {
                     Button("重新分段（换模型后重跑）") {
                         Task { await rebuildSegments() }
@@ -1790,18 +1790,13 @@ struct DetailScreen: View {
         }
     }
 
-    /// 让服务端重跑一条（重新下载 + 转写 + 分段 + 抽项目）。
-    ///
-    /// 为什么不复用 `generateSegments`：那条路要求本机已经有转写，
-    /// 而用户换模型想重跑时，本机往往什么都没有。服务端重跑不依赖本机状态。
+    /// 重跑导航仍走独立分段链路，不调用会同时覆盖总结的旧 rebuild 接口。
     private func rebuildSegments() async {
-        guard !library.isOffline, segmentState != .running else { return }
-        segmentState = .running
-        let ok = await library.rebuildItem(id: current.id)
-        segmentState = .idle
-        notice = ok
-            ? "已交给服务端重跑，大约半分钟到一分钟，之后下拉刷新。"
-            : "提交重跑失败，检查网络后再试。"
+        await generateSegments(force: true)
+        if case .blocked = segmentState, AIConfigStore.load().isConfigured {
+            transcribeForSummary = false
+            showTranscribe = true
+        }
     }
 
     /// 进页面时自动生成一次。默认**不**跑：AI 是用户自己的额度。
