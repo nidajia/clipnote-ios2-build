@@ -17,22 +17,27 @@ struct BookmarkDraft: Identifiable, Equatable {
 /// 逼着写一行字会让大多数人不标。想写的时候再写。
 struct BookmarkEditSheet: View {
     var draft: BookmarkDraft
-    var onSave: (String) -> Void
+    var onSave: (Int, String) -> Void
     var onDelete: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var note: String
+    @State private var timeText: String
 
     init(
         draft: BookmarkDraft,
-        onSave: @escaping (String) -> Void,
+        onSave: @escaping (Int, String) -> Void,
         onDelete: @escaping () -> Void
     ) {
         self.draft = draft
         self.onSave = onSave
         self.onDelete = onDelete
         _note = State(initialValue: draft.note)
+        _timeText = State(initialValue: DetailScreen.mmss(draft.t))
     }
+
+    /// 时间输入框的解析结果。非法时保存按钮直接置灰，并在下面说明格式。
+    private var parsedTime: Int? { BookmarkComment.seconds(from: timeText) }
 
     var body: some View {
         NavigationStack {
@@ -54,6 +59,28 @@ struct BookmarkEditSheet: View {
                 }
                 .foregroundStyle(Color.cnBrand)
 
+                HStack(spacing: Metric.space2) {
+                    Text("时间")
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnInk3)
+                    TextField("12:30", text: $timeText)
+                        .font(.cnChip)
+                        .keyboardType(.numbersAndPunctuation)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 86)
+                        .padding(.vertical, 7)
+                        .background(
+                            Color.cnCard3,
+                            in: RoundedRectangle(cornerRadius: Metric.radiusButton, style: .continuous)
+                        )
+                    Spacer(minLength: 0)
+                    if parsedTime == nil {
+                        Text("用 12:30 或 1:02:03")
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnRed)
+                    }
+                }
+
                 TextField("写一句备注（可留空）", text: $note, axis: .vertical)
                     .font(.cnBody)
                     .lineLimit(1...4)
@@ -64,15 +91,17 @@ struct BookmarkEditSheet: View {
                     )
 
                 PrimaryButton(title: "保存") {
-                    onSave(note)
+                    onSave(parsedTime ?? draft.t, note)
                     dismiss()
                 }
+                .opacity(parsedTime == nil ? 0.5 : 1)
+                .disabled(parsedTime == nil)
 
                 Button(role: .destructive) {
                     onDelete()
                     dismiss()
                 } label: {
-                    Text("删除这个书签")
+                    Text("删除这条收藏评论")
                         .font(.cnChip)
                         .foregroundStyle(Color.cnRed)
                         .frame(maxWidth: .infinity)
@@ -84,7 +113,7 @@ struct BookmarkEditSheet: View {
             }
             .padding(Metric.pagePad)
             .background(Color.cnBg)
-            .navigationTitle("书签")
+            .navigationTitle("收藏评论")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -93,6 +122,6 @@ struct BookmarkEditSheet: View {
                 }
             }
         }
-        .presentationDetents([.height(320)])
+        .presentationDetents([.height(380)])
     }
 }

@@ -220,6 +220,8 @@ struct DetailScreen: View {
     /// 标题往下到底部：正文主体。
     private var bodyBlock: some View {
         VStack(alignment: .leading, spacing: Metric.space3) {
+                    bookmarkComments
+
                     Text(item.title)
                         .font(.cnTitle)
                         .foregroundStyle(Color.cnInk)
@@ -538,11 +540,10 @@ struct DetailScreen: View {
         .sheet(item: $editingBookmark) { draft in
             BookmarkEditSheet(
                 draft: draft,
-                onSave: { note in
-                    var list = current.bookmarks
-                    if let index = list.firstIndex(where: { $0.t == draft.t }) {
-                        list[index].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
+                onSave: { time, note in
+                    let list = BookmarkComment.applying(
+                        time: time, note: note, originalTime: draft.t, to: current.bookmarks
+                    )
                     Task { await persistBookmarks(list) }
                 },
                 onDelete: {
@@ -861,6 +862,90 @@ struct DetailScreen: View {
                 }
             }
             .clipped()
+    }
+
+    /// 收藏评论：时间点 + 自己那句话，一行一条，右侧铅笔随时改。
+    ///
+    /// 之前只有时间轴上的小旗子，长按才进编辑——用户既找不到入口，
+    /// 也看不到「我到底收藏过哪些时刻、当时写了什么」。这一块把它摊开：
+    /// 点时间跳过去，点铅笔改时间或改文字。
+    @ViewBuilder
+    private var bookmarkComments: some View {
+        if !current.bookmarks.isEmpty {
+            VStack(alignment: .leading, spacing: Metric.space2) {
+                HStack(spacing: 6) {
+                    Text("收藏评论")
+                        .font(.cnRowTitle)
+                        .foregroundStyle(Color.cnInk)
+                    Text("\(current.bookmarks.count)")
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                    Spacer(minLength: 0)
+                    Button {
+                        guard player != nil else {
+                            notice = "视频还没加载好，等画面出来再收藏。"
+                            return
+                        }
+                        Task { await addBookmarkAtCurrentTime() }
+                    } label: {
+                        Text("收藏这一刻")
+                            .font(.cnCaption)
+                            .foregroundStyle(Color.cnBrand)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ForEach(current.bookmarks.sorted { $0.t < $1.t }, id: \.t) { bookmark in
+                    HStack(alignment: .top, spacing: Metric.space2) {
+                        Button {
+                            Task { await jump(to: bookmark) }
+                        } label: {
+                            Text(Self.mmss(bookmark.t))
+                                .font(.cnChip)
+                                .monospacedDigit()
+                                .foregroundStyle(Color.cnBrand)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.cnBrandSoft, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("跳到 \(Self.mmss(bookmark.t))")
+
+                        Text(BookmarkComment.display(bookmark.note))
+                            .font(.cnBody)
+                            .foregroundStyle(bookmark.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                             ? Color.cnInk3 : Color.cnInk)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Button {
+                            editingBookmark = BookmarkDraft(t: bookmark.t, note: bookmark.note, by: bookmark.by)
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.cnInk3)
+                                .padding(6)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("编辑这条收藏评论")
+                    }
+                    .padding(.vertical, 4)
+
+                    if bookmark != current.bookmarks.sorted(by: { $0.t < $1.t }).last {
+                        Rectangle()
+                            .fill(Color.cnHairline)
+                            .frame(height: 1)
+                    }
+                }
+            }
+            .padding(Metric.space3)
+            .background(
+                Color.cnCard,
+                in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
+            )
+            .padding(.horizontal, Metric.pagePad)
+        }
     }
 
     /// 书签这一行：左边是时间轴上的旗子，右边是「标记」。
