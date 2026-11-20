@@ -44,6 +44,14 @@ final class DownloadStore: ObservableObject {
     /// 用户只会以为「点了没反应」。这是最差的一种失败方式。
     @Published private(set) var lastFailure: DownloadFailure?
 
+    /// 进度已到 100%、但文件还没落到本机的条目。
+    ///
+    /// 用户看到的是「100% 之后就不动了」：后台回调要等系统把临时文件交付，
+    /// 主线程忙或权限异常时这段会静默卡住。有了这个状态，界面能显示
+    /// 「正在保存…」，也有超时兜底，不再是无解释的停住。
+    @Published private(set) var finalizing: Set<String> = []
+    private var finishTimers: [String: DispatchWorkItem] = [:]
+
     private let directory: URL
     private let indexURL: URL
     private var downloader: FileDownloader?
@@ -86,6 +94,9 @@ final class DownloadStore: ObservableObject {
 
     func progressValue(for id: String) -> Double? { progress[id] }
 
+    /// 100% 之后、文件落盘之前的那一段。
+    func isFinalizing(_ id: String) -> Bool { finalizing.contains(id) }
+
     func requiresFreshPlayback(for id: String) -> Bool { stalePlaybackIDs.contains(id) }
 
     // MARK: - 动作
@@ -100,6 +111,9 @@ final class DownloadStore: ObservableObject {
         // 调用方此时已拿到地址。取地址失败走不到这里，下一次仍应重新获取。
         stalePlaybackIDs.remove(k)
         progress[k] = 0
+        finalizing.remove(k)
+        finishTimers[k]?.cancel()
+        finishTimers[k] = nil
         if lastFailure?.id == k { lastFailure = nil }
 
         connectDownloader()
@@ -109,11 +123,25 @@ final class DownloadStore: ObservableObject {
     private func connectDownloader() {
         guard downloader == nil else { return }
         downloader = FileDownloader(directory: directory, background: usesBackgroundSession,
-            onProgress: { [weak self] id, value in self?.progress[id] = value },
+            onProgress: { [weak self] id, value in
+                guard let self else { return }
+                self.progress[id] = value
+                // 到 100% 只是「字节收完」，文件还没落地。这里切到「保存中」并
+                // 启动超时兜底，避免界面永远停在 100%。
+                if value >= 0.999, !self.finalizing.contains(id) {
+                    self.finalizing.insert(id)
+                    self.armFinishTimer(id)
+                }
+            },
             onFinish: { [weak self] id, result in self?.handleCompletion(id: id, result: result) })
         downloader?.onForegroundRetry = { [weak self] id in
+            guard let self else { return }
+            // 换前台是从 0 重新下的，之前那 20 秒超时不适用，先撤掉。
+            self.finishTimers[id]?.cancel()
+            self.finishTimers[id] = nil
+            self.finalizing.remove(id)
             Task { @MainActor in
-                self?.log?.info("download.foreground_retry",
+                self.log?.info("download.foreground_retry",
                                 "后台保存失败，改前台重下",
                                 meta: ["id": id])
             }
@@ -121,11 +149,33 @@ final class DownloadStore: ObservableObject {
         downloader?.restore()
     }
 
+    private func armFinishTimer(_ id: String) {
+        finishTimers[id]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.progress[id] != nil else { return }
+            self.progress[id] = nil
+            self.finalizing.remove(id)
+            self.lastFailure = DownloadFailure(id: id, message: "下载完成但保存超时，请重试。")
+            Task { @MainActor in
+                self.log?.error("download.finish_timeout", "100% 后保存超时", meta: ["id": id])
+            }
+        }
+        finishTimers[id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
+    }
+
     func handleCompletion(id: String, result: Result<DownloadReceipt, Error>) {
+        finishTimers[id]?.cancel()
+        finishTimers[id] = nil
+        finalizing.remove(id)
         progress[id] = nil
         switch result {
         case .success(let receipt):
             acceptReceipt(receipt)
+            Task { @MainActor in
+                log?.info("download.saved", "已保存到本机",
+                          meta: ["id": id, "bytes": String(receipt.record.byteCount)])
+            }
         case .failure(let error):
             if (error as? URLError)?.code == .cancelled { return }
             let needsRefresh = (error as? DownloadHTTPError)?.requiresFreshPlayback == true
@@ -420,6 +470,8 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
               tasks[id] == nil || tasks[id] === downloadTask else { return }
         closedTasks.insert(downloadTask.taskIdentifier)
         tasks[id] = nil
+        // 字节收完了，先让界面切到「正在保存」，别停在 99% 或 100% 毫无反应。
+        onProgress(id, 1.0)
         do {
             guard let response = downloadTask.response as? HTTPURLResponse else {
                 throw URLError(.badServerResponse)

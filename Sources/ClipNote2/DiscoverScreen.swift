@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// 发现页：只看你关心的。
@@ -50,6 +51,57 @@ struct DiscoverScreen: View {
 
     private var blockedKeywords: [String] { KeywordBlock.decode(blockedKeywordsRaw) }
 
+    /// 每条内容第一次出现在发现页的时间（秒）。
+    ///
+    /// 用来做「新的靠前、上次没看的依次往下」：服务端热榜顺序会整批洗牌，
+    /// 用户重新打开时同一批内容换个位置，等于没变化。按首次出现时间排序后，
+    /// 新抓到的自然排前面，旧的顺着往下排，不会消失。
+    @AppStorage("cn.feedFirstSeen") private var firstSeenRaw = "{}"
+
+    /// 作者条的自动轮播：4 秒走一格，用户拖动后暂停 8 秒。
+    @State private var ticker = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+    @State private var autoScrollIndex = 0
+    @State private var lastUserScrollAt = Date.distantPast
+
+    private var firstSeen: [String: Int] {
+        guard let data = firstSeenRaw.data(using: .utf8),
+              let map = try? JSONDecoder().decode([String: Int].self, from: data) else { return [:] }
+        return map
+    }
+
+    private func registerFirstSeen(_ items: [APIDiscoverItem]) {
+        guard !items.isEmpty else { return }
+        var map = firstSeen
+        let now = Int(Date().timeIntervalSince1970)
+        var changed = false
+        for item in items where map[item.id] == nil {
+            map[item.id] = now
+            changed = true
+        }
+        guard changed else { return }
+        if map.count > 800 {
+            // 只留最近 800 条，避免这个键无限长大。
+            let trimmed = map.sorted { $0.value > $1.value }.prefix(800)
+            map = Dictionary(uniqueKeysWithValues: trimmed.map { ($0.key, $0.value) })
+        }
+        if let data = try? JSONEncoder().encode(map), let text = String(data: data, encoding: .utf8) {
+            firstSeenRaw = text
+        }
+    }
+
+    /// 新的在前；同一批内保持服务端给的顺序（用原始下标做 tiebreaker）。
+    private func orderedByFirstSeen(_ items: [APIDiscoverItem]) -> [APIDiscoverItem] {
+        let stamps = firstSeen
+        return items.enumerated()
+            .sorted { lhs, rhs in
+                let a = stamps[lhs.element.id] ?? 0
+                let b = stamps[rhs.element.id] ?? 0
+                if a != b { return a > b }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
+    }
+
     private var hot: [APIDiscoverItem] {
         guard let feed else { return [] }
         if category == "合集" { return [] }
@@ -68,7 +120,8 @@ struct DiscoverScreen: View {
             base.append(contentsOf: extra.filter { !seen.contains($0.id) })
             raw = base
         }
-        return KeywordBlock.filter(raw, keywords: blockedKeywords, title: { $0.title })
+        let filtered = KeywordBlock.filter(raw, keywords: blockedKeywords, title: { $0.title })
+        return orderedByFirstSeen(filtered)
     }
 
     private var collections: [APIDiscoverCollection] { feed?.collections ?? [] }
@@ -103,6 +156,8 @@ struct DiscoverScreen: View {
                     skeleton
                 } else {
                     subsSection
+                    // 合集与订阅新片并排；切到具体分类时收起，避免和下面的分类列表重复。
+                    if category == "全部" { duoSection }
                     mineSection
                     // 分类栏放这里而不是塞进热榜区块：切到「合集」时热榜区块
                     // 整个不渲染，分类栏跟着消失，用户就再也切不回「全部 / 科技」——
@@ -247,13 +302,36 @@ struct DiscoverScreen: View {
                 }
                 .padding(.horizontal, Metric.pagePad)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: Metric.space3) {
-                        ForEach(subs) { sub in
-                            subCard(sub)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Metric.space3) {
+                            ForEach(subs) { sub in
+                                subCard(sub)
+                                    .id(sub.key)
+                            }
+                        }
+                        .padding(.horizontal, Metric.pagePad)
+                    }
+                    // 自动轮播：横条不滚就一直停在第一个作者，后面的等于没有。
+                    // 用户自己拖动后停 8 秒再继续，避免「手还没松开就被抢走」。
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 8).onChanged { _ in
+                            lastUserScrollAt = Date()
+                        }
+                    )
+                    .onReceive(ticker) { _ in
+                        guard subs.count > 1 else { return }
+                        guard Date().timeIntervalSince(lastUserScrollAt) > 8 else { return }
+                        // 关注列表可能刚被同步刷新过（变短），下标要先夹住。
+                        guard autoScrollIndex < subs.count else {
+                            autoScrollIndex = 0
+                            return
+                        }
+                        autoScrollIndex = autoScrollIndex >= subs.count - 1 ? 0 : autoScrollIndex + 1
+                        withAnimation(.easeInOut(duration: 0.45)) {
+                            proxy.scrollTo(subs[autoScrollIndex].key, anchor: .leading)
                         }
                     }
-                    .padding(.horizontal, Metric.pagePad)
                 }
             }
         }
@@ -576,6 +654,178 @@ struct DiscoverScreen: View {
         .contentShape(Rectangle())
     }
 
+    // MARK: - 合集 / 订阅新片（并排）
+
+    /// 左边「我的合集」，右边「订阅新片」。
+    ///
+    /// 用户原话：「发现页应该右边弄个我订阅的作者的新发视频列表，放合集右边」，
+    /// 且两种都要「像发现页那种搞个封面和标题」。所以这里统一成竖版卡片：
+    /// 封面 + 两行标题 + 一行元信息，取代只有文字的列表行。
+    @ViewBuilder
+    private var duoSection: some View {
+        let cols = Array(collections.prefix(6))
+        let fresh = Array(freshFromSubs.prefix(6))
+        if !cols.isEmpty || !fresh.isEmpty {
+            HStack(alignment: .top, spacing: Metric.space3) {
+                VStack(alignment: .leading, spacing: Metric.space2) {
+                    duoHeader("我的合集", count: collections.count)
+                    ForEach(cols) { one in
+                        collectionDuoCard(one)
+                    }
+                    if cols.isEmpty { duoHint("还没有多集作品") }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: Metric.space2) {
+                    duoHeader("订阅新片", count: freshFromSubs.count)
+                    ForEach(fresh) { one in
+                        freshDuoCard(one)
+                    }
+                    if fresh.isEmpty { duoHint("关注的人还没更新") }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, Metric.pagePad)
+        }
+    }
+
+    /// 订阅里所有作者的最新视频，按发布时间倒序。
+    ///
+    /// 取全部再排序：「谁刚更新」比「关注列表的顺序」重要；两边各取前 6 条，
+    /// 其余去作者页看。
+    private var freshFromSubs: [SubFresh] {
+        var seen = Set<String>()
+        var out: [SubFresh] = []
+        for sub in subs {
+            for video in sub.videos {
+                guard !video.videoId.isEmpty, !seen.contains(video.videoId) else { continue }
+                seen.insert(video.videoId)
+                out.append(SubFresh(id: video.videoId,
+                                    title: video.title,
+                                    cover: video.cover,
+                                    author: sub.name,
+                                    created: video.created,
+                                    url: video.url,
+                                    platform: sub.platform))
+            }
+        }
+        return out.sorted { $0.created > $1.created }
+    }
+
+    private func duoHeader(_ title: String, count: Int) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.cnRowTitle)
+                .foregroundStyle(Color.cnInk)
+            Text("\(count)")
+                .font(.cnCaption)
+                .foregroundStyle(Color.cnInk3)
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 2)
+    }
+
+    private func duoHint(_ text: String) -> some View {
+        Text(text)
+            .font(.cnCaption)
+            .foregroundStyle(Color.cnInk3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+    }
+
+    private func duoCover(_ raw: String) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.cnCard3)
+            if !raw.isEmpty, let url = URL(string: raw) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        Color.clear
+                    }
+                }
+            }
+        }
+        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func duoCardBody(cover raw: String, title: String, meta: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            duoCover(raw)
+            Text(title.isEmpty ? "未命名" : title)
+                .font(.cnChip)
+                .foregroundStyle(Color.cnInk)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(meta)
+                .font(.system(size: 9))
+                .foregroundStyle(Color.cnInk3)
+                .lineLimit(1)
+        }
+        .contentShape(Rectangle())
+        .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private func collectionDuoCard(_ one: APIDiscoverCollection) -> some View {
+        if one.itemId.isEmpty {
+            duoCardBody(cover: one.cover, title: one.title, meta: "共 \(one.total) 集")
+        } else {
+            NavigationLink {
+                CollectionScreen(itemId: one.itemId,
+                                 seasonId: one.seasonId,
+                                 title: one.title,
+                                 cover: one.cover,
+                                 total: one.total)
+            } label: {
+                duoCardBody(cover: one.cover, title: one.title, meta: "共 \(one.total) 集")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func freshDuoCard(_ one: SubFresh) -> some View {
+        // 库里有的直接进详情；没入库的沿用「应用内预览」，不跳浏览器。
+        if let item = library.items.first(where: { $0.videoId == one.id }) {
+            NavigationLink {
+                DetailScreen(item: item)
+            } label: {
+                duoCardBody(cover: one.cover, title: one.title, meta: duoMeta(one))
+            }
+            .buttonStyle(.plain)
+        } else {
+            Button {
+                playing = discoverItem(from: one)
+            } label: {
+                duoCardBody(cover: one.cover, title: one.title, meta: duoMeta(one))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func duoMeta(_ one: SubFresh) -> String {
+        let name = one.author.isEmpty ? "未知作者" : one.author
+        guard one.created > 0 else { return name }
+        return "\(name) · \(Self.shortAge(one.created))"
+    }
+
+    private func discoverItem(from one: SubFresh) -> APIDiscoverItem {
+        var item = APIDiscoverItem()
+        item.id = one.id
+        item.videoId = one.id
+        item.platform = one.platform
+        item.title = one.title
+        item.cover = one.cover
+        item.author = one.author
+        item.url = one.url
+        item.created = one.created
+        return item
+    }
+
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
@@ -859,6 +1109,8 @@ struct DiscoverScreen: View {
         errorText = ""
         do {
             feed = try await library.discoverFeed(refresh: refresh)
+            // 首次见到的时间在这里登记：渲染阶段写 @AppStorage 会触发重绘循环。
+            registerFirstSeen(feed?.hot ?? [])
         } catch {
             // 断网和「服务端挂了」是两件事，文案要分开：
             // 前者用户自己能解决（连上网），后者只能等。
@@ -1321,6 +1573,17 @@ struct AuthorSheet: View {
 }
 
 /// 已屏蔽分类的管理。
+/// 订阅里的一条新片。合集的模型不能复用（字段不同），单独一层更清楚。
+private struct SubFresh: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let cover: String
+    let author: String
+    let created: Int
+    let url: String
+    let platform: String
+}
+
 private struct BlockedListSheet: View {
     var cats: [String]
     var onUnblock: (String) -> Void

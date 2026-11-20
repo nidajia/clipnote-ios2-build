@@ -3542,11 +3542,14 @@ struct DetailScreen: View {
                 }
 
             } else if let value = downloads.progressValue(for: item.id) {
-                DownloadProgressCard(progress: value) {
+                DownloadProgressCard(progress: value,
+                                     finalizing: downloads.isFinalizing(item.id)) {
                     downloads.cancel(item.id)
                 }
 
-                Text("下载在后台继续，离开此页不会中断。")
+                Text(downloads.isFinalizing(item.id)
+                     ? "字节已经收完，正在写入本机，别退出这一页。"
+                     : "下载在后台继续，离开此页不会中断。")
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
 
@@ -3620,6 +3623,8 @@ struct DetailScreen: View {
 
 struct DownloadProgressCard: View {
     var progress: Double
+    /// 100% 之后还在落盘。文案要跟着变，否则用户只看到进度条停住。
+    var finalizing: Bool = false
     var onCancel: () -> Void
 
     var body: some View {
@@ -3631,17 +3636,17 @@ struct DownloadProgressCard: View {
                     .trim(from: 0, to: max(0.02, min(1, progress)))
                     .stroke(Color.cnBrand, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                Text("\(Int((progress * 100).rounded()))%")
+                Text(finalizing ? "…" : "\(Int((progress * 100).rounded()))%")
                     .font(.custom("Inter-SemiBold", size: 10, relativeTo: .caption2))
                     .foregroundStyle(Color.cnInk)
             }
             .frame(width: 44, height: 44)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("正在下载")
+                Text(finalizing ? "正在保存" : "正在下载")
                     .font(.cnRowTitle)
                     .foregroundStyle(Color.cnInk)
-                Text("可离开此页，后台继续")
+                Text(finalizing ? "文件已收完，正在写入本机" : "可离开此页，后台继续")
                     .font(.cnMeta)
                     .foregroundStyle(Color.cnInk3)
             }

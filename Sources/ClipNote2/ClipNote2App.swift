@@ -11,6 +11,12 @@ struct ClipNote2App: App {
     private let snapshot: (state: String, appearance: ColorScheme?)?
 
     init() {
+        // 封面图默认缓存只有几百 KB，翻两页就被挤掉，于是每次刷新都重新下载——
+        // 用户看到的就是「图片半天才出来」。调大内存与磁盘缓存，二次访问直接命中。
+        URLCache.shared = URLCache(memoryCapacity: 32 * 1024 * 1024,
+                                   diskCapacity: 256 * 1024 * 1024,
+                                   diskPath: "clipnote-cover-cache")
+
         let args = ProcessInfo.processInfo.arguments
 
         func value(_ flag: String) -> String? {
