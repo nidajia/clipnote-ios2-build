@@ -2787,7 +2787,9 @@ struct DetailScreen: View {
     /// 这一段不是内容摘要的一部分。
     @ViewBuilder
     private var commentsRow: some View {
-        if !current.comments.isEmpty {
+        // 图文一定要有这一块：之前只在「已有评论」时渲染，而服务端又只给
+        // 视频抓评论，结果图文详情页连「评论区」三个字都看不到。
+        if !current.comments.isEmpty || item.kind == .image {
             VStack(alignment: .leading, spacing: Metric.space3) {
                 HStack(spacing: 6) {
                     Image(systemName: "text.bubble.fill")
@@ -2842,7 +2844,7 @@ struct DetailScreen: View {
                     commentBox
                 } else {
                     // 收起时给一句「里面有什么」，否则用户不知道值不值得展开。
-                    Text("视频被删之后，这里还能看到当时大家在说什么。")
+                    Text("这里保留当时的评论快照，原内容被删也还能看。")
                         .font(.cnCaption)
                         .foregroundStyle(Color.cnInk3)
                 }
@@ -2873,6 +2875,10 @@ struct DetailScreen: View {
         let stored = displayComments.count
         let total = current.stats?.comments ?? 0
         let sortLabel = commentsSort == "hot" ? "按热度" : "按时间"
+        if stored == 0, total == 0 {
+            // 还没抓到：别写成「0 条」，那看着像「这内容没人评论」。
+            return item.kind == .image ? "暂无评论快照" : "暂无"
+        }
         if total > stored {
             return "已存 \(stored) / 共 \(total) 条 · \(sortLabel)"
         }
@@ -2973,11 +2979,27 @@ struct DetailScreen: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 40)
                 } else {
-                    ForEach(Array(displayComments.enumerated()), id: \.offset) { index, one in
-                        if index > 0 {
-                            Divider().overlay(Color.cnHairlineSoft)
+                    if displayComments.isEmpty {
+                        VStack(spacing: 6) {
+                            Text("还没有评论快照")
+                                .font(.cnChip)
+                                .foregroundStyle(Color.cnInk2)
+                            Text(item.kind == .image
+                                 ? "图文同样会抓评论；刚入库的话稍等，或下拉刷新一次。"
+                                 : "这条还没抓到评论，下拉刷新或稍后再看。")
+                                .font(.cnCaption)
+                                .foregroundStyle(Color.cnInk3)
+                                .multilineTextAlignment(.center)
                         }
-                        commentCell(one)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 28)
+                    } else {
+                        ForEach(Array(displayComments.enumerated()), id: \.offset) { index, one in
+                            if index > 0 {
+                                Divider().overlay(Color.cnHairlineSoft)
+                            }
+                            commentCell(one)
+                        }
                     }
                 }
                 commentBoxFooter

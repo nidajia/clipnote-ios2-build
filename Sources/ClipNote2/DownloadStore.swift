@@ -111,6 +111,13 @@ final class DownloadStore: ObservableObject {
         downloader = FileDownloader(directory: directory, background: usesBackgroundSession,
             onProgress: { [weak self] id, value in self?.progress[id] = value },
             onFinish: { [weak self] id, result in self?.handleCompletion(id: id, result: result) })
+        downloader?.onForegroundRetry = { [weak self] id in
+            Task { @MainActor in
+                self?.log?.info("download.foreground_retry",
+                                "后台保存失败，改前台重下",
+                                meta: ["id": id])
+            }
+        }
         downloader?.restore()
     }
 
@@ -315,21 +322,34 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
     }
 
     private lazy var session: URLSession = {
-        // 不再用 background 会话。
-        //
-        // 真机日志里反复出现「未能打开文件 CFNetworkDownload_xxx.tmp，
-        // 因为你没有查看它的权限」：后台会话的临时文件由 nsurlsessiond 放在
-        // 它自己的容器里，本包是 TrollStore 未签名安装，容器归属和签名包不一致，
-        // 回调里既读不到也移动不了。改成前台会话后，临时文件直接落在本 App
-        // 容器内，落盘不再跨容器；代价是退到后台会暂停，回前台继续。
-        let config = URLSessionConfiguration.default
+        // 后台会话保持原样：它是「息屏也能下」的唯一实现，不能为了绕一个
+        // 权限问题把它砍掉。真机上读不到临时文件时，下面还有一次前台重下兜底。
+        let config = background
+            ? URLSessionConfiguration.background(withIdentifier: Self.backgroundIdentifier)
+            : URLSessionConfiguration.default
         config.isDiscretionary = false
-        config.waitsForConnectivity = true
-        config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 6 * 60 * 60
+        config.sessionSendsLaunchEvents = background
         // 所有任务表和 Store 状态在主队列操作，回调返回前已写完持久收据和索引。
         return URLSession(configuration: config, delegate: self, delegateQueue: .main)
     }()
+
+    /// 兜底用的前台会话。
+    ///
+    /// 后台会话把临时文件放在 nsurlsessiond 的容器里；未签名安装时本 App
+    /// 可能读不到那份文件（日志原话：未能打开文件…没有查看它的权限）。
+    /// 这种失败不该让用户看到「下载失败」，换前台会话用同一地址再下一次即可。
+    private lazy var retrySession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.isDiscretionary = false
+        config.waitsForConnectivity = true
+        config.timeoutIntervalForResource = 6 * 60 * 60
+        return URLSession(configuration: config, delegate: self, delegateQueue: .main)
+    }()
+
+    /// 已经走过一次前台重下的条目，避免权限问题导致无限循环。
+    private var foregroundRetried = Set<String>()
+    /// 换前台重下之前通知外面一声，便于留日志（Store 里写 download.foreground_retry）。
+    var onForegroundRetry: ((String) -> Void)?
 
     func restore() {
         guard !restoring, !restored else { return }
@@ -369,6 +389,7 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
             return
         }
         guard tasks[id] == nil else { return }
+        foregroundRetried.remove(id)
         let task = session.downloadTask(with: url)
         task.taskDescription = id
         tasks[id] = task
@@ -406,7 +427,30 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
             if let error = DownloadHTTPError(response: response) { throw error }
             let receipt = try DownloadReceipt.stage(id: id, temporary: location, directory: directory)
             onFinish(id, .success(receipt))
-        } catch { onFinish(id, .failure(error)) }
+        } catch {
+            // 只有「读不到/存不进」这类本机权限问题才换前台重下；
+            // 视频地址过期、HTTP 错误重下一次也是白下，直接报给用户。
+            if Self.isLocalStorageFailure(error),
+               !foregroundRetried.contains(id),
+               let url = downloadTask.originalRequest?.url {
+                foregroundRetried.insert(id)
+                onForegroundRetry?(id)
+                let retry = retrySession.downloadTask(with: url)
+                retry.taskDescription = id
+                tasks[id] = retry
+                retry.resume()
+                return
+            }
+            onFinish(id, .failure(error))
+        }
+    }
+
+    /// 本机落盘失败（区别于网络/HTTP 失败）。
+    private static func isLocalStorageFailure(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == "ClipNoteDownload" else { return false }
+        return ns.code == 403 || ns.code == 500
+    }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
