@@ -1020,7 +1020,6 @@ struct DiscoverScreen: View {
         }
     }
 
-    @ViewBuilder
     /// 时长：feed 自己带就用它，没带就回查本库。
     ///
     /// 抖音那两个接口都不给时长，但已入库的抖音条目是有的（导入时完整解析过）。
