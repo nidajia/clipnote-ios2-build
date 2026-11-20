@@ -246,7 +246,16 @@ struct DownloadReceipt: Codable {
     }
 
     static func stage(id: String, temporary: URL, directory: URL) throws -> DownloadReceipt {
-        let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
+        } catch {
+            // 真机上见过这一支：系统已经把临时文件收走（后台会话跨容器时尤其常见）。
+            // 把真实原因带给用户，比只显示「下载失败」有用。
+            throw NSError(domain: "ClipNoteDownload", code: 403, userInfo: [
+                NSLocalizedDescriptionKey: "下载到的临时文件读不到（\(error.localizedDescription)），请再下一次。"
+            ])
+        }
         let bytes = (attributes[.size] as? NSNumber)?.int64Value ?? 0
         guard bytes > 64 * 1024 else {
             throw NSError(domain: "ClipNoteDownload", code: 422,
@@ -259,7 +268,20 @@ struct DownloadReceipt: Codable {
         let folder = directory.appendingPathComponent("download-receipts")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent(receipt.record.fileName)
-        try FileManager.default.moveItem(at: temporary, to: destination)
+        do {
+            try FileManager.default.moveItem(at: temporary, to: destination)
+        } catch {
+            // 同一卷上 move 失败时再试一次 copy：部分系统版本在跨容器读取时
+            // 只允许拷贝，不允许重命名。两次都失败就抛出可读原因。
+            do {
+                try FileManager.default.copyItem(at: temporary, to: destination)
+                try? FileManager.default.removeItem(at: temporary)
+            } catch let copyError {
+                throw NSError(domain: "ClipNoteDownload", code: 500, userInfo: [
+                    NSLocalizedDescriptionKey: "下载完成但存不进本机（\(copyError.localizedDescription)），请再下一次。"
+                ])
+            }
+        }
         do { try JSONEncoder().encode(receipt).write(to: receipt.url(in: directory), options: .atomic) }
         catch { try? FileManager.default.removeItem(at: destination); throw error }
         return receipt
@@ -293,11 +315,18 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
     }
 
     private lazy var session: URLSession = {
-        let config = background
-            ? URLSessionConfiguration.background(withIdentifier: Self.backgroundIdentifier)
-            : URLSessionConfiguration.ephemeral
+        // 不再用 background 会话。
+        //
+        // 真机日志里反复出现「未能打开文件 CFNetworkDownload_xxx.tmp，
+        // 因为你没有查看它的权限」：后台会话的临时文件由 nsurlsessiond 放在
+        // 它自己的容器里，本包是 TrollStore 未签名安装，容器归属和签名包不一致，
+        // 回调里既读不到也移动不了。改成前台会话后，临时文件直接落在本 App
+        // 容器内，落盘不再跨容器；代价是退到后台会暂停，回前台继续。
+        let config = URLSessionConfiguration.default
         config.isDiscretionary = false
-        config.sessionSendsLaunchEvents = background
+        config.waitsForConnectivity = true
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 6 * 60 * 60
         // 所有任务表和 Store 状态在主队列操作，回调返回前已写完持久收据和索引。
         return URLSession(configuration: config, delegate: self, delegateQueue: .main)
     }()

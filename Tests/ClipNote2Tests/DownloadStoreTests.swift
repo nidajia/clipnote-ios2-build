@@ -171,4 +171,16 @@ final class DownloadStoreTests: XCTestCase {
         downloader.urlSession(session, downloadTask: second, didWriteData: 10, totalBytesWritten: 85, totalBytesExpectedToWrite: 100)
         XCTAssertEqual(progress["second"], 0.85)
     }
+
+    /// 真机日志里最常见的一条失败：系统把临时文件收走了，只报「没有查看权限」。
+    /// 这里要求至少给出一句人能看懂的说明，而不是把系统原文直接抛给界面。
+    func testMissingTemporaryFileExplainsItself() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let missing = directory.appendingPathComponent("already-collected.mp4")
+        XCTAssertThrowsError(try DownloadReceipt.stage(id: "gone", temporary: missing, directory: directory)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("临时文件"),
+                          "错误信息要说明临时文件读不到，实际是：\(error.localizedDescription)")
+        }
+    }
 }
