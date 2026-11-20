@@ -39,28 +39,44 @@ struct DiscoverScreen: View {
     @State private var loadingMore = false
     @State private var noMore = false
 
+    /// 标题关键词屏蔽：只存本机，命中就不显示。
+    @AppStorage("cn.blockedKeywords") private var blockedKeywordsRaw = "[]"
+    /// 刚屏蔽掉的那个词，留 5 秒让用户反悔。
+    @State private var undoKeyword: String?
+    @State private var undoTask: Task<Void, Never>?
+    /// 正在选关键词的那条标题（nil 表示选择弹层没开）。
+    @State private var keywordPrompt: KeywordPrompt?
+    @State private var keywordDraft = ""
+
+    private var blockedKeywords: [String] { KeywordBlock.decode(blockedKeywordsRaw) }
+
     private var hot: [APIDiscoverItem] {
         guard let feed else { return [] }
         if category == "合集" { return [] }
-        guard category != "全部" else { return feed.hot }
-        // 用服务端分好组的那一份。之前是从 hot 里 filter，而 hot 只有前 60 条，
-        // 「商业」「学习」排在 60 名之外 → 切过去一片空白。
-        var base: [APIDiscoverItem] = []
-        if let sec = feed.sections.first(where: { $0.category == category }) {
-            base = sec.items
+        let raw: [APIDiscoverItem]
+        if category == "全部" {
+            raw = feed.hot
+        } else {
+            // 用服务端分好组的那一份。之前是从 hot 里 filter，而 hot 只有前 60 条，
+            // 「商业」「学习」排在 60 名之外 → 切过去一片空白。
+            var base: [APIDiscoverItem] = []
+            if let sec = feed.sections.first(where: { $0.category == category }) {
+                base = sec.items
+            }
+            // 追加下滑加载的部分，按 id 去重。
+            let seen = Set(base.map(\.id))
+            base.append(contentsOf: extra.filter { !seen.contains($0.id) })
+            raw = base
         }
-        // 追加下滑加载的部分，按 id 去重。
-        let seen = Set(base.map(\.id))
-        base.append(contentsOf: extra.filter { !seen.contains($0.id) })
-        return base
+        return KeywordBlock.filter(raw, keywords: blockedKeywords, title: { $0.title })
     }
 
     private var collections: [APIDiscoverCollection] { feed?.collections ?? [] }
 
     private var mine: [APIDiscoverItem] {
         guard let feed else { return [] }
-        guard category != "全部" else { return feed.mine }
-        return feed.mine.filter { $0.category == category }
+        let raw = category == "全部" ? feed.mine : feed.mine.filter { $0.category == category }
+        return KeywordBlock.filter(raw, keywords: blockedKeywords, title: { $0.title })
     }
 
     var body: some View {
@@ -154,6 +170,48 @@ struct DiscoverScreen: View {
                     await library.unblockCategory(cat)
                     await load(refresh: true)
                 }
+            }
+        }
+        .sheet(item: $keywordPrompt) { prompt in
+            KeywordBlockSheet(
+                title: prompt.title,
+                suggestions: KeywordBlock.suggestions(from: prompt.title),
+                draft: $keywordDraft,
+                blocked: blockedKeywords,
+                onBlock: { keyword in
+                    blockKeyword(keyword)
+                    keywordPrompt = nil
+                },
+                onUnblock: { keyword in
+                    blockedKeywordsRaw = KeywordBlock.encode(
+                        KeywordBlock.removing(keyword, from: blockedKeywords))
+                }
+            )
+        }
+        .overlay(alignment: .bottom) {
+            if let keyword = undoKeyword {
+                HStack(spacing: 10) {
+                    Image(systemName: "eye.slash")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.cnInk2)
+                    Text("已屏蔽「\(keyword)」")
+                        .font(.cnMeta)
+                        .foregroundStyle(Color.cnInk)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button("撤销") { undoBlockedKeyword() }
+                        .font(.cnChip)
+                        .foregroundStyle(Color.cnBrand)
+                        .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.cnCard, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.cnHairline, lineWidth: 1))
+                .shadow(color: Color.black.opacity(0.12), radius: 12, y: 4)
+                .padding(.horizontal, Metric.pagePad)
+                .padding(.bottom, 18)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
     }
@@ -259,20 +317,79 @@ struct DiscoverScreen: View {
             }
     }
 
+    // MARK: - 关键词屏蔽
+
+    /// 屏蔽一个词：列表立刻少一截，底部留 5 秒撤销。
+    ///
+    /// 不做二次确认——用户要的就是「按一下就没」，多一步确认等于多一次打断；
+    /// 真正的安全网是那 5 秒。
+    private func blockKeyword(_ keyword: String) {
+        let before = blockedKeywords
+        let after = KeywordBlock.adding(keyword, to: before)
+        guard after != before else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            blockedKeywordsRaw = KeywordBlock.encode(after)
+            undoKeyword = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        undoTask?.cancel()
+        undoTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { undoKeyword = nil }
+        }
+    }
+
+    private func undoBlockedKeyword() {
+        guard let keyword = undoKeyword else { return }
+        undoTask?.cancel()
+        blockedKeywordsRaw = KeywordBlock.encode(KeywordBlock.removing(keyword, from: blockedKeywords))
+        withAnimation(.easeInOut(duration: 0.18)) { undoKeyword = nil }
+    }
+
+    /// 长按菜单：先给一个「直接屏蔽建议词」，再给一个「自己选词」。
+    @ViewBuilder
+    private func keywordMenu(for title: String) -> some View {
+        let suggestions = KeywordBlock.suggestions(from: title)
+        if let first = suggestions.first {
+            Button {
+                blockKeyword(first)
+            } label: {
+                Label("屏蔽「\(first)」", systemImage: "eye.slash")
+            }
+        }
+        Button {
+            keywordDraft = suggestions.first ?? ""
+            keywordPrompt = KeywordPrompt(title: title)
+        } label: {
+            Label("选择关键词屏蔽…", systemImage: "character.cursor.ibeam")
+        }
+    }
+
+    /// 这个作者最新一条的发布时间。
+    /// 不能取 `videos.first`：接口回来的顺序并不保证最新在前，
+    /// 一旦是正序，`first` 就成了几年前那条，界面会写「长期未更新」——
+    /// 用户看到的却是他前两天刚发的视频。服务端已经算过 `latestAt`，
+    /// 这里再兜一层 `max`，两个来源哪个更新用哪个。
+    private func newestCreated(_ sub: APISubscription) -> Int {
+        max(sub.latestAt, sub.videos.map(\.created).max() ?? 0)
+    }
+
     private func hasNew(_ sub: APISubscription) -> Bool {
-        guard let first = sub.videos.first, first.created > 0 else { return false }
+        let created = newestCreated(sub)
+        guard created > 0 else { return false }
         // 72 小时内算新。再久的就不是「更新」而是「历史」了。
-        return Date().timeIntervalSince1970 - Double(first.created) < 72 * 3600
+        return Date().timeIntervalSince1970 - Double(created) < 72 * 3600
     }
 
     private func latestText(_ sub: APISubscription) -> String {
-        guard let first = sub.videos.first, first.created > 0 else {
+        let created = newestCreated(sub)
+        guard created > 0 else {
             return sub.lastCheckedAt == 0 ? "待同步" : "无更新"
         }
         // 超过 30 天就别写「245 天前」了——那看起来像 Bug，其实是真的没发新东西。
-        let age = Date().timeIntervalSince1970 - Double(first.created)
+        let age = Date().timeIntervalSince1970 - Double(created)
         if age > 86400 * 30 { return "长期未更新" }
-        return Self.relative(first.created)
+        return Self.relative(created)
     }
 
     // MARK: 你存过的话题
@@ -348,6 +465,7 @@ struct DiscoverScreen: View {
                             .padding(.leading, Metric.pagePad + 104)
                     }
                     hotRow(one)
+                        .contextMenu { keywordMenu(for: one.title) }
                         .onAppear {
                             if one.id == hot.last?.id {
                                 Task { await loadMore() }
@@ -375,6 +493,7 @@ struct DiscoverScreen: View {
                 VStack(spacing: 0) {
                     ForEach(collections) { one in
                         collectionRow(one)
+                            .contextMenu { keywordMenu(for: one.title) }
                         if one.id != collections.last?.id {
                             Divider().overlay(Color.cnHairlineSoft)
                                 .padding(.leading, Metric.pagePad + 104)
@@ -1232,6 +1351,111 @@ private struct BlockedListSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 关键词屏蔽弹层
+
+/// 正在选关键词的那条标题。用一层包装是因为 `sheet(item:)` 需要 Identifiable，
+/// 而 String 不满足；直接用 Bool + 另一个变量容易在切换条目时错位。
+private struct KeywordPrompt: Identifiable {
+    let id = UUID()
+    let title: String
+}
+
+/// 选词面板：可以从标题里挑，也可以自己打。
+private struct KeywordBlockSheet: View {
+    let title: String
+    let suggestions: [String]
+    @Binding var draft: String
+    let blocked: [String]
+    let onBlock: (String) -> Void
+    let onUnblock: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: Metric.space3) {
+                Text("标题里出现这个词，就在发现页直接不显示。改完立刻生效。")
+                    .font(.cnMeta)
+                    .foregroundStyle(Color.cnInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                TextField("如：复盘、荐股、带货", text: $draft)
+                    .font(.cnBody)
+                    .padding(Metric.space3)
+                    .background(Color.cnCard3,
+                                in: RoundedRectangle(cornerRadius: Metric.radiusButton, style: .continuous))
+
+                if !suggestions.isEmpty {
+                    Text("从这条标题里选")
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                    chips(suggestions, removable: false)
+                }
+
+                if !blocked.isEmpty {
+                    Text("已屏蔽（点一下取消）")
+                        .font(.cnCaption)
+                        .foregroundStyle(Color.cnInk3)
+                    chips(blocked, removable: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(Metric.pagePad)
+            .background(Color.cnBg)
+            .navigationTitle("关键词屏蔽")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("取消") { dismiss() }
+                        .font(.cnChip)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("屏蔽") {
+                        onBlock(trimmed)
+                        dismiss()
+                    }
+                    .font(.cnChip)
+                    .disabled(trimmed.isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func chips(_ words: [String], removable: Bool) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(words, id: \.self) { word in
+                    Button {
+                        if removable {
+                            onUnblock(word)
+                        } else {
+                            draft = word
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(word)
+                                .font(.cnChip)
+                            if removable {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                        }
+                        .foregroundStyle(removable ? Color.cnInk2 : Color.cnBrand)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(removable ? Color.cnCard3 : Color.cnBrandSoft, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }

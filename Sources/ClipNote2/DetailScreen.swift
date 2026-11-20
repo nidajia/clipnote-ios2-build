@@ -871,8 +871,8 @@ struct DetailScreen: View {
     /// 点时间跳过去，点铅笔改时间或改文字。
     @ViewBuilder
     private var bookmarkComments: some View {
-        if !current.bookmarks.isEmpty {
-            VStack(alignment: .leading, spacing: Metric.space2) {
+        // 空的时候也要在：之前整块藏起来，用户根本不知道有「收藏这一刻」这个入口。
+        VStack(alignment: .leading, spacing: Metric.space2) {
                 HStack(spacing: 6) {
                     Text("收藏评论")
                         .font(.cnRowTitle)
@@ -893,6 +893,20 @@ struct DetailScreen: View {
                             .foregroundStyle(Color.cnBrand)
                     }
                     .buttonStyle(.plain)
+                }
+
+                if current.bookmarks.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bookmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.cnInk3)
+                        Text("还没有收藏。看到想回来的地方，点上方「收藏这一刻」。")
+                            .font(.cnMeta)
+                            .foregroundStyle(Color.cnInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 2)
                 }
 
                 ForEach(current.bookmarks.sorted { $0.t < $1.t }, id: \.t) { bookmark in
@@ -945,7 +959,6 @@ struct DetailScreen: View {
                 in: RoundedRectangle(cornerRadius: Metric.radiusCard, style: .continuous)
             )
             .padding(.horizontal, Metric.pagePad)
-        }
     }
 
     /// 书签这一行：左边是时间轴上的旗子，右边是「标记」。
@@ -2520,6 +2533,9 @@ struct DetailScreen: View {
                 if ep.current {
                     // 当前这一集就在下面播着，点它不要重复解析
                     Task { await startPlayback() }
+                } else if ep.url.isEmpty {
+                    // 没有直链就别静默失败：之前点下去什么都不发生，最像「坏了」。
+                    notice = "这一集没拿到播放地址，可能是合集的接口没返回；在浏览器打开一次再回来试试。"
                 } else {
                     previewQueue = playQueue(startingAt: ep)
                 }
@@ -2559,8 +2575,12 @@ struct DetailScreen: View {
     /// 从某一集开始播，并把整组剧集带上（播放页里能直接换集）。
     private func playQueue(startingAt ep: APISeasonEpisode) -> PlayQueue? {
         guard let season, !season.episodes.isEmpty else { return nil }
-        let list = season.episodes.map(previewItem)
-        guard let index = season.episodes.firstIndex(where: {
+        // 列表显示的是排序后的顺序，播放队列必须跟着同一份顺序走。
+        // 之前用未排序的 season.episodes，「按时间」下点第 3 行播的是原始
+        // 顺序里的第 3 条——用户看到的就是「点了没反应」。
+        let ordered = sortedEpisodes(season.episodes)
+        let list = ordered.map(previewItem)
+        guard let index = ordered.firstIndex(where: {
             $0.videoId == ep.videoId
         }) else { return nil }
         return PlayQueue(items: list, index: index)
