@@ -733,8 +733,8 @@ struct DiscoverScreen: View {
             .padding(.vertical, 6)
     }
 
-    private func duoCover(_ raw: String) -> some View {
-        ZStack {
+    private func duoCover(_ raw: String, seconds: Int) -> some View {
+        ZStack(alignment: .bottomTrailing) {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.cnCard3)
             if !raw.isEmpty, let url = URL(string: raw) {
@@ -746,14 +746,24 @@ struct DiscoverScreen: View {
                     }
                 }
             }
+            if seconds > 0 {
+                Text(Self.clock(seconds))
+                    .font(.cnDuration)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.black.opacity(0.55), in: Capsule())
+                    .padding(4)
+            }
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    private func duoCardBody(cover raw: String, title: String, meta: String) -> some View {
+    private func duoCardBody(cover raw: String, title: String, meta: String,
+                            seconds: Int = 0) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            duoCover(raw)
+            duoCover(raw, seconds: seconds)
             Text(title.isEmpty ? "未命名" : title)
                 .font(.cnChip)
                 .foregroundStyle(Color.cnInk)
@@ -794,7 +804,8 @@ struct DiscoverScreen: View {
             NavigationLink {
                 DetailScreen(item: item)
             } label: {
-                duoCardBody(cover: one.cover, title: one.title, meta: duoMeta(one))
+                duoCardBody(cover: one.cover, title: one.title, meta: duoMeta(one),
+                            seconds: item.durationSeconds)
             }
             .buttonStyle(.plain)
         } else {
@@ -1010,8 +1021,20 @@ struct DiscoverScreen: View {
     }
 
     @ViewBuilder
+    /// 时长：feed 自己带就用它，没带就回查本库。
+    ///
+    /// 抖音那两个接口都不给时长，但已入库的抖音条目是有的（导入时完整解析过）。
+    /// 不回查就会出现「同一个视频，首页有时长、发现页没有」——用户看到的是
+    /// 「刚打开有、过一会没了」。
+    private func playSeconds(_ one: APIDiscoverItem) -> Int {
+        if one.duration > 0 { return one.duration }
+        guard !one.videoId.isEmpty else { return 0 }
+        return library.items.first(where: { $0.videoId == one.videoId })?.durationSeconds ?? 0
+    }
+
     private func cover(_ one: APIDiscoverItem, width: CGFloat, height: CGFloat) -> some View {
-        ZStack {
+        let seconds = playSeconds(one)
+        return ZStack {
             RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous)
                 .fill(Color.cnCard3)
 
@@ -1045,10 +1068,10 @@ struct DiscoverScreen: View {
                     Spacer()
                 }
                 Spacer()
-                if one.duration > 0 {
+                if seconds > 0 {
                     HStack {
                         Spacer()
-                        Text(Self.clock(one.duration))
+                        Text(Self.clock(seconds))
                             .font(.cnDuration)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 4)
