@@ -1027,8 +1027,9 @@ struct DiscoverScreen: View {
     /// 「刚打开有、过一会没了」。
     private func playSeconds(_ one: APIDiscoverItem) -> Int {
         if one.duration > 0 { return one.duration }
-        guard !one.videoId.isEmpty else { return 0 }
-        return library.items.first(where: { $0.videoId == one.videoId })?.durationSeconds ?? 0
+        // videoId 是可选：热榜条目（例如抖音热榜）根本没有视频 id。
+        guard let vid = one.videoId, !vid.isEmpty else { return 0 }
+        return library.items.first(where: { $0.videoId == vid })?.durationSeconds ?? 0
     }
 
     private func cover(_ one: APIDiscoverItem, width: CGFloat, height: CGFloat) -> some View {
