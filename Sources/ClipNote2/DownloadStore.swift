@@ -451,7 +451,6 @@ final class FileDownloader: NSObject, URLSessionDownloadDelegate {
         guard ns.domain == "ClipNoteDownload" else { return false }
         return ns.code == 403 || ns.code == 500
     }
-    }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let id = task.taskDescription, let error, !closedTasks.contains(task.taskIdentifier),
