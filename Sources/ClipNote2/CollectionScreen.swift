@@ -34,6 +34,40 @@ struct CollectionScreen: View {
     /// 打开目录后要滚到哪一集（上次看的那集）。
     @State private var scrollTarget: String?
 
+    /// 「上次点开的是哪一集」。按合集存在 UserDefaults 里。
+    ///
+    /// 之前只记「库里那条代表条目」（`current`），用户点第 8 集看完退出，
+    /// 再进来又回到代表条目，看起来就像**根本没记住**。
+    private var lastEpisodeKey: String {
+        "cn.lastEpisode." + (seasonId.isEmpty ? itemId : seasonId)
+    }
+
+    private func rememberedEpisode() -> String? {
+        UserDefaults.standard.string(forKey: lastEpisodeKey)
+    }
+
+    private func remember(_ ep: APISeasonEpisode) {
+        guard !ep.videoId.isEmpty else { return }
+        UserDefaults.standard.set(ep.videoId, forKey: lastEpisodeKey)
+    }
+
+    /// 头部封面：没给就用「你看过的那一集」的封面顶着。
+    private var displayCover: String {
+        if !cover.isEmpty { return cover }
+        guard !seasonId.isEmpty else { return "" }
+        let sameSeason = library.items.filter { $0.seasonId == seasonId }
+        if let vid = rememberedEpisode(),
+           let hit = sameSeason.first(where: { $0.videoId == vid }),
+           let url = hit.coverURL?.absoluteString, !url.isEmpty {
+            return url
+        }
+        if let latest = sameSeason.max(by: { $0.seasonIndex < $1.seasonIndex }),
+           let url = latest.coverURL?.absoluteString, !url.isEmpty {
+            return url
+        }
+        return ""
+    }
+
     private var headTitle: String {
         if let t = season?.title, !t.isEmpty { return t }
         return title.isEmpty ? "合集" : title
@@ -160,8 +194,8 @@ struct CollectionScreen: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous)
                         .fill(Color.cnCard3)
-                    if !cover.isEmpty {
-                        AsyncImage(url: URL(string: cover)) { phase in
+                    if !displayCover.isEmpty {
+                        AsyncImage(url: URL(string: displayCover)) { phase in
                             if case .success(let image) = phase {
                                 image.resizable().scaledToFill()
                             } else {
@@ -272,6 +306,7 @@ struct CollectionScreen: View {
         } else {
             // 跳站要用户显式选（长按菜单 / 播放页里的「浏览器」按钮）。
             Button {
+                remember(ep)
                 playing = playQueue(startingAt: ep)
             } label: {
                 rowLabel(ep, number: number)
@@ -384,11 +419,14 @@ struct CollectionScreen: View {
     /// 记住「该滚到哪一集」：当前那一集优先，其次最后一个已存的。
     private func markScrollTarget() {
         guard scrollTarget == nil else { return }
-        let target = rawEpisodes.first(where: { $0.current })?.videoId
+        let remembered = rememberedEpisode()
+        let hitRemembered = rawEpisodes.contains(where: { $0.videoId == remembered })
+        let target = (hitRemembered ? remembered : nil)
+            ?? rawEpisodes.first(where: { $0.current })?.videoId
             ?? rawEpisodes.last(where: { !$0.itemId.isEmpty })?.videoId
-        // 只有长目录才需要跳：几十集的小合集两屏就看完了，
-        // 一进来就把它滚掉反而看不到标题和「共 N 集」。
-        if let target, rawEpisodes.count > 30 {
+        // 长目录需要跳，否则用户要自己翻几十屏；短目录只在「上次点开过某一集」
+        // 时才跳——那时用户明确想接着看，不该再让他从头找。
+        if let target, rawEpisodes.count > 30 || hitRemembered {
             scrollTarget = target
         }
     }
@@ -408,7 +446,7 @@ struct CollectionScreen: View {
         one.videoId = ep.videoId
         one.platform = "bilibili"
         one.title = ep.title
-        one.cover = cover
+        one.cover = displayCover
         one.author = library.items.first(where: { $0.id == itemId })?.author ?? ""
         one.views = ep.views
         one.url = ep.url

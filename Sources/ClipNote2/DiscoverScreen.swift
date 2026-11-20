@@ -608,8 +608,8 @@ struct DiscoverScreen: View {
             ZStack {
                 RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous)
                     .fill(Color.cnCard3)
-                if !one.cover.isEmpty {
-                    AsyncImage(url: URL(string: one.cover)) { phase in
+                if !collectionCover(one).isEmpty {
+                    AsyncImage(url: URL(string: collectionCover(one))) { phase in
                         if case .success(let image) = phase {
                             image.resizable().scaledToFill()
                         } else {
@@ -712,6 +712,20 @@ struct DiscoverScreen: View {
         return out.sorted { $0.created > $1.created }
     }
 
+    /// 合集封面：服务端没给就用「这个合集里你存过的那一集」的封面顶上。
+    ///
+    /// 合集本身没有封面字段，之前一片灰底，看起来像加载失败。
+    private func collectionCover(_ one: APIDiscoverCollection) -> String {
+        if !one.cover.isEmpty { return one.cover }
+        guard !one.seasonId.isEmpty else { return "" }
+        let same = library.items.filter { $0.seasonId == one.seasonId }
+        if let latest = same.max(by: { $0.seasonIndex < $1.seasonIndex }),
+           let url = latest.coverURL?.absoluteString, !url.isEmpty {
+            return url
+        }
+        return ""
+    }
+
     private func duoHeader(_ title: String, count: Int) -> some View {
         HStack(spacing: 5) {
             Text(title)
@@ -782,7 +796,8 @@ struct DiscoverScreen: View {
     @ViewBuilder
     private func collectionDuoCard(_ one: APIDiscoverCollection) -> some View {
         if one.itemId.isEmpty {
-            duoCardBody(cover: one.cover, title: one.title, meta: "共 \(one.total) 集")
+            duoCardBody(cover: collectionCover(one), title: one.title,
+                        meta: "共 \(one.total) 集")
         } else {
             NavigationLink {
                 CollectionScreen(itemId: one.itemId,
@@ -791,7 +806,8 @@ struct DiscoverScreen: View {
                                  cover: one.cover,
                                  total: one.total)
             } label: {
-                duoCardBody(cover: one.cover, title: one.title, meta: "共 \(one.total) 集")
+                duoCardBody(cover: collectionCover(one), title: one.title,
+                            meta: "共 \(one.total) 集")
             }
             .buttonStyle(.plain)
         }
