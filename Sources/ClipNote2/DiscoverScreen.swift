@@ -196,6 +196,7 @@ struct DiscoverScreen: View {
         }
         .task {
             await refreshIfStale()
+            await backfillDouyinMeta()
         }
         .onChange(of: category) { _ in
             extra = []
@@ -1110,6 +1111,33 @@ struct DiscoverScreen: View {
     /// 用户的原话是「昨天和今天每次打开内容还是那些」。
     /// 现在：没有内容 → 拉；上次拉取超过 10 分钟 → **静默**再拉
     /// （不清屏、不打断滚动，失败也保留旧内容）。
+    /// 这一批里还有没拿到时长的抖音条目吗。
+    private var hasPendingDouyinMeta: Bool {
+        guard let feed else { return false }
+        let rows: [APIDiscoverItem]
+        if category == "全部" {
+            rows = feed.hot
+        } else {
+            rows = feed.sections.first(where: { $0.category == category })?.items ?? []
+        }
+        return rows.contains { $0.platform == "douyin" && $0.duration <= 0 }
+    }
+
+    /// 抖音时长/封面靠服务端后台解析，首屏那次请求往往还没解析完；
+    /// 而 `refreshIfStale` 要 10 分钟才重拉，用户停留期间看到的就一直是
+    /// 「没有时长」。这里静默补拉几次（命中服务端 8 分钟缓存，不重新抓取、
+    /// 不花钱），让时长自己出现，不必手动下拉。
+    private func backfillDouyinMeta() async {
+        for _ in 0..<3 {
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled, hasPendingDouyinMeta else { return }
+            // 只替换 feed：不动 loading、不重刷关注列表，页面不会闪。
+            if let fresh = try? await library.discoverFeed(refresh: false) {
+                feed = fresh
+            }
+        }
+    }
+
     private func refreshIfStale() async {
         guard let feed else {
             await load(refresh: false)

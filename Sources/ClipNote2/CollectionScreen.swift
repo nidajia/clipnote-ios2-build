@@ -309,6 +309,10 @@ struct CollectionScreen: View {
                 rowLabel(ep, number: number)
             }
             .buttonStyle(.plain)
+            // 已入库的这一支以前完全没有 remember(ep)：点进去再返回，
+            // 「正在看」和滚动位置都还停在库里那条代表条目上。
+            // 同时手势不影响 NavigationLink 本身的跳转。
+            .simultaneousGesture(TapGesture().onEnded { remember(ep) })
             .contextMenu { externalMenu(ep) }
         } else {
             // 跳站要用户显式选（长按菜单 / 播放页里的「浏览器」按钮）。

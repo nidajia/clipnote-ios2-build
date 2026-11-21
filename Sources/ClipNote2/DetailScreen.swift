@@ -13,6 +13,13 @@ import SwiftUI
 struct DetailScreen: View {
     var item: Item
 
+    /// 原视频链接，用于系统分享面板。用 `item` 而不是 `current`：
+    /// 链接在导入时就固定了，不会随笔记/状态更新变化。
+    private var shareURL: URL? {
+        guard !item.sourceURL.isEmpty else { return nil }
+        return URL(string: item.sourceURL)
+    }
+
     /// 播放地址的准备状态。
     ///
     /// 单独一个状态机而不是一堆布尔：`isPreparing` + `error` + `url` 三个变量
@@ -323,6 +330,19 @@ struct DetailScreen: View {
         // 那块正是系统控制条的地盘，放上去要么互相遮挡，要么得写一套
         // 「控制条出现时隐藏我」的观察逻辑，而 VideoPlayer 不暴露这个状态。
         .toolbar {
+            // 分享常驻在导航栏。以前只有「下载到本地」之后，页面深处才会
+            // 出现一个「分享视频文件」，用户根本找不到。这里直接分享原视频
+            // 链接，不需要先下载；已下载的文件仍可在下载卡片里单独分享。
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if let url = shareURL {
+                    ShareLink(item: url) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.cnInk2)
+                    }
+                    .accessibilityLabel("分享视频链接")
+                }
+            }
             // 常驻入口：不管滚到哪儿都能进笔记。
             // 页面里的卡片会随滚动消失，而「我的笔记」是用户随时可能想写的地方。
             ToolbarItem(placement: .navigationBarTrailing) {
