@@ -62,6 +62,9 @@ struct RemoteImage: View {
         }
         // 用字符串做 id：URL 不是 Hashable 的稳定键，重建时容易重复触发。
         .task(id: url?.absoluteString ?? "") {
+            // 列表复用换了 URL：命中缓存就同步出图，没命中先清掉旧图，
+            // 避免短暂显示上一条的封面（串图）。
+            image = url.flatMap { ImageMemoryCache.shared.cached($0) }
             await load()
         }
     }

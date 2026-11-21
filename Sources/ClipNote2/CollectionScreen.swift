@@ -49,6 +49,19 @@ struct CollectionScreen: View {
     private func remember(_ ep: APISeasonEpisode) {
         guard !ep.videoId.isEmpty else { return }
         UserDefaults.standard.set(ep.videoId, forKey: lastEpisodeKey)
+        // 关闭播放页返回时 `.task` 不会再执行，所以这里就把定位设好，
+        // 否则列表还停在库里那条代表条目上。
+        scrollTarget = ep.videoId
+    }
+
+    /// 「正在看」只认最近点开的那一集；从没点过才退回库里代表条目。
+    /// 写成 `remembered || current` 会同时高亮两条，看起来像根本没记住。
+    private func isWatching(_ ep: APISeasonEpisode) -> Bool {
+        if let vid = rememberedEpisode(), !vid.isEmpty,
+           rawEpisodes.contains(where: { $0.videoId == vid }) {
+            return ep.videoId == vid
+        }
+        return ep.current
     }
 
     /// 头部封面：没给就用「你看过的那一集」的封面顶着。
@@ -314,14 +327,14 @@ struct CollectionScreen: View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(number)")
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(ep.current ? Color.cnBrand : Color.cnInk3)
+                .foregroundStyle(isWatching(ep) ? Color.cnBrand : Color.cnInk3)
                 .frame(minWidth: 24)
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(ep.title.isEmpty ? "第 \(number) 集" : ep.title)
                     .font(.cnMeta)
-                    .foregroundStyle(ep.current ? Color.cnBrand : Color.cnInk)
+                    .foregroundStyle(isWatching(ep) ? Color.cnBrand : Color.cnInk)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -333,7 +346,7 @@ struct CollectionScreen: View {
                     if ep.created > 0 {
                         Text(Self.day(ep.created))
                     }
-                    if !ep.itemId.isEmpty, !ep.current {
+                    if !ep.itemId.isEmpty, !isWatching(ep) {
                         Text("已存")
                             .foregroundStyle(Color.cnGreen)
                     }
@@ -346,7 +359,7 @@ struct CollectionScreen: View {
 
             // 「正在看」跟着你最近点开的那一集，而不是库里那条代表条目：
             // 否则点第 504 集播完退出，标签还挂在上一条上。
-            if ep.videoId == rememberedEpisode() || ep.current {
+            if isWatching(ep) {
                 Text("正在看")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Color.cnBrand)
@@ -414,15 +427,18 @@ struct CollectionScreen: View {
 
     /// 记住「该滚到哪一集」：当前那一集优先，其次最后一个已存的。
     private func markScrollTarget() {
-        guard scrollTarget == nil else { return }
         let remembered = rememberedEpisode()
         let hitRemembered = rawEpisodes.contains(where: { $0.videoId == remembered })
-        let target = (hitRemembered ? remembered : nil)
-            ?? rawEpisodes.first(where: { $0.current })?.videoId
+        // 点过某一集：永远回到它，即使视图重跑也别被代表条目覆盖回去。
+        if hitRemembered, let remembered {
+            if scrollTarget != remembered { scrollTarget = remembered }
+            return
+        }
+        guard scrollTarget == nil else { return }
+        let target = rawEpisodes.first(where: { $0.current })?.videoId
             ?? rawEpisodes.last(where: { !$0.itemId.isEmpty })?.videoId
-        // 长目录需要跳，否则用户要自己翻几十屏；短目录只在「上次点开过某一集」
-        // 时才跳——那时用户明确想接着看，不该再让他从头找。
-        if let target, rawEpisodes.count > 30 || hitRemembered {
+        // 长目录需要跳，否则用户要自己翻几十屏。
+        if let target, rawEpisodes.count > 30 {
             scrollTarget = target
         }
     }
