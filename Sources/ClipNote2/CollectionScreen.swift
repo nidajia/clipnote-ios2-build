@@ -195,13 +195,7 @@ struct CollectionScreen: View {
                     RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous)
                         .fill(Color.cnCard3)
                     if !displayCover.isEmpty {
-                        AsyncImage(url: URL(string: displayCover)) { phase in
-                            if case .success(let image) = phase {
-                                image.resizable().scaledToFill()
-                            } else {
-                                Color.clear
-                            }
-                        }
+                        RemoteImage(url: URL(string: displayCover))
                     }
                 }
                 .frame(width: 104, height: 64)
@@ -350,7 +344,9 @@ struct CollectionScreen: View {
 
             Spacer(minLength: 0)
 
-            if ep.current {
+            // 「正在看」跟着你最近点开的那一集，而不是库里那条代表条目：
+            // 否则点第 504 集播完退出，标签还挂在上一条上。
+            if ep.videoId == rememberedEpisode() || ep.current {
                 Text("正在看")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Color.cnBrand)

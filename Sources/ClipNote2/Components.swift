@@ -19,13 +19,8 @@ struct Thumbnail: View {
             )
 
             if let url {
-                AsyncImage(url: url, transaction: Transaction(animation: nil)) { phase in
-                    if case .success(let image) = phase {
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    }
-                }
+                // 走内存缓存：列表上下滑时不再重复下载/解码，也不会闪。
+                RemoteImage(url: url)
             }
 
             if !duration.isEmpty {
@@ -86,6 +81,18 @@ struct ItemRow: View {
     /// 而时间不该塞进 `Item`——它是展示细节，不是数据。
     var subtitle: String? = nil
 
+    /// 时长角标：服务端给了 `durationText` 就直接用；只给了秒数就在本地格式化。
+    ///
+    /// 抖音条目曾经出现过「有秒数、没有文本」的情况，卡片就整块空着——
+    /// 用户看到的是「抖音视频不显示时长」。
+    private var durationLabel: String {
+        if !model.durationText.isEmpty { return model.durationText }
+        guard model.durationSeconds > 0 else { return "" }
+        let minutes = model.durationSeconds / 60
+        let seconds = model.durationSeconds % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+
     var body: some View {
         HStack(spacing: Metric.space3) {
             Thumbnail(
@@ -96,7 +103,7 @@ struct ItemRow: View {
                 // 直接写「图文 N」，一眼就知道点进去是看图。
                 duration: model.kind == .image
                     ? (model.images.count > 1 ? "图文 \(model.images.count)" : "图文")
-                    : model.durationText
+                    : durationLabel
             )
 
             VStack(alignment: .leading, spacing: 5) {

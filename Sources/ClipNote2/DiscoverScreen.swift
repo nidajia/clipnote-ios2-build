@@ -368,10 +368,8 @@ struct DiscoverScreen: View {
     @ViewBuilder
     private func avatarBubble(_ sub: APISubscription) -> some View {
         ZStack(alignment: .bottomTrailing) {
-                AsyncImage(url: URL(string: sub.avatar)) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
-                    } else {
+                RemoteImage(url: URL(string: sub.avatar))
+                    .background(
                         Circle()
                             .fill(Color.cnCard3)
                             .overlay(
@@ -379,8 +377,7 @@ struct DiscoverScreen: View {
                                     .font(.system(size: 18))
                                     .foregroundStyle(Color.cnInk3)
                             )
-                    }
-                }
+                    )
                 .frame(width: 56, height: 56)
                 .clipShape(Circle())
 
@@ -609,13 +606,7 @@ struct DiscoverScreen: View {
                 RoundedRectangle(cornerRadius: Metric.radiusCover, style: .continuous)
                     .fill(Color.cnCard3)
                 if !collectionCover(one).isEmpty {
-                    AsyncImage(url: URL(string: collectionCover(one))) { phase in
-                        if case .success(let image) = phase {
-                            image.resizable().scaledToFill()
-                        } else {
-                            Color.clear
-                        }
-                    }
+                    RemoteImage(url: URL(string: collectionCover(one)))
                 }
                 VStack {
                     Spacer()
@@ -752,13 +743,7 @@ struct DiscoverScreen: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.cnCard3)
             if !raw.isEmpty, let url = URL(string: raw) {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
-                    } else {
-                        Color.clear
-                    }
-                }
+                RemoteImage(url: url)
             }
             if seconds > 0 {
                 Text(Self.clock(seconds))
@@ -1059,13 +1044,7 @@ struct DiscoverScreen: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Color.cnInk3)
             } else {
-                AsyncImage(url: URL(string: one.cover)) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
-                    } else {
-                        Color.clear
-                    }
-                }
+                RemoteImage(url: URL(string: one.cover))
             }
 
             // 平台角标：用户的原话是「抖音和 B 站热榜视频我分辨不出来」。
@@ -1391,13 +1370,8 @@ struct AuthorSheet: View {
             Button {
                 openHome()
             } label: {
-                AsyncImage(url: URL(string: sub.avatar)) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
-                    } else {
-                        Circle().fill(Color.cnCard3)
-                    }
-                }
+                RemoteImage(url: URL(string: sub.avatar))
+                    .background(Circle().fill(Color.cnCard3))
                 .frame(width: 56, height: 56)
                 .clipShape(Circle())
                 .overlay(alignment: .bottomTrailing) {
@@ -1492,13 +1466,8 @@ struct AuthorSheet: View {
                     open(video)
                 } label: {
                     HStack(spacing: Metric.space3) {
-                        AsyncImage(url: URL(string: video.cover)) { phase in
-                            if case .success(let image) = phase {
-                                image.resizable().scaledToFill()
-                            } else {
-                                Color.cnCard3
-                            }
-                        }
+                        RemoteImage(url: URL(string: video.cover),
+                                    placeholder: Color.cnCard3)
                         .frame(width: 80, height: 48)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
